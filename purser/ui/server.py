@@ -276,7 +276,9 @@ def create_app(
             offset=offset,
         )
         if q:
-            resources = [r for r in resources if q in r.id or q in json.dumps(r.tags)]
+            resources = [
+                r for r in resources if q in r.id or q in json.dumps(sorted(r.tags))
+            ]
         return {
             "resources": [
                 _resource_view(pool, r, include_secrets=False, admin=False)
@@ -356,6 +358,28 @@ def create_app(
         "restore": lambda pool, rid, b, op: pool.restore(rid, operator=op, reason=(b or {}).get("reason") or "api restore"),
     }
 
+    # Registered before the `{action}` route so the static `revoke` segment
+    # wins over the dynamic catch-all (Starlette matches routes in order).
+    @app.post("/pools/{pool_name}/resources/{rid}/revoke", response_model=None)
+    async def revoke_resource(
+        request: Request,
+        pool_name: str,
+        rid: str,
+        body: Optional[Dict[str, Any]] = Body(None),  # noqa: B008
+    ) -> dict[str, Any]:
+        operator, _ = require(request, write=True)
+        pool = pool_of(pool_name)
+        try:
+            lease = await pool.force_revoke(
+                rid,
+                operator=operator,
+                reason=(body or {}).get("reason") or "api revoke",
+                token=(body or {}).get("token"),
+            )
+        except PurserError as exc:
+            raise _http_purser_error(exc) from exc
+        return {"ok": True, "revoked_token": lease.token}
+
     @app.post("/pools/{pool_name}/resources/{rid}/{action}", response_model=None)
     async def resource_action(
         request: Request,
@@ -416,26 +440,6 @@ def create_app(
         except PurserError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"ok": True, "resource": pool.describe(updated)}
-
-    @app.post("/pools/{pool_name}/resources/{rid}/revoke", response_model=None)
-    async def revoke_resource(
-        request: Request,
-        pool_name: str,
-        rid: str,
-        body: Optional[Dict[str, Any]] = Body(None),  # noqa: B008
-    ) -> dict[str, Any]:
-        operator, _ = require(request, write=True)
-        pool = pool_of(pool_name)
-        try:
-            lease = await pool.force_revoke(
-                rid,
-                operator=operator,
-                reason=(body or {}).get("reason") or "api revoke",
-                token=(body or {}).get("token"),
-            )
-        except PurserError as exc:
-            raise _http_purser_error(exc) from exc
-        return {"ok": True, "revoked_token": lease.token}
 
     @app.delete("/pools/{pool_name}/resources/{rid}", response_model=None)
     async def delete_resource(

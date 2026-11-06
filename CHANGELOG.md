@@ -28,10 +28,18 @@ ruff 全绿、测试全量通过、CI 全矩阵、文档与 CHANGELOG 同步维�
   - SOCKS5 域名 BND.ADDR 响应少一个 await（`await coroutine[0]` 下标协程对象），
     真实服务器回域名类型地址时会 TypeError。
   - FastAPI 路由 handler 缺失返回标注、`Body`/`dict` 泛型缺失等类型问题。
+  - 控制台搜索（`q` 参数）对 `frozenset` 直接 `json.dumps` 抛 TypeError 导致
+    500，改为先 `sorted()`。
+  - `.../resources/{rid}/revoke` 静态路由注册在 `{rid}/{action}` 动态路由之后，
+    Starlette 按注册顺序匹配导致控制台 revoke 按钮 404，已调整注册顺序并加注释。
 
 ### 测试
 - 新增回归用例：request-level BAN 记录站点失败（覆盖 sqlite/memory 双后端）、
   SOCKS5 域名 BND.ADDR 响应。
+- 扩展 UI 契约测试（`tests/test_ui_contract.py`）：控制台 shell 与 DOM 依赖、
+  JS 使用的全部 fetch/EventSource 端点、行为级往返（建池 → 导入 → 查询 →
+  租约 → 归还 → 操作 → revoke → 错误 detail），以及真实 uvicorn + httpx 的
+  SSE 事件流用例。
 - 本地验收：ruff、mypy --strict 全绿；pytest 全量 656 passed / 50 skipped，
   覆盖率 81%（未连真实 Redis/MySQL 时对应集成用例自动跳过，CI 中由服务补齐）。
 
