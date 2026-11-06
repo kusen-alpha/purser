@@ -50,3 +50,11 @@ ruff 全绿、测试全量通过、CI 全矩阵、文档与 CHANGELOG 同步维�
   `asyncio.to_thread` 改为 `run_in_executor` 助手（3.9+）；`zoneinfo` 增加
   `backports.zoneinfo` 回退（3.8/3.9）；`ParamSpec` 改从 `typing_extensions` 导入；
   去掉 3.10 专属的 `zip(strict=)`。
+
+### 文档
+- README 精简为「项目简介 + 部署使用」：保留简介、快速开始、服务模式
+  （serve / Web UI / CLI）与部署配置（sqlite / mysql / redis 组合）。
+- 核心概念、状态机、算法、自定义类型、目录与实现范围汇总至
+  `docs/架构与算法.md`；测试覆盖清单、合入门槛与 CI、真实服务集成说明
+  （含 `PURSER_TEST_REDIS_URL` / `PURSER_TEST_MYSQL_URL`）汇总至
+  `docs/测试与工程规范.md`。
