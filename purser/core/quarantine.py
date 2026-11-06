@@ -12,7 +12,7 @@ def _now() -> float:
     return time.time()
 
 
-@dataclass(slots=True)
+@dataclass
 class QuarantinePolicy:
     base: float = 30.0
     cap: float = 1800.0

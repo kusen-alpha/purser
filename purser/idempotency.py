@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass
 class IdempotencyStore:
     ttl: float = 600.0
     _items: dict[str, tuple[float, dict[str, Any]]] = field(default_factory=dict)

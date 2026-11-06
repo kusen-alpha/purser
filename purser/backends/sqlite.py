@@ -8,7 +8,7 @@ redis CAS semantics without Lua.  Leases never live here -- they belong to the
 coordination plane; slot accounting stays authoritative in this table.
 
 The stdlib ``sqlite3`` connection is guarded by an ``asyncio.Lock`` and all
-blocking work runs through ``asyncio.to_thread``, so the event loop never
+blocking work runs through a thread executor, so the event loop never
 blocks.  Sensitive payload fields are AES-GCM encrypted at rest via
 :class:`SecretCodec`.  ``:memory:`` is available for tests and ephemeral use;
 a file path persists across restarts.
@@ -50,6 +50,12 @@ from purser.core.state import (
 from purser.crypto import SecretCodec
 
 _RT = TypeVar("_RT")
+
+
+async def _to_thread(func: Callable[..., _RT], *args: Any) -> _RT:
+    """Run a blocking callable in a thread (``_to_thread`` is 3.9+)."""
+
+    return await asyncio.get_running_loop().run_in_executor(None, func, *args)
 
 
 def _now() -> float:
@@ -259,11 +265,11 @@ class SqliteStorage(StorageBackend):
 
     async def get(self, pool: str, rid: str) -> Resource | None:
         async with self._lock:
-            return await asyncio.to_thread(self._load_sync, pool, rid)
+            return await _to_thread(self._load_sync, pool, rid)
 
     async def put(self, pool: str, resource: Resource) -> Resource:
         async with self._lock:
-            return await asyncio.to_thread(
+            return await _to_thread(
                 self._retry_locked, self._put_sync, pool, resource
             )
 
@@ -296,7 +302,7 @@ class SqliteStorage(StorageBackend):
 
     async def delete(self, pool: str, rid: str) -> bool:
         async with self._lock:
-            return await asyncio.to_thread(
+            return await _to_thread(
                 self._retry_locked, self._delete_sync, pool, rid
             )
 
@@ -320,7 +326,7 @@ class SqliteStorage(StorageBackend):
         offset: int = 0,
     ) -> list[Resource]:
         async with self._lock:
-            return await asyncio.to_thread(
+            return await _to_thread(
                 self._query_sync, pool, states, tags, limit, offset
             )
 
@@ -355,7 +361,7 @@ class SqliteStorage(StorageBackend):
 
     async def counts(self, pool: str) -> dict[ResourceState, int]:
         async with self._lock:
-            return await asyncio.to_thread(self._counts_sync, pool)
+            return await _to_thread(self._counts_sync, pool)
 
     def _counts_sync(self, pool: str) -> dict[ResourceState, int]:
         rows = self._conn.execute(
@@ -371,7 +377,7 @@ class SqliteStorage(StorageBackend):
         self, pool: str, rid: str, slots: int
     ) -> TransitionResult:
         async with self._lock:
-            return await asyncio.to_thread(
+            return await _to_thread(
                 self._retry_locked, self._transition_acquire_sync, pool, rid, slots
             )
 
@@ -416,7 +422,7 @@ class SqliteStorage(StorageBackend):
         self, pool: str, rid: str, slots: int
     ) -> TransitionResult:
         async with self._lock:
-            return await asyncio.to_thread(
+            return await _to_thread(
                 self._retry_locked, self._transition_release_sync, pool, rid, slots
             )
 
@@ -468,7 +474,7 @@ class SqliteStorage(StorageBackend):
 
     async def reset_usage(self, pool: str, rid: str, slots: int = 0) -> bool:
         async with self._lock:
-            return await asyncio.to_thread(
+            return await _to_thread(
                 self._retry_locked, self._reset_usage_sync, pool, rid, slots
             )
 
@@ -523,7 +529,7 @@ class SqliteStorage(StorageBackend):
         patch: ResourcePatch,
     ) -> bool:
         async with self._lock:
-            return await asyncio.to_thread(
+            return await _to_thread(
                 self._retry_locked,
                 self._set_state_sync,
                 pool,
@@ -561,7 +567,7 @@ class SqliteStorage(StorageBackend):
         self, pool: str, *, states: set[ResourceState] | None = None, batch: int = 50
     ) -> AsyncIterator[Resource]:
         async with self._lock:
-            resources = await asyncio.to_thread(self._scan_sync, pool, states)
+            resources = await _to_thread(self._scan_sync, pool, states)
         for resource in resources:
             yield resource
 
@@ -583,7 +589,7 @@ class SqliteStorage(StorageBackend):
 
     async def flush(self, pool: str) -> None:
         async with self._lock:
-            return await asyncio.to_thread(self._retry_locked, self._flush_sync, pool)
+            return await _to_thread(self._retry_locked, self._flush_sync, pool)
 
     def _flush_sync(self, pool: str) -> None:
         with self._conn:

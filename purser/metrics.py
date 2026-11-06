@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass
 class Metrics:
     counters: dict[str, int] = field(default_factory=lambda: OrderedDict())
     histograms: dict[str, list[float]] = field(default_factory=lambda: OrderedDict())

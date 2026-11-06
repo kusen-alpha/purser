@@ -13,10 +13,11 @@ import json
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import asdict
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, TypeVar
 
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
+from typing_extensions import ParamSpec
 
 from purser.backends.base import Coordination
 from purser.core.resource import Lease

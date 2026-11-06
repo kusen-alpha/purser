@@ -8,6 +8,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python < 3.9
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+
 from purser.core.state import ResourceState
 
 
@@ -40,7 +45,7 @@ class CheckVerdict(str, enum.Enum):
     BAN = "ban"
 
 
-@dataclass(slots=True)
+@dataclass
 class Concurrency:
     """Slot accounting for EXCLUSIVE (``max_slots == 1``) and SHARED resources."""
 
@@ -71,7 +76,7 @@ class Concurrency:
         self.used_slots -= slots
 
 
-@dataclass(slots=True)
+@dataclass
 class SiteFailure:
     """Per-target-site failure marker (5.8)."""
 
@@ -84,7 +89,7 @@ class SiteFailure:
         return (now or _now()) < self.until
 
 
-@dataclass(slots=True)
+@dataclass
 class HealthStats:
     """EWMA health score plus latency bookkeeping (5.3 / Y6)."""
 
@@ -119,7 +124,7 @@ class HealthStats:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class Quota:
     """Period quota (S16): a daily budget consumed on release and reset daily."""
 
@@ -159,8 +164,6 @@ def _next_reset(now: float, timezone: str | None = None) -> float:
     tzinfo = None
     if timezone:
         try:
-            from zoneinfo import ZoneInfo
-
             tzinfo = ZoneInfo(timezone)
         except Exception:
             tzinfo = None
@@ -171,7 +174,7 @@ def _next_reset(now: float, timezone: str | None = None) -> float:
     return nxt.timestamp()
 
 
-@dataclass(slots=True)
+@dataclass
 class Lease:
     """A single borrow: the holder's credential and expiry bookkeeping (5.2)."""
 
@@ -223,7 +226,7 @@ class Lease:
         return (now or _now()) >= self.expires_at
 
 
-@dataclass(slots=True)
+@dataclass
 class Resource:
     """One resource: a proxy, account or custom object (3.2)."""
 
@@ -298,7 +301,7 @@ class Resource:
         return max(candidates)
 
 
-@dataclass(slots=True)
+@dataclass
 class AcquireRequest:
     """Everything an acquire operation may need (4.5)."""
 

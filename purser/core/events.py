@@ -9,14 +9,15 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger("purser.events")
 
-Listener = Callable[["Event"], Awaitable[None]]
+if TYPE_CHECKING:
+    Listener = Callable[["Event"], Awaitable[None]]
 
 
-@dataclass(slots=True)
+@dataclass
 class Event:
     type: str
     pool: str

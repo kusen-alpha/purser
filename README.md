@@ -166,7 +166,7 @@ pool = ps.pool("sms", "sms")
 - `ruff check .` 全绿（`E/F/W/I/UP/B`，line-length 88，豁免 `E501` / `UP009`）；
 - `pytest tests -q --cov=purser --cov-report=term-missing` 通过并上报覆盖率；
 - CI（`.github/workflows/ci.yml`）lint / typecheck / benchmark 与 Python
-  3.10-3.12 测试矩阵全部通过，其中真实 Redis / MySQL 集成用例由
+  3.8-3.12 测试矩阵全部通过，其中真实 Redis / MySQL 集成用例由
   `PURSER_TEST_REDIS_URL` / `PURSER_TEST_MYSQL_URL` 环境变量门控，未设置时自动跳过；
 - 代码改动同步更新 README / docs / CHANGELOG，版本号按语义化递增。
 

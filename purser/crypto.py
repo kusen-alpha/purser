@@ -21,7 +21,7 @@ def _unb64(text: str) -> bytes:
     return base64.b64decode(text.encode("ascii"))
 
 
-@dataclass(slots=True)
+@dataclass
 class SecretCodec:
     """Encrypts a configured subset of payload fields before persistence.
 

@@ -31,7 +31,7 @@ def _now() -> float:
     return time.time()
 
 
-@dataclass(slots=True)
+@dataclass
 class ResourcePatch:
     """Structured updates committed atomically with a state change."""
 
@@ -83,7 +83,7 @@ class ResourcePatch:
         return resource
 
 
-@dataclass(slots=True)
+@dataclass
 class TransitionResult:
     ok: bool
     state: ResourceState | None = None

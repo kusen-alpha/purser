@@ -7,17 +7,18 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from purser.core.resource import Lease
 
 logger = logging.getLogger("purser.lease")
 
-RenewFn = Callable[[Lease], Awaitable[bool]]
-LostFn = Callable[[Lease], Awaitable[None]]
+if TYPE_CHECKING:
+    RenewFn = Callable[[Lease], Awaitable[bool]]
+    LostFn = Callable[[Lease], Awaitable[None]]
 
 
-@dataclass(slots=True)
+@dataclass
 class LeaseManager:
     """Tracks in-flight leases of one pool.
 

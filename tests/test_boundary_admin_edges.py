@@ -103,8 +103,8 @@ async def test_query_empty_states_equals_all(make_pool):
 async def test_outcome_captcha_and_timeout(make_pool):
     pool = make_pool()
     ids = await seed(pool, n=2)
-    for rid, outcome in zip(
-        ids, [UsageOutcome.CAPTCHA, UsageOutcome.TIMEOUT], strict=True
+    for rid, outcome in zip(  # noqa: B905 - strict= is Python 3.10+
+        ids, [UsageOutcome.CAPTCHA, UsageOutcome.TIMEOUT]
     ):
         lease = await pool.acquire(
             AcquireRequest(resource_id=rid, consumer="c", target="site.com")

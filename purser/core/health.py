@@ -7,9 +7,12 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from purser.core.resource import HealthStats, Resource
+
+if TYPE_CHECKING:
+    RefreshCallback = Callable[[Resource], bool]  # True when a refresh is needed
 
 logger = logging.getLogger("purser.health")
 
@@ -27,7 +30,7 @@ class Action(str, enum.Enum):
     DROP = "drop"
 
 
-@dataclass(slots=True)
+@dataclass
 class HealthReport:
     """One validation verdict (5.3)."""
 
@@ -140,6 +143,3 @@ class ValidationGate:
         # Deterministic pseudorandom sampling (Y2): stable per resource.
         h = sum(resource.id.encode("utf-8")) % 10000 / 10000.0
         return h < self.sample
-
-
-RefreshCallback = Callable[[Resource], bool]  # True when a refresh is needed

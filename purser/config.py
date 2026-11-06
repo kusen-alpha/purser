@@ -10,7 +10,7 @@ from purser.core.quarantine import QuarantinePolicy
 from purser.errors import ConfigError
 
 
-@dataclass(slots=True)
+@dataclass
 class Weights:
     """Scoring weights for the health-weighted allocator (5.1)."""
 
@@ -35,7 +35,7 @@ _UNBAN_MODES = ("manual_only", "auto_after_ttl", "mixed")
 _IMPORT_VALIDATE = ("none", "on_import", "batch")
 
 
-@dataclass(slots=True)
+@dataclass
 class PoolConfig:
     """Per-pool knobs.  ResourceType provides defaults; pool overrides them."""
 

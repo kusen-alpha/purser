@@ -84,7 +84,7 @@ def _now() -> float:
     return time.time()
 
 
-@dataclass(slots=True)
+@dataclass
 class ImportReport:
     imported: int = 0
     updated: int = 0
@@ -107,7 +107,7 @@ class ImportReport:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class _WaitHandle:
     seq: int
     priority: int
@@ -129,7 +129,7 @@ class _WaitHandle:
             self.cancelled = True
 
 
-@dataclass(slots=True)
+@dataclass
 class BatchLease:
     """Result of ``acquire_many``: a list of leases released together (O13)."""
 

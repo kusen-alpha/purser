@@ -7,15 +7,18 @@ name = "purser"
 version = "0.2.0"
 description = "Generic resource scheduling library for scraping: proxies, accounts, and custom resources."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "purser" }]
 dependencies = [
+    "backports.zoneinfo>=0.2.1; python_version < '3.9'",
+    "tzdata>=2024.1; python_version < '3.9' and platform_system == 'Windows'",
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "rich>=13",
     "redis>=5",
     "cryptography>=42",
+    "typing_extensions>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +43,7 @@ include = ["purser*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
 
@@ -54,6 +58,13 @@ select = ["E", "F", "W", "I", "UP", "B"]
 # UP009: this project targets Python 3.10, where UTF-8 source is the default.
 ignore = ["E501", "UP009"]
 
+[tool.ruff.lint.per-file-ignores]
+# FastAPI evaluates endpoint signatures at runtime; Python 3.8 cannot evaluate
+# PEP 585 builtin generics or `|` unions, so typing.Dict / typing.Optional are
+# required on the wire layer even though the rest of the codebase uses the
+# modern spellings.
+"purser/ui/server.py" = ["UP006", "UP007", "UP035", "UP045"]
+
 [tool.mypy]
 python_version = "3.10"
 strict = true
@@ -67,4 +78,8 @@ disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 module = ["aiomysql", "aiomysql.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["backports.zoneinfo"]
 ignore_missing_imports = true

@@ -19,8 +19,10 @@ import functools
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import unquote, urlsplit
+
+from typing_extensions import ParamSpec
 
 from purser.backends.base import (
     ResourcePatch,

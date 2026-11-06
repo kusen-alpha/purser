@@ -11,6 +11,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from purser.errors import InvalidTransition
 
@@ -63,10 +64,11 @@ ALLOCATABLE_STATES: frozenset[ResourceState] = frozenset(
     {ResourceState.IDLE, ResourceState.ACTIVE}
 )
 
-_Target = ResourceState | Callable[["ResourceState", "StateContext"], ResourceState]
+if TYPE_CHECKING:
+    _Target = ResourceState | Callable[["ResourceState", "StateContext"], ResourceState]
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class StateContext:
     """Runtime values consulted by guard callables inside the table."""
 
@@ -122,7 +124,7 @@ ADMIN_ALLOWED: frozenset[ResourceState] = frozenset(
 )
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class _TransitionSpec:
     event: Event
     target: _Target

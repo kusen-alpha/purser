@@ -6,14 +6,15 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger("purser.scheduler")
 
-RunFn = Callable[[], Awaitable[None]]
+if TYPE_CHECKING:
+    RunFn = Callable[[], Awaitable[None]]
 
 
-@dataclass(slots=True)
+@dataclass
 class PeriodicTask:
     name: str
     interval: float

@@ -8,7 +8,7 @@ import json
 import os
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -161,11 +161,11 @@ def create_app(
 
     # -- health ------------------------------------------------------------
 
-    @app.get("/healthz")
+    @app.get("/healthz", response_model=None)
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/readyz")
+    @app.get("/readyz", response_model=None)
     async def readyz() -> dict[str, Any]:
         return {"status": "ready", "pools": ps.pool_names()}
 
@@ -185,7 +185,7 @@ def create_app(
 
     # -- pools -------------------------------------------------------------
 
-    @app.get("/pools")
+    @app.get("/pools", response_model=None)
     async def list_pools(request: Request) -> dict[str, Any]:
         require(request, write=False)
         out = []
@@ -195,11 +195,11 @@ def create_app(
                 out.append(await pool.stats())
         return {"pools": out}
 
-    @app.post("/pools")
+    @app.post("/pools", response_model=None)
     async def create_pool(
         request: Request,
-        body: dict[str, Any] = Body(...),  # noqa: B008
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        body: Dict[str, Any] = Body(...),  # noqa: B008
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
 
@@ -220,16 +220,16 @@ def create_app(
 
         return idempotent(idempotency_key, do)
 
-    @app.get("/pools/{pool_name}")
+    @app.get("/pools/{pool_name}", response_model=None)
     async def pool_stats(request: Request, pool_name: str) -> dict[str, Any]:
         require(request, write=False)
         return await pool_of(pool_name).stats()
 
-    @app.patch("/pools/{pool_name}")
+    @app.patch("/pools/{pool_name}", response_model=None)
     async def update_pool(
         request: Request,
         pool_name: str,
-        body: dict[str, Any] = Body(...),  # noqa: B008
+        body: Dict[str, Any] = Body(...),  # noqa: B008
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
@@ -257,13 +257,13 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"bad state value(s): {s}") from exc
 
-    @app.get("/pools/{pool_name}/resources")
+    @app.get("/pools/{pool_name}/resources", response_model=None)
     async def list_resources(
         request: Request,
         pool_name: str,
-        state: str | None = None,
-        tag: str | None = None,
-        q: str | None = None,
+        state: Optional[str] = None,
+        tag: Optional[str] = None,
+        q: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -285,7 +285,7 @@ def create_app(
             "counts": {s.value: n for s, n in (await pool.counts()).items()},
         }
 
-    @app.get("/pools/{pool_name}/resources/{rid}")
+    @app.get("/pools/{pool_name}/resources/{rid}", response_model=None)
     async def get_resource(
         request: Request,
         pool_name: str,
@@ -302,12 +302,12 @@ def create_app(
             raise HTTPException(status_code=403, detail="admin role required for secrets")
         return _resource_view(pool, resource, include_secrets=include_secrets, admin=role == "admin")
 
-    @app.post("/pools/{pool_name}/resources")
+    @app.post("/pools/{pool_name}/resources", response_model=None)
     async def import_resources(
         request: Request,
         pool_name: str,
-        body: dict[str, Any] = Body(...),  # noqa: B008
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        body: Dict[str, Any] = Body(...),  # noqa: B008
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
@@ -356,13 +356,13 @@ def create_app(
         "restore": lambda pool, rid, b, op: pool.restore(rid, operator=op, reason=(b or {}).get("reason") or "api restore"),
     }
 
-    @app.post("/pools/{pool_name}/resources/{rid}/{action}")
+    @app.post("/pools/{pool_name}/resources/{rid}/{action}", response_model=None)
     async def resource_action(
         request: Request,
         pool_name: str,
         rid: str,
         action: str,
-        body: dict[str, Any] | None = Body(None),  # noqa: B008
+        body: Optional[Dict[str, Any]] = Body(None),  # noqa: B008
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
@@ -388,12 +388,12 @@ def create_app(
         res = await pool.get(rid)
         return {"ok": True, "rid": rid, "state": res.state.value if res else None}
 
-    @app.put("/pools/{pool_name}/resources/{rid}")
+    @app.put("/pools/{pool_name}/resources/{rid}", response_model=None)
     async def update_resource(
         request: Request,
         pool_name: str,
         rid: str,
-        body: dict[str, Any] = Body(...),  # noqa: B008
+        body: Dict[str, Any] = Body(...),  # noqa: B008
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
@@ -417,12 +417,12 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"ok": True, "resource": pool.describe(updated)}
 
-    @app.post("/pools/{pool_name}/resources/{rid}/revoke")
+    @app.post("/pools/{pool_name}/resources/{rid}/revoke", response_model=None)
     async def revoke_resource(
         request: Request,
         pool_name: str,
         rid: str,
-        body: dict[str, Any] = Body(None),  # noqa: B008
+        body: Optional[Dict[str, Any]] = Body(None),  # noqa: B008
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
@@ -437,12 +437,12 @@ def create_app(
             raise _http_purser_error(exc) from exc
         return {"ok": True, "revoked_token": lease.token}
 
-    @app.delete("/pools/{pool_name}/resources/{rid}")
+    @app.delete("/pools/{pool_name}/resources/{rid}", response_model=None)
     async def delete_resource(
         request: Request,
         pool_name: str,
         rid: str,
-        body: dict[str, Any] | None = Body(None),  # noqa: B008
+        body: Optional[Dict[str, Any]] = Body(None),  # noqa: B008
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
@@ -468,11 +468,11 @@ def create_app(
 
     # -- leases ------------------------------------------------------------
 
-    @app.post("/pools/{pool_name}/leases")
+    @app.post("/pools/{pool_name}/leases", response_model=None)
     async def acquire_lease(
         request: Request,
         pool_name: str,
-        body: dict[str, Any] = Body(...),  # noqa: B008
+        body: Dict[str, Any] = Body(...),  # noqa: B008
     ) -> dict[str, Any]:
         operator, trace_id = require(request, write=True)
         pool = pool_of(pool_name)
@@ -524,7 +524,7 @@ def create_app(
             ]
         }
 
-    @app.get("/pools/{pool_name}/leases")
+    @app.get("/pools/{pool_name}/leases", response_model=None)
     async def list_leases(request: Request, pool_name: str) -> dict[str, Any]:
         require(request, write=False)
         pool = pool_of(pool_name)
@@ -542,12 +542,12 @@ def create_app(
             ]
         }
 
-    @app.delete("/pools/{pool_name}/leases/{token}")
+    @app.delete("/pools/{pool_name}/leases/{token}", response_model=None)
     async def release_lease(
         request: Request,
         pool_name: str,
         token: str,
-        body: dict[str, Any] | None = Body(None),  # noqa: B008
+        body: Optional[Dict[str, Any]] = Body(None),  # noqa: B008
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
@@ -583,11 +583,11 @@ def create_app(
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
-    @app.post("/pools/{pool_name}/drain")
+    @app.post("/pools/{pool_name}/drain", response_model=None)
     async def drain_pool(
         request: Request,
         pool_name: str,
-        body: dict[str, Any] | None = Body(None),  # noqa: B008
+        body: Optional[Dict[str, Any]] = Body(None),  # noqa: B008
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
@@ -605,11 +605,11 @@ def create_app(
             raise _http_purser_error(exc) from exc
         return {"ok": True, "drained": count}
 
-    @app.post("/pools/{pool_name}/recall")
+    @app.post("/pools/{pool_name}/recall", response_model=None)
     async def recall(
         request: Request,
         pool_name: str,
-        body: dict[str, Any] = Body(...),  # noqa: B008
+        body: Dict[str, Any] = Body(...),  # noqa: B008
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)

@@ -20,7 +20,7 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-@dataclass(slots=True)
+@dataclass
 class AllocationContext:
     now: float
     request: AcquireRequest
@@ -58,7 +58,9 @@ class Allocator(ABC):
         total = sum(exp)
         r = ctx.rng.random() * total
         acc = 0.0
-        for (res, _), e in zip(ranked, exp, strict=True):
+        # Plain zip: ``strict=`` is Python 3.10+, and the sequences are the
+        # same length by construction here.
+        for (res, _), e in zip(ranked, exp):  # noqa: B905
             acc += e
             if r <= acc:
                 return res

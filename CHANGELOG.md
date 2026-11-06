@@ -7,7 +7,7 @@ ruff 全绿、测试全量通过、CI 全矩阵、文档与 CHANGELOG 同步维�
 
 ### 工程基线
 - 初始化 Git 仓库（此前无 `.git`），新增 GitHub Actions CI：
-  lint / typecheck / test（Python 3.10–3.12 矩阵，含真实 Redis 与 MySQL 服务）/
+  lint / typecheck / test（Python 3.8–3.12 矩阵，含真实 Redis 与 MySQL 服务）/
   benchmark（混沌与多进程压测）。
 - `pyproject.toml` 增加 `[tool.ruff]`（E/F/W/I/UP/B，line-length 88，豁免 E501/UP009
   并注明理由）与 `[tool.mypy]`（strict，`follow_imports=skip`，aiomysql 白名单豁免）。
@@ -35,6 +35,10 @@ ruff 全绿、测试全量通过、CI 全矩阵、文档与 CHANGELOG 同步维�
 - 本地验收：ruff、mypy --strict 全绿；pytest 全量 656 passed / 50 skipped，
   覆盖率 81%（未连真实 Redis/MySQL 时对应集成用例自动跳过，CI 中由服务补齐）。
 
-### 说明
-- 最低 Python 版本按项目现状取 3.10（`requires-python = ">=3.10"`，代码使用
-  3.10 语法），CI 矩阵为 3.10 / 3.11 / 3.12，不强行兼容 3.8 / 3.9。
+### 兼容性
+- 最低 Python 版本调整为 3.8：`requires-python = ">=3.8"`，CI 矩阵
+  3.8 / 3.9 / 3.10 / 3.11 / 3.12 全部通过。
+- 移除 3.10 专属的 `dataclass(slots=True)`（改为普通 `@dataclass`，保留 `frozen`）；
+  `asyncio.to_thread` 改为 `run_in_executor` 助手（3.9+）；`zoneinfo` 增加
+  `backports.zoneinfo` 回退（3.8/3.9）；`ParamSpec` 改从 `typing_extensions` 导入；
+  去掉 3.10 专属的 `zip(strict=)`。
