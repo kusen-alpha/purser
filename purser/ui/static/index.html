@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>purSer 控制台</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171d24; --panel2:#1d252e; --line:#2a3440;
+    --text:#e6edf3; --muted:#8b98a5; --accent:#3b82f6; --ok:#22c55e;
+    --warn:#f59e0b; --bad:#ef4444; --q:#06b6d4; --radius:8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;display:flex;min-height:100vh}
+  aside{width:220px;flex:0 0 220px;background:var(--panel);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+  main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+  h1{font-size:16px;font-weight:700;letter-spacing:0}
+  h1 small{color:var(--muted);font-weight:400;margin-left:8px}
+  .grow{flex:1}
+  .content{padding:20px;overflow:auto;display:flex;flex-direction:column;gap:18px}
+  .grid{display:grid;gap:12px}
+  .grid.stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .grid.cols{grid-template-columns:minmax(0,1fr) 320px;align-items:start}
+  @media(max-width:960px){.grid.cols{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+  .kpi .n{font-size:22px;font-weight:700}
+  .kpi .l{color:var(--muted);font-size:12px}
+  .bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--panel2);margin-top:10px}
+  .bar span{height:100%}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:12px;position:sticky;top:0;background:var(--panel)}
+  td.id{max-width:220px;overflow:hidden;text-overflow:ellipsis}
+  .tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:11px;margin-right:4px;color:var(--muted)}
+  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px;font-size:12px;border:1px solid var(--line)}
+  .pill i{width:7px;height:7px;border-radius:50%;background:var(--muted);display:inline-block}
+  .st-idle .d,.st-active .d{background:var(--ok)} .st-full .d{background:var(--warn);width:8px;height:8px;border-radius:2px}
+  .st-banned .d,.st-lost .d,.st-quarantined .d{background:var(--bad)}
+  .st-suspended .d,.st-draining .d,.st-archived .d,.st-new .d,.st-validating .d,.st-quota_exhausted .d{background:var(--muted)}
+  input,select,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 9px;font-size:13px;width:100%}
+  textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-height:110px;resize:vertical}
+  button{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 12px;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{filter:brightness(1.1);color:#fff}
+  button.danger:hover{border-color:var(--bad);color:var(--bad)}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .row > *{flex:0 0 auto}
+  .row .fill{flex:1 1 auto}
+  .muted{color:var(--muted)}
+  .evlist{font-family:ui-monospace,Consolas,monospace;font-size:12px;max-height:340px;overflow:auto}
+  .evlist div{padding:3px 0;border-bottom:1px solid var(--line);color:var(--muted)}
+  .evlist b{color:var(--text);font-weight:600}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  .notice{padding:8px 12px;border-radius:6px;font-size:12px;display:none}
+  .notice.err{display:block;background:rgba(239,68,68,.12);border:1px solid var(--bad);color:#fca5a5}
+  .notice.okk{display:block;background:rgba(34,197,94,.1);border:1px solid var(--ok);color:#86efac}
+  .sec-h{font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0;margin-bottom:8px}
+  .actions{display:flex;gap:4px;flex-wrap:wrap}
+  .actions button{padding:3px 8px;font-size:11px}
+  #pools button{text-align:left;width:100%;padding:8px 10px;border-radius:6px}
+  #pools button.active{border-color:var(--accent);color:var(--accent)}
+  .empty{color:var(--muted);text-align:center;padding:24px}
+</style>
+</head>
+<body>
+<aside>
+  <h1>purSer <small>v0.1</small></h1>
+  <div>
+    <div class="sec-h">资源池</div>
+    <div class="row" style="margin-bottom:8px">
+      <input id="newPoolName" placeholder="池名" style="flex:1">
+      <select id="newPoolKind" style="width:110px">
+        <option value="proxy">proxy</option>
+        <option value="account">account</option>
+      </select>
+      <button class="primary" onclick="createPool()">创建</button>
+    </div>
+    <div id="pools"></div>
+  </div>
+  <div>
+    <div class="sec-h">安全</div>
+    <div class="row">
+      <input id="apiKey" type="password" placeholder="API Key（可选）" style="flex:1">
+      <button onclick="saveKey()">保存</button>
+    </div>
+  </div>
+</aside>
+<main>
+  <header>
+    <strong id="poolTitle">未选择资源池</strong>
+    <span class="muted" id="poolMeta"></span>
+    <span class="grow"></span>
+    <button id="refreshBtn" onclick="loadAll()">刷新</button>
+    <button class="danger" onclick="logout()">清 Key</button>
+  </header>
+  <div class="content">
+    <div class="notice" id="notice"></div>
+
+    <section class="grid stats" id="kpis"></section>
+    <div class="card" id="distCard" style="display:none">
+      <div class="sec-h">状态分布</div>
+      <div class="bar" id="distBar"></div>
+    </div>
+
+    <div class="grid cols">
+      <div class="card">
+        <div class="sec-h">资源</div>
+        <div class="row" style="margin-bottom:10px">
+          <input id="fState" placeholder="状态过滤: idle,active" style="width:180px">
+          <input id="fTag" placeholder="标签" style="width:140px">
+          <input id="fQ" placeholder="关键字" style="flex:1">
+          <button onclick="loadResources()">查询</button>
+        </div>
+        <div style="overflow:auto;max-height:520px">
+          <table>
+            <thead><tr><th>ID</th><th>状态</th><th>健康</th><th>槽</th><th>标签</th><th>操作</th></tr></thead>
+            <tbody id="resRows"></tbody>
+          </table>
+        </div>
+        <div class="hint">批量操作请先在左侧导入或使用操作按钮；危险操作会二次确认。</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="card">
+          <div class="sec-h">导入资源</div>
+          <textarea id="importText" placeholder="每行一个：id 协议 host port 标签以空格分隔&#10;prox-1 http 1.2.3.4 8080 US,http&#10;也可以粘贴 JSON 数组 [{&quot;id&quot;:&quot;x&quot;,&quot;host&quot;:&quot;1.1.1.1&quot;,&quot;port&quot;:80}]"></textarea>
+          <div class="row" style="margin-top:8px">
+            <select id="importMode" style="width:150px">
+              <option value="none">不验活</option>
+              <option value="on_import">导入即验活</option>
+              <option value="batch">后台批量验活</option>
+            </select>
+            <button class="primary fill" onclick="importResources()">导入</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="sec-h">租约调试</div>
+          <div class="row">
+            <input id="leaseConsumer" placeholder="consumer" style="width:120px">
+            <input id="leaseTarget" placeholder="target" style="width:140px">
+            <input id="leaseTimeout" placeholder="timeout s" type="number" value="10" style="width:90px">
+            <button class="primary" onclick="acquireLease()">获取</button>
+          </div>
+          <div id="leaseResult" class="hint"></div>
+          <div id="activeLeases" class="hint" style="margin-top:8px"></div>
+        </div>
+
+        <div class="card">
+          <div class="sec-h">事件流</div>
+          <div class="evlist" id="evlist"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const stateColors = {
+  idle:"#22c55e", active:"#22c55e", full:"#f59e0b", new:"#8b98a5",
+  validating:"#8b98a5", quarantined:"#ef4444", suspended:"#8b98a5",
+  quota_exhausted:"#06b6d4", banned:"#ef4444", lost:"#ef4444",
+  draining:"#8b98a5", archived:"#8b98a5"
+};
+let currentPool = null;
+let poolStats = {};
+
+function token(){ return localStorage.getItem("purser_key") || ""; }
+function saveKey(){ localStorage.setItem("purser_key", document.getElementById("apiKey").value); flash("密钥已保存","okk"); }
+function logout(){ localStorage.removeItem("purser_key"); document.getElementById("apiKey").value=""; flash("已清除密钥","okk"); }
+
+async function api(path, opts={}){
+  const headers = Object.assign({"Content-Type":"application/json"}, opts.headers||{});
+  const key = token();
+  if(key) headers["Authorization"] = "Bearer " + key;
+  const res = await fetch(path, Object.assign({}, opts, {headers}));
+  if(!res.ok){ let d={}; try{ d = await res.json(); }catch(e){} throw new Error((d.detail||res.statusText)); }
+  if(res.status===204) return null;
+  return res.json();
+}
+function flash(msg, kind){ const n=document.getElementById("notice"); n.textContent=msg; n.className="notice "+(kind||"err"); setTimeout(()=>n.className="notice",4000); }
+
+async function loadPools(){
+  const data = await api("/pools");
+  const box = document.getElementById("pools");
+  box.innerHTML = "";
+  for(const p of (data.pools||[])){
+    const b = document.createElement("button");
+    b.textContent = `${p.name} (${p.counts.idle+"/"+p.total})`;
+    b.className = p.name===currentPool ? "active" : "";
+    b.onclick = ()=>selectPool(p.name);
+    box.appendChild(b);
+  }
+  if(!currentPool && data.pools && data.pools.length) selectPool(data.pools[0].name);
+}
+async function selectPool(name){
+  currentPool = name;
+  if(poolStats._ev) poolStats._ev.close();
+  document.getElementById("poolTitle").textContent = name;
+  await loadAll();
+  const ev = new EventSource(`/pools/${encodeURIComponent(name)}/events`+(token()?``:``));
+  ev.onmessage = (m)=>{ try{ addEvent(JSON.parse(m.data)); }catch(e){} };
+  ev.onerror = ()=>{};
+  poolStats._ev = ev;
+}
+async function loadAll(){
+  if(!currentPool) return;
+  const name = currentPool;
+  const stat = await api(`/pools/${encodeURIComponent(name)}`);
+  poolStats[name] = stat;
+  document.getElementById("poolMeta").textContent = `${stat.kind} · 健康 ${stat.avg_health ?? "-"}`;
+  const counts = stat.counts||{};
+  const k = document.getElementById("kpis");
+  const cards = [
+    ["总量", stat.total], ["可分配", stat.allocatable], ["在租约", stat.active_leases],
+    ["等待", stat.waiting], ["隔离", counts.quarantined||0], ["封禁", counts.banned||0],
+    ["暂停", counts.suspended||0], ["配额耗尽", counts.quota_exhausted||0]
+  ];
+  k.innerHTML = cards.map(([l,n])=>`<div class="kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+  const entries = Object.entries(counts).filter(([,n])=>n>0);
+  document.getElementById("distCard").style.display = entries.length?"block":"none";
+  document.getElementById("distBar").innerHTML = entries.map(([s,n])=>`<span style="width:${(n/stat.total*100).toFixed(2)}%;background:${stateColors[s]||"#8b98a5"}" title="${s}: ${n}"></span>`).join("");
+  await loadResources();
+  await loadLeases();
+}
+async function loadResources(){
+  if(!currentPool) return;
+  const name = currentPool;
+  const state = document.getElementById("fState").value.trim();
+  const tag = document.getElementById("fTag").value.trim();
+  const q = document.getElementById("fQ").value.trim();
+  const qs = new URLSearchParams();
+  if(state) qs.set("state", state);
+  if(tag) qs.set("tag", tag);
+  if(q) qs.set("q", q);
+  const data = await api(`/pools/${encodeURIComponent(name)}/resources?${qs}`);
+  const rows = document.getElementById("resRows");
+  rows.innerHTML = "";
+  for(const r of (data.resources||[])){
+    const tr = document.createElement("tr");
+    const tags = (r.tags||[]).map(t=>`<span class="tag">${t}</span>`).join("");
+    tr.innerHTML = `
+      <td class="id" title="${r.id}">${r.id}</td>
+      <td><span class="pill st-${r.state}"><i class="d"></i>${r.state}</span></td>
+      <td>${(r.health.score*100).toFixed(0)}%</td>
+      <td>${r.used_slots}/${r.max_slots}</td>
+      <td>${tags}</td>
+      <td></td>`;
+    tr.querySelectorAll("td").forEach(t=>{ t.style.verticalAlign="middle"; });
+    const td = tr.lastElementChild;
+    const btns = [
+      ["validate","validate"], ["ban","ban","danger"], ["unban","unban"],
+      ["suspend","suspend"], ["resume","resume"], ["top-up","top-up"],
+      ["revoke","revoke","danger"]
+    ];
+    for(const [label,act,cls] of btns){
+      const b=document.createElement("button"); b.textContent=label; if(cls)b.className=cls;
+      b.onclick=async ()=>{ if(act==="ban"&&!confirm(`封禁 ${r.id}?`))return; if(act==="revoke"&&!confirm(`强踢 ${r.id} 的租约?`))return; await doAction(act, r.id); };
+      td.appendChild(b);
+    }
+    rows.appendChild(tr);
+  }
+  if(!(data.resources||[]).length) rows.innerHTML = '<tr><td colspan="6" class="empty">暂无资源</td></tr>';
+}
+async function doAction(action, rid){
+  try{
+    await api(`/pools/${encodeURIComponent(currentPool)}/resources/${encodeURIComponent(rid)}/${action}`, {method:"POST", body: JSON.stringify({reason:"ui"})});
+    flash(`${action} ${rid} 完成`, "okk"); await loadAll();
+  }catch(e){ flash(e.message); }
+}
+async function createPool(){
+  const name = document.getElementById("newPoolName").value.trim();
+  const kind = document.getElementById("newPoolKind").value;
+  if(!name) return flash("请输入池名");
+  try{
+    await api("/pools", {method:"POST", body: JSON.stringify({name, kind})});
+    flash(`池 ${name} 已创建`, "okk");
+    document.getElementById("newPoolName").value="";
+    await loadPools();
+  }catch(e){ flash(e.message); }
+}
+async function importResources(){
+  const raw = document.getElementById("importText").value.trim();
+  if(!raw) return flash("请输入要导入的内容");
+  let records;
+  if(raw.startsWith("[")){
+    try{ records = JSON.parse(raw); }catch(e){ return flash("JSON 解析失败"); }
+  }else{
+    records = raw.split("\n").map(line=>{
+      const parts = line.trim().split(/\s+/);
+      const [id, protocol, host, port, ...rest] = parts;
+      return {id, protocol: protocol||"http", host, port: port?Number(port):80, tags: (rest.join(",")||"").split(",").filter(Boolean)};
+    });
+  }
+  const mode = document.getElementById("importMode").value;
+  try{
+    const rep = await api(`/pools/${encodeURIComponent(currentPool)}/resources`, {
+      method:"POST", body: JSON.stringify({records, import_validate: mode}),
+      headers: {"Idempotency-Key": "imp-"+Date.now()}
+    });
+    flash(`导入完成 新增${rep.imported} 更新${rep.updated} 跳过${rep.skipped} 错误${rep.errors.length}`, "okk");
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+async function acquireLease(){
+  const body = {
+    consumer: document.getElementById("leaseConsumer").value || null,
+    target: document.getElementById("leaseTarget").value || null,
+    timeout: Number(document.getElementById("leaseTimeout").value) || 10
+  };
+  try{
+    const data = await api(`/pools/${encodeURIComponent(currentPool)}/leases`, {method:"POST", body: JSON.stringify(body)});
+    const l = data.leases[0];
+    document.getElementById("leaseResult").innerHTML =
+      `已获取 <b>${l.resource_id}</b> · token <code>${l.token.slice(0,8)}…</code> · 载荷 ${JSON.stringify(l.payload)}` +
+      ` <button onclick="releaseLease('${l.token}')">归还</button>`;
+    await loadLeases();
+  }catch(e){ flash(e.message); }
+}
+async function releaseLease(token, outcome="ok"){
+  try{
+    await api(`/pools/${encodeURIComponent(currentPool)}/leases/${token}`, {method:"DELETE", body: JSON.stringify({outcome})});
+    document.getElementById("leaseResult").innerHTML = `已归还 ${token.slice(0,8)}…`;
+    await loadLeases(); await loadResources();
+  }catch(e){ flash(e.message); }
+}
+async function loadLeases(){
+  if(!currentPool) return;
+  try{
+    const data = await api(`/pools/${encodeURIComponent(currentPool)}/leases`);
+    document.getElementById("activeLeases").innerHTML =
+      "活跃租约: " + (data.leases||[]).map(l=>`<b>${l.resource_id}</b>@${l.consumer||"-"}(${l.slots})`).join(", ") || "无";
+  }catch(e){}
+}
+function addEvent(ev){
+  const list = document.getElementById("evlist");
+  const div = document.createElement("div");
+  div.innerHTML = `<b>${ev.type}</b> ${ev.rid||""} <span class="muted">${new Date(ev.ts*1000).toLocaleTimeString()}</span>`;
+  list.prepend(div);
+  while(list.children.length>200) list.lastElementChild.remove();
+}
+(async function init(){
+  document.getElementById("apiKey").value = token();
+  try{ await loadPools(); setInterval(loadAll, 10000); }catch(e){ flash(e.message); }
+})();
+</script>
+</body>
+</html>
