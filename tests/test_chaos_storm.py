@@ -13,7 +13,7 @@ import random
 
 import fakeredis
 import pytest
-from conftest import FakeChecker
+from conftest import REAL_REDIS_URL, FakeChecker
 
 from purser import Purser
 from purser.core.resource import AcquireRequest, UsageOutcome
@@ -191,11 +191,14 @@ async def test_chaos_restart_across_churn(tmp_path, storage_kind, coordination_k
         await ps2.close()
 
 
-async def test_multi_instance_chaos_no_oversell(tmp_path, storage_kind, coordination_kind):
+async def test_multi_instance_chaos_no_oversell(
+    tmp_path, storage_kind, coordination_kind, shared_backend_harness
+):
     if storage_kind != "sqlite" or coordination_kind != "redis":
         pytest.skip("sqlite + redis combination only")
+    if not REAL_REDIS_URL:
+        pytest.skip("real Redis required for the shared-backend chaos test")
     path = str(tmp_path / "chaos-shared.db")
-    redis = fakeredis.aioredis.FakeRedis()
     rng = random.Random(99)
 
     def build() -> Purser:
@@ -204,7 +207,7 @@ async def test_multi_instance_chaos_no_oversell(tmp_path, storage_kind, coordina
             storage="sqlite",
             coordination="redis",
             sqlite_path=path,
-            redis_client=redis,
+            redis_url=REAL_REDIS_URL,
         )
         ps.register_type(FakeChecker())
         return ps

@@ -160,6 +160,7 @@ async def test_purser_end_to_end_restart_reconcile(tmp_path):
     )
     ps1.register_type(FakeChecker())
     p1 = ps1.create_pool(pool, "fakecheck")
+    await ps1.start()
     await p1.import_resources(
         [{"id": "r1", "host": "10.0.0.1", "port": 8080}], import_validate="on_import"
     )

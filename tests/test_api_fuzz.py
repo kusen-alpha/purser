@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 
-from test_api import auth, make_client
+from test_api import auth
 
 from purser.core.state import ResourceState
 
@@ -26,7 +26,7 @@ def _junk(rng: random.Random):
     )
 
 
-def test_api_fuzz_no_500():
+def test_api_fuzz_no_500(make_client):
     rng = random.Random(20261106)
     client, ps = make_client()
     head = auth("admin-key")

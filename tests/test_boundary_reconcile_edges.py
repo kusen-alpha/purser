@@ -106,7 +106,7 @@ async def test_reconcile_partial_orphan_aligns_to_live_lease(make_pool):
     assert [lease.token for lease in await pool._coordination.active(pool.name)] == [
         lease_b.token
     ]
-    await pool.start()
+    await pool._reconcile_leases()
     res = await pool.get(rid)
     assert res is not None and res.concurrency.used_slots == 1
     assert res.state is ResourceState.ACTIVE
@@ -122,7 +122,7 @@ async def test_reconcile_full_orphan_resets_to_idle(make_pool):
     lease_a = await pool.acquire(AcquireRequest(consumer="a", slots=1))
     lease_b = await pool.acquire(AcquireRequest(consumer="b", slots=1))
     await pool._coordination.flush(pool.name)
-    await pool.start()
+    await pool._reconcile_leases()
     res = await pool.get(rid)
     assert res is not None and res.concurrency.used_slots == 0
     assert res.state is ResourceState.IDLE
@@ -139,7 +139,7 @@ async def test_reconcile_draining_with_surviving_lease_not_archived(make_pool):
     assert res is not None and res.state is ResourceState.DRAINING
     assert res.concurrency.used_slots == 1
     # A live lease must keep the DRAINING resource open, not archive it.
-    await pool.start()
+    await pool._reconcile_leases()
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.DRAINING
     assert res.concurrency.used_slots == 1
@@ -164,7 +164,7 @@ async def test_late_release_other_holder_slot_preserved(make_pool):
     assert [lease.token for lease in await pool._coordination.active(pool.name)] == [
         lease_b.token
     ]
-    await pool.start()
+    await pool._reconcile_leases()
     res = await pool.get(rid)
     assert res is not None and res.concurrency.used_slots == 1
     assert await pool.release(lease_b) is True
@@ -207,11 +207,15 @@ async def test_waiter_cancel_stress_no_invalid_state_and_no_leak(make_pool):
             return
         task.cancel()
         try:
-            await task
+            lease = await task
         except (asyncio.CancelledError, PurserError, asyncio.TimeoutError):
             pass
         except Exception as exc:
             surprises[f"cancel{i}"] = exc
+        else:
+            # The task completed between the done() check and cancel(); the
+            # lease is real and must be returned.
+            await pool.release(lease)
 
     await asyncio.gather(
         *(holder(i) for i in range(60)),

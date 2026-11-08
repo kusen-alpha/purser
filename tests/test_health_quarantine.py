@@ -74,6 +74,16 @@ def test_validation_gate_sampling_is_deterministic():
     )
 
 
+def test_needs_validate_bypasses_staleness_gate():
+    gate = ValidationGate(stale_after=3600.0, sample=0.0)
+    fresh = Resource(
+        id="a", kind="x", payload={}, health=HealthStats(last_checked_at=time.time())
+    )
+    assert not gate.due_background(fresh)
+    fresh.meta["needs_validate"] = time.time()
+    assert gate.due_background(fresh)
+
+
 def test_stale_after_gate():
     gate = ValidationGate(stale_after=10.0, sample=1.0)
     fresh = Resource(id="a", kind="x", payload={}, health=HealthStats(last_checked_at=time.time()))

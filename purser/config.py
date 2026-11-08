@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -30,7 +31,8 @@ class Weights:
 
 
 _ALLOCATORS = ("health_weighted", "round_robin", "least_loaded", "static_priority")
-_SCHEDULERS = ("fifo", "priority_quota", "token_bucket")
+_SCHEDULERS = ("priority_quota",)
+_RESERVED_SCHEDULERS = ("fifo", "token_bucket")
 _UNBAN_MODES = ("manual_only", "auto_after_ttl", "mixed")
 _IMPORT_VALIDATE = ("none", "on_import", "batch")
 
@@ -64,7 +66,8 @@ class PoolConfig:
     cooldown_consumer_only: bool = False
     usage_quota: int | None = None
     expires_in: float | None = None
-    target_quota: dict[str, int] | None = None
+    total_quota: int | None = None
+    target_quota: dict[str, int] | None = None  # deprecated alias for total_quota
 
     probe_targets: list[str] | None = None
     site_failure_ttl: float = 300.0
@@ -101,6 +104,11 @@ class PoolConfig:
             raise ConfigError(f"unknown coordination {self.coordination!r}")
         if self.allocator not in _ALLOCATORS:
             raise ConfigError(f"unknown allocator {self.allocator!r}")
+        if self.scheduler in _RESERVED_SCHEDULERS:
+            raise ConfigError(
+                f"scheduler {self.scheduler!r} is not implemented; only "
+                "'priority_quota' (priority first, FIFO within a priority) is available"
+            )
         if self.scheduler not in _SCHEDULERS:
             raise ConfigError(f"unknown scheduler {self.scheduler!r}")
         if self.unban_mode not in _UNBAN_MODES:
@@ -124,13 +132,86 @@ class PoolConfig:
             if not math.isfinite(value) or value < 0:
                 raise ConfigError(f"{name} must be a finite, non-negative number")
         if self.heartbeat_interval is not None and (
-            not math.isfinite(self.heartbeat_interval) or self.heartbeat_interval < 0
+            not math.isfinite(self.heartbeat_interval) or self.heartbeat_interval <= 0
         ):
-            raise ConfigError("heartbeat_interval must be finite and >= 0")
+            raise ConfigError("heartbeat_interval must be finite and > 0")
         if self.heartbeat_interval is None:
             self.heartbeat_interval = max(1.0, self.lease_ttl / 3.0)
         if self.top_k <= 0:
             raise ConfigError("top_k must be > 0")
+        if self.usage_quota is not None and (
+            not isinstance(self.usage_quota, int) or self.usage_quota < 0
+        ):
+            raise ConfigError("usage_quota must be a non-negative integer")
+        if self.total_quota is not None and (
+            isinstance(self.total_quota, bool)
+            or not isinstance(self.total_quota, int)
+            or self.total_quota <= 0
+        ):
+            raise ConfigError("total_quota must be a positive integer")
+        if self.target_quota is not None:
+            if self.total_quota is not None:
+                raise ConfigError(
+                    "set only total_quota; target_quota is its deprecated alias"
+                )
+            if not isinstance(self.target_quota, dict):
+                raise ConfigError("target_quota must be a mapping of target to limit")
+            for target, limit in self.target_quota.items():
+                if not isinstance(limit, int) or limit < 0:
+                    raise ConfigError(
+                        f"target_quota[{target!r}] must be a non-negative integer"
+                    )
+            if sum(self.target_quota.values()) <= 0:
+                raise ConfigError("target_quota must have a positive total")
+            warnings.warn(
+                "target_quota is deprecated; use total_quota=<sum of limits>. "
+                "target_quota was never applied per target, only as a total quota.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.total_quota = int(sum(self.target_quota.values()))
+            self.target_quota = None
+        if self.expires_in is not None and (
+            not math.isfinite(self.expires_in) or self.expires_in < 0
+        ):
+            raise ConfigError("expires_in must be finite and >= 0")
+        if self.max_lease_duration is not None and (
+            not math.isfinite(self.max_lease_duration) or self.max_lease_duration <= 0
+        ):
+            raise ConfigError("max_lease_duration must be finite and > 0")
+        if not math.isfinite(self.unban_after) or self.unban_after < 0:
+            raise ConfigError("unban_after must be finite and >= 0")
+        if not isinstance(self.validate_concurrency, int) or self.validate_concurrency < 1:
+            raise ConfigError("validate_concurrency must be an integer >= 1")
+        if not isinstance(self.site_failure_max, int) or self.site_failure_max < 1:
+            raise ConfigError("site_failure_max must be an integer >= 1")
+        if not isinstance(self.event_queue_size, int) or self.event_queue_size < 1:
+            raise ConfigError("event_queue_size must be an integer >= 1")
+        for name in ("drain_timeout", "archive_retention", "lost_retention"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ConfigError(f"{name} must be a finite, non-negative number")
+        if self.schema_version != 1:
+            raise ConfigError(f"unsupported schema_version {self.schema_version!r}")
+        if self.drain_timeout != 30.0:
+            raise ConfigError(
+                "drain_timeout is reserved for preemptive drains, which are not "
+                "implemented; leave it at the default 30.0"
+            )
+        if self.preempt_threshold != 10:
+            raise ConfigError(
+                "preempt_threshold is reserved for preemptible leases, which are not "
+                "implemented; leave it at the default 10"
+            )
+        if self.fail_open:
+            raise ConfigError("fail_open is not implemented; storage fails closed")
+        if self.preemptible:
+            raise ConfigError("preemptible leases are not implemented yet")
+        if self.probe_targets is not None:
+            raise ConfigError(
+                "pool-level probe_targets is not implemented; configure "
+                "ProxyType(probe_targets=...)"
+            )
         if not isinstance(self.weights, Weights):
             self.weights = Weights.from_dict(self.weights)
         self.weights.affinity = self.affinity_weight
@@ -138,6 +219,10 @@ class PoolConfig:
     def with_overrides(self, **updates: Any) -> PoolConfig:
         """Return a shallow copy with the given knobs replaced (O16)."""
 
+        # The deprecated alias replaces the canonical quota rather than colliding
+        # with the value it was normalised into at construction time.
+        if "target_quota" in updates and "total_quota" not in updates:
+            updates["total_quota"] = None
         cfg = replace(self, **updates)
         cfg.__post_init__()
         return cfg

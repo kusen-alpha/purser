@@ -49,8 +49,20 @@ class ResourcePatch:
     payload: dict[str, Any] | None = None
     concurrency: Concurrency | None = None
     meta_patch: dict[str, Any] | None = None
+    # Fields explicitly reset to ``None``; ``None`` alone means "unchanged"
+    # everywhere else on this patch, so clearing needs its own marker.
+    clear_fields: frozenset[str] = frozenset()
+
+    _CLEARABLE = frozenset(
+        {"usage_quota", "expires_at", "next_available_at", "mutex_group", "schedule_window"}
+    )
 
     def apply(self, resource: Resource) -> Resource:
+        unknown = self.clear_fields - self._CLEARABLE
+        if unknown:
+            raise ValueError(f"cannot clear field(s): {', '.join(sorted(unknown))}")
+        for name in self.clear_fields:
+            setattr(resource, name, None)
         if self.state is not None:
             resource.state = self.state
         if self.health is not None:
@@ -97,7 +109,19 @@ class StorageBackend(ABC):
     async def get(self, pool: str, rid: str) -> Resource | None: ...
 
     @abstractmethod
-    async def put(self, pool: str, resource: Resource) -> Resource: ...
+    async def put(
+        self,
+        pool: str,
+        resource: Resource,
+        *,
+        expected_version: int | None = None,
+    ) -> Resource:
+        """Insert or update a resource.
+
+        ``expected_version=None`` keeps the legacy upsert semantics.  ``0``
+        means create-only and ``N`` means update-only when the stored version
+        is exactly ``N``; a mismatch raises :class:`VersionConflict`.
+        """
 
     @abstractmethod
     async def delete(self, pool: str, rid: str) -> bool: ...
@@ -115,6 +139,19 @@ class StorageBackend(ABC):
 
     @abstractmethod
     async def counts(self, pool: str) -> dict[ResourceState, int]: ...
+
+    async def health_scores(self, pool: str) -> list[float]:
+        """Scores of resources that have at least one health sample.
+
+        The default walks :meth:`scan`; SQL backends override it to read only
+        the ``health`` column so payloads are never decrypted for statistics.
+        """
+
+        scores: list[float] = []
+        async for resource in self.scan(pool):
+            if resource.health.samples:
+                scores.append(resource.health.score)
+        return scores
 
     @abstractmethod
     async def transition_acquire(

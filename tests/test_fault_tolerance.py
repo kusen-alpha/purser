@@ -76,7 +76,7 @@ async def test_release_after_coordination_loss_waits_for_reconcile(make_pool):
     # A repeated release is idempotent rather than an exception.
     assert await pool.release(lease) is True
     # The restart path reconciles the orphaned slot.
-    await pool.start()
+    await pool._reconcile_leases()
     res = await pool.get(rid)
     assert res is not None and res.concurrency.used_slots == 0
     assert res.state is ResourceState.IDLE
@@ -198,6 +198,7 @@ async def test_restart_held_lease_reconciled(tmp_path, storage_kind, coordinatio
     path = str(tmp_path / "restart.db")
     ps1 = _make_sqlite_purser(path, coordination_kind)
     pool = ps1.create_pool("px", "fakecheck")
+    await ps1.start()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     assert lease.resource_id == rid
@@ -245,6 +246,7 @@ async def test_restart_preserves_quota_and_usage(tmp_path, storage_kind, coordin
     path = str(tmp_path / "quota.db")
     ps1 = _make_sqlite_purser(path, coordination_kind)
     pool = ps1.create_pool("px", "fakecheck", usage_quota=2)
+    await ps1.start()
     [rid] = await seed(pool, n=1)
     for _ in range(2):
         lease = await pool.acquire(AcquireRequest(consumer="c"))
@@ -273,6 +275,7 @@ async def test_restart_draining_lost_lease_archives(tmp_path, storage_kind, coor
     path = str(tmp_path / "draining.db")
     ps1 = _make_sqlite_purser(path, coordination_kind)
     pool = ps1.create_pool("px", "fakecheck")
+    await ps1.start()
     [rid] = await seed(pool, n=1)
     await pool.acquire(AcquireRequest(consumer="c"))
     await pool.drain(rid, operator="ops", reason="retiring")

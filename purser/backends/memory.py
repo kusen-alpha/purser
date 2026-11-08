@@ -20,6 +20,7 @@ from purser.core.state import (
     StateContext,
     StateMachine,
 )
+from purser.errors import VersionConflict
 
 
 def _now() -> float:
@@ -78,9 +79,21 @@ class MemoryStorage(StorageBackend):
     async def get(self, pool: str, rid: str) -> Resource | None:
         return self._store(pool).get(rid)
 
-    async def put(self, pool: str, resource: Resource) -> Resource:
+    async def put(
+        self,
+        pool: str,
+        resource: Resource,
+        *,
+        expected_version: int | None = None,
+    ) -> Resource:
         store = self._store(pool)
         old = store.get(resource.id)
+        if expected_version is not None:
+            current = old.version if old is not None else 0
+            if current != expected_version:
+                raise VersionConflict(
+                    f"resource {resource.id!r} version {current} != expected {expected_version}"
+                )
         if old is not None:
             self._reindex(pool, resource.id, old.state, resource.state)
             self._unindex_tags(pool, old)
@@ -123,6 +136,13 @@ class MemoryStorage(StorageBackend):
     async def counts(self, pool: str) -> dict[ResourceState, int]:
         states = self._states(pool)
         return {s: len(v) for s, v in states.items()}
+
+    async def health_scores(self, pool: str) -> list[float]:
+        return [
+            resource.health.score
+            for resource in self._list_by_state(pool, None)
+            if resource.health.samples
+        ]
 
     async def transition_acquire(
         self, pool: str, rid: str, slots: int

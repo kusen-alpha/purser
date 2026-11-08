@@ -21,12 +21,48 @@ class _Client:
         return _Response()
 
 
-def _args(file):
+def _args(file, *, idempotency_key=None):
     return type(
         "NS",
         (),
-        {"pool": "proxies", "file": file, "import_validate": "none", "rid": None},
+        {
+            "pool": "proxies",
+            "file": file,
+            "import_validate": "none",
+            "idempotency_key": idempotency_key,
+        },
     )()
+
+
+def test_import_validates_in_background_by_default():
+    args = cli._parser().parse_args(["import", "proxies", "p.txt"])
+    assert args.import_validate == "batch"
+
+
+def test_serve_parser_accepts_persistence_options():
+    args = cli._parser().parse_args(
+        [
+            "serve",
+            "--storage",
+            "sqlite",
+            "--sqlite-path",
+            "purser.db",
+            "--coordination",
+            "redis",
+            "--redis-url",
+            "redis://localhost:6379",
+            "--mysql-url",
+            "mysql://user:pass@localhost/db",
+            "--audit-path",
+            "audit.db",
+        ]
+    )
+    assert args.storage == "sqlite"
+    assert args.sqlite_path == "purser.db"
+    assert args.coordination == "redis"
+    assert args.redis_url == "redis://localhost:6379"
+    assert args.mysql_url == "mysql://user:pass@localhost/db"
+    assert args.audit_path == "audit.db"
 
 
 def test_cmd_import_parses_formats(tmp_path):
@@ -63,6 +99,20 @@ def test_cmd_import_parses_formats(tmp_path):
         "port": 443,
         "tags": ["tag1"],
     }
+    assert client.calls[0][2] == {}
+
+
+def test_cmd_import_only_sends_explicit_idempotency_key(tmp_path):
+    f = tmp_path / "proxies.txt"
+    f.write_text("1.2.3.4 8080\n", encoding="utf-8")
+
+    implicit = _Client()
+    cli.cmd_import(_args(str(f)), implicit)
+    assert implicit.calls[0][2] == {}
+
+    explicit = _Client()
+    cli.cmd_import(_args(str(f), idempotency_key="nightly-1"), explicit)
+    assert explicit.calls[0][2] == {"Idempotency-Key": "nightly-1"}
 
 
 def test_cmd_lease_and_release_handlers():

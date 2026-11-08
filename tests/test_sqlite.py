@@ -72,6 +72,7 @@ async def test_purser_restart_reconciles_orphan_leases(tmp_path):
     )
     ps1.register_type(FakeChecker())
     pool = ps1.create_pool("px", "fakecheck")
+    await ps1.start()
     await pool.import_resources(
         [{"id": "r1", "host": "10.0.0.1", "port": 8080, "tags": ["us"]}],
         import_validate="on_import",
@@ -124,6 +125,7 @@ async def test_redis_coordination_survives_restart(tmp_path):
 
     ps1 = build()
     pool = ps1.create_pool("px", "fakecheck")
+    await ps1.start()
     await pool.import_resources(
         [{"id": "r1", "host": "10.0.0.1", "port": 8080}],
         import_validate="on_import",

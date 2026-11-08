@@ -1,0 +1,143 @@
+site_name: Purser
+site_description: 通用采集资源调度库：代理、账号与自定义资源的租约、验活与公平调度
+docs_dir: docs
+site_dir: site
+
+# 发布后按实际部署地址填写；search.share、canonical 与 sitemap 依赖它。
+# site_url: https://your-domain.example/
+
+exclude_docs: |
+  design/design-doc.md
+  design/feasibility.md
+
+theme:
+  name: material
+  language: zh
+  logo: assets/logo-white.svg
+  favicon: assets/logo.svg
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.top
+    - navigation.footer
+    - navigation.path
+    - navigation.tracking
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - content.footnote.tooltips
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/lightbulb-auto
+        name: 切换到浅色模式
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/lightbulb
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/lightbulb-outline
+        name: 跟随系统
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+plugins:
+  - search:
+      lang: [zh]
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tilde
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - 首页: index.md
+  - 上手:
+      - 概览: getting-started/index.md
+      - 安装: getting-started/install.md
+      - 嵌入式快速开始: getting-started/quickstart-async.md
+      - 服务快速开始: getting-started/quickstart-service.md
+  - 指南:
+      - 概览: guides/index.md
+      - 资源可用性判定: guides/availability.md
+      - 租约生命周期: guides/lease-lifecycle.md
+      - 导入与验活: guides/import-and-validate.md
+      - 公平性与健康度: guides/fairness-and-health.md
+      - 多实例部署: guides/multi-instance.md
+      - 同步 Purser: guides/sync-facade.md
+      - 自定义资源类型: guides/custom-resource-type.md
+      - Web 控制台: guides/web-console.md
+      - 运维操作: guides/operations.md
+  - 参考:
+      - 概览: reference/index.md
+      - Python API:
+          - 概览: reference/python-api/index.md
+          - Purser: reference/python-api/purser.md
+          - ResourcePool: reference/python-api/pools.md
+          - AcquireRequest / Lease / BatchLease: reference/python-api/acquisition.md
+          - Resource / ResourceType: reference/python-api/resources.md
+          - StorageBackend / Coordination: reference/python-api/backends.md
+      - REST API:
+          - 概览: reference/rest-api/index.md
+          - 池: reference/rest-api/pools.md
+          - 资源: reference/rest-api/resources.md
+          - 租约: reference/rest-api/leases.md
+          - 事件: reference/rest-api/events.md
+          - 报表与验活任务: reference/rest-api/reports.md
+          - 管理: reference/rest-api/admin.md
+      - CLI: reference/cli.md
+      - 配置: reference/configuration.md
+      - 内置资源类型: reference/resource-types.md
+      - LocalScheduler: reference/local-scheduler.md
+      - 错误处理: reference/errors.md
+      - 状态机: reference/state-machine.md
+  - 设计与内部:
+      - 概览: design/index.md
+      - 架构: design/architecture.md
+      - 数据平面与丢失语义: design/data-planes.md
+      - 算法与不变量: design/algorithms.md
+  - 贡献:
+      - 概览: contributing/index.md
+      - 测试与工程规范: contributing/testing.md

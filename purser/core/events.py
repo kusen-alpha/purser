@@ -118,7 +118,7 @@ class EventBus:
 
         return [
             e for e in self._history if e.seq > after_seq
-        ][-limit:]
+        ][:limit]
 
     async def start(self) -> None:
         if self._task is None or self._task.done():

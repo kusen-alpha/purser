@@ -812,17 +812,23 @@ POST   /pools/{pool}/resources/{rid}/validate   # 手动验活
 POST   /pools/{pool}/resources/{rid}/ban        # 封禁(+原因)
 POST   /pools/{pool}/resources/{rid}/unban      # 解封
 POST   /pools/{pool}/resources/{rid}/admin-state  # 人工纠正（O11，需 reason）
+POST   /pools/{pool}/resources/{rid}/cancel-drain # 撤销排空（回到 idle/active/full）
 DELETE /pools/{pool}/resources/{rid}            # 回收/删除
+GET    /pools/{pool}/validate-jobs             # 批量验活任务列表（V2）
 GET    /pools/{pool}/validate-jobs/{id}         # 批量验活进度（V2）
 POST   /pools/{pool}/validate-jobs/{id}/cancel  # 取消批量验活（V2）
 POST   /pools/{pool}/leases                     # 获取资源：条件/bundle（O8）/resource_id（O12）/count（O13）
+GET    /pools/{pool}/leases                     # 活跃租约列表
+GET    /pools/{pool}/leases/{token}             # 单租约详情
 DELETE /pools/{pool}/leases/{token}             # 归还
+DELETE /pools/{pool}/leases?consumer=           # 按 consumer 批量归还
 POST   /pools/{pool}/leases/{token}/revoke      # 强踢租约（O1）
 POST   /pools/{pool}/drain                      # 整池排空（O10）
-GET    /backup  /  POST /restore                # 备份与恢复（O5；restore 后自动 reconcile，F2）
+GET    /backup  /  POST /restore                # 备份与恢复（O5/F2：租约不迁移，占用态归一 IDLE）
 GET    /pools/{pool}/events?after_seq=N         # SSE 实时事件流（游标续传/重放，E3）
 GET    /reports/usage                           # 用量/瓶颈/成本报表（R1）
 GET    /healthz  /  GET /readyz                 # 存活/就绪探活（O17）
+GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快照（控制台指标卡）
 ```
 
 > 所有写操作要求 `X-Operator` 头并写入审计日志（O9）；`force_revoke` / `admin-state` 额外要求 `reason` 字段。
@@ -868,7 +874,7 @@ GET    /healthz  /  GET /readyz                 # 存活/就绪探活（O17）
 | O2 | `update_resource` | A：占用中（ACTIVE/FULL）禁止或先回收，版本号 + 审计 |
 | O3 | `move_resource` 跨池迁移 | A：占用中（ACTIVE/FULL）拒绝或等待归还 |
 | O4 | 导入去重 `dedup_key` | A：存在即更新，保留历史 |
-| O5 | `export` / backup-restore | A：复用 O4 去重语义 |
+| O5 | `export` / backup-restore | A：`GET /backup` + `POST /restore`，`skip`/`overwrite` 冲突策略 |
 | O6 | `top_up` + 周期配额重置 | A：配合 S16 |
 | O7 | `PeriodicScheduler` | A：quota_reset / periodic_unban / lost_gc（见 5.9） |
 | O8 | 组合租约 bundle | A：原子回滚，先稀缺后配套（见 5.10） |
@@ -880,7 +886,7 @@ GET    /healthz  /  GET /readyz                 # 存活/就绪探活（O17）
 
 | # | 项 | 确认 |
 | --- | --- | --- |
-| F2 | 备份恢复与租约一致性 | A：restore 后自动 reconcile，占用态回 `IDLE`/`SUSPENDED` |
+| F2 | 备份恢复与租约一致性 | A：restore 时归一，占用态回 `IDLE`，租约不回放 |
 | O12 | 定向获取 `acquire(id)` | A：锁定指定资源，被占用按 timeout 等待，超时抛 `ResourceBusy` |
 | O13 | 批量获取 `acquire_many` | A：`atomic` / `best_effort` 两种模式 + `n_min` 兜底 |
 | O14 | 亲和性分配 affinity | A：按 consumer 历史使用打分，`affinity_weight` 可配（默认 0） |
@@ -1246,3 +1252,75 @@ host:port/裸 host 解析；ARCHIVED 资源重复导入被跳过且原行 payloa
 触发）；`/metrics` 返回 Prometheus 文本；修复开放模式“半开放”问题——
 `_role` 在未配置任何 key 时由 `public` 改为视同 `admin`，`include_secrets`
 在开放模式下真实返回明文，与“未配置密钥则开放访问”的文档语义一致。
+
+## 16. 备份 / 恢复落地（2026-11-07）
+
+O5/F2 从“仅有协议”补齐为实现：
+
+- `GET /backup`：按池导出 `config`（`PoolConfig.to_dict()`）、资源
+  （`Resource.to_dict()`，剔除存储侧 `leases`）与池级活动租约摘要；内容含明文
+  密钥，路由层强制 `admin`（只读 403、无密钥 401）。备份写 `pool="*"` 审计。
+- `POST /restore`：`conflict="skip"`（默认，已存在跳过）或 `"overwrite"`
+  （覆盖字段、保留 `created_at`）；池不存在按备份 `kind` 新建，同名不同
+  `kind` 报错跳过；写入沿用 O4 的 CAS/幂等语义。
+- **租约不回放**：恢复结果租约数为 0；占用态（`new/validating/active/full/
+  draining/lost`）归一为 `IDLE`，`banned/quarantined/suspended/
+  quota_exhausted/archived` 保留；`banned` 等状态不因恢复被误放行。
+- **部署边界**：`storage` / `coordination` / `schema_version` 从备份配置中剥离，
+  恢复目标使用当前部署的存储与协调面，避免跨部署串后端。
+- 每个池写 `restore` 审计；响应含 `imported/updated/skipped/normalized/
+  leases_ignored/errors[]`，单条失败不中断；支持 `Idempotency-Key` 重放。
+- 控制台“备份”弹窗支持下载 JSON、选择 `skip/overwrite` 上传恢复，并提示
+  “备份含明文密钥”与“租约不迁移”。
+- 测试（`tests/test_api.py::test_backup_restore_roundtrip`）覆盖：鉴权、往返、
+  状态归一、密钥/标签/配额/互斥组保真、池配置权重、租约忽略、skip/overwrite、
+  幂等重放、坏格式 422、审计。
+
+## 17. 用量报表与批量验活任务落地（2026-11-07）
+
+R1 / V2 从“路由草案”补齐为实现与测试：
+
+- **用量账本（R1）**：新增 `core/usage.py::UsageLedger`，容量由
+  `Purser(usage_ledger_size=50000)` 配置，`deque(maxlen)` 满后淘汰最旧；每次
+  `release` 与 `force_revoke` 记一行（消费者/目标站/结果/用量/槽位），
+  `force_revoke` 记 `preempted`、`used=0`。
+- **报表聚合（R1）**：`GET /reports/usage` 支持 `consumer/target/pool/kind`
+  分组、`since/until` 闭区间、单池过滤与行数上限（REST 1..500，core 默认 20）；
+  历史分组之外附带实时 `active` 租约分组与 `pools` 负载快照（总数/状态分布/
+  可分配/在租/等待/平均健康）。只读密钥可读，坏分组/负区间/超限 422，
+  未知池 404。账本是进程内状态，重启清空，`window.retained/capacity`
+  用于判断报表覆盖范围。
+- **批量验活任务（V2）**：`import_validate="batch"` 不再每条 `_spawn` 一个
+  后台任务，而是把资源放入共享 `asyncio.Queue`，由
+  `min(validate_concurrency, 批大小)` 个 worker 消费；任务 id 复用导入
+  `batch_id`，同一任务在跑时再次导入会并入队列并累加 `total`。
+- **进度与取消（V2）**：任务视图含 `total/done/pending/alive/failed/skipped/
+  errors/operator/created_at/updated_at`；取消是协作式的——队列中未开始的
+  条目直接计 `skipped`，在途探测跑完才收尾，`running → cancelling →
+  cancelled`，正常结束 `running → completed`；对终态任务取消是幂等空操作。
+  终态任务最多保留 100 个，`errors` 最多 100 条。SSE 发布
+  `validate_job_started/finished`，取消写 `cancel_validate_job` 审计。
+- **控制台**：新增“报表”弹窗（窗口/分组/池筛选，历史分组 + 实时活跃 + 池负载）
+  与批次行的“验活进度”弹窗（2s 轮询、进度条、取消按钮，任务结束时自动停止）。
+- **测试**：`tests/test_api.py` 覆盖报表聚合/过滤/错误码/只读权限/实时快照，
+  以及批量任务的完成计数、列表/单条、404、协作式取消（有界并发下 `skipped>0`）、
+  终态幂等取消、审计与鉴权；`tests/test_ui_contract.py` 覆盖新 DOM 标记、
+  路由注册与弹窗消费的响应字段。
+
+## 18. 资源列表排序落地（2026-11-07）
+
+补上审计中唯一还缺的“资源列表排序”能力：
+
+- **查询层**：`ResourcePool.query` 新增 `sort`（`id`/`health`/`recent`）与
+  `order`（`asc`/`desc`）。带排序时走 `_search_resources` 的扫描路径，先过滤
+  全量匹配集、排序后再切 `offset/limit`，避免“先分页后排序”的错页；默认
+  `sort=id&order=asc` 仍走存储层快速分页路径。`health` 读 `resource.health.score`，
+  `recent` 读 `last_used_at`（从未使用视为 0）。稳定排序保证同分同时间时始终
+  按 ID 升序，翻页可重复。
+- **REST**：`GET /pools/{pool}/resources` 接受 `sort`/`order`，非法值 422，
+  响应回显生效的 `sort`/`order`。
+- **控制台**：资源筛选行新增排序下拉（默认顺序 / 健康分 高→低 / 低→高 /
+  最近使用 / 最久未用），变更即重置到第一页并带入查询串。
+- **测试**：`tests/test_api.py` 覆盖健康分排序（上下行、稳定 tiebreak、排序先于
+  分页）、`last_used_at` 驱动的最近使用排序、`id desc`、默认回显与 422；
+  UI 契约新增 `fSort` 与 `qs.set("sort"` 标记。

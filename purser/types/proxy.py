@@ -7,17 +7,45 @@ import base64
 import math
 import socket
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from purser.core.health import HealthReport, ProbeGuard
 from purser.core.resource import (
     AcquireRequest,
     CheckVerdict,
+    PayloadField,
     Resource,
 )
 from purser.types.base import ResourceType
 
 DEFAULT_PROBE_TARGETS = ["http://example.com:80"]
+LOCATION_FIELDS = ("country", "province", "city", "district")
+PROXY_FIELDS = (
+    PayloadField("host", required=True, doc="Proxy host name or IP."),
+    PayloadField("port", coerce=int, required=True, doc="TCP port."),
+    PayloadField("protocol", default="http", doc="http/https/socks4/socks5."),
+    PayloadField("username"),
+    PayloadField("password", secret=True),
+    *(PayloadField(name) for name in LOCATION_FIELDS),
+)
+
+
+@dataclass
+class ProxyResource(Resource):
+    """Typed proxy resource; ``payload`` merges these fields with custom keys."""
+
+    kind: str = "proxy"
+    payload_fields = PROXY_FIELDS
+    host: str | None = None
+    port: int | None = None
+    protocol: str | None = None
+    username: str | None = None
+    password: str | None = None
+    country: str | None = None
+    province: str | None = None
+    city: str | None = None
+    district: str | None = None
 
 
 def parse_endpoint(target: str) -> tuple[str, int]:
@@ -35,6 +63,7 @@ def parse_endpoint(target: str) -> tuple[str, int]:
 class ProxyType(ResourceType):
     kind = "proxy"
     default_concurrency = 1
+    resource_class = ProxyResource
 
     def __init__(
         self,
@@ -52,23 +81,44 @@ class ProxyType(ResourceType):
         port = spec.get("port")
         if not host or not port:
             raise ValueError("proxy spec requires host and port")
-        payload = {
-            "host": host,
-            "port": int(port),
-            "protocol": spec.get("protocol", "http"),
-        }
-        if spec.get("username"):
-            payload["username"] = spec["username"]
-        if spec.get("password"):
-            payload["password"] = spec["password"]
         tags = frozenset(spec.get("tags") or ())
         rid = spec.get("id") or f"proxy://{host}:{port}"
-        return Resource(
-            id=rid,
-            kind=self.kind,
-            payload=payload,
-            tags=tags,
-            meta={"source": spec.get("source", "manual")},
+        known = {
+            "id",
+            "tags",
+            "source",
+            "host",
+            "port",
+            "protocol",
+            "username",
+            "password",
+            "country",
+            "province",
+            "city",
+            "district",
+        }
+        custom = {
+            key: value
+            for key, value in spec.items()
+            if key not in known and value is not None
+        }
+        return self.adopt(
+            ProxyResource(
+                id=rid,
+                kind=self.kind,
+                payload=custom,
+                tags=tags,
+                meta={"source": spec["source"]} if spec.get("source") else {},
+                host=host,
+                port=int(port),
+                protocol=spec.get("protocol"),
+                username=spec.get("username") or None,
+                password=spec.get("password") or None,
+                country=spec.get("country"),
+                province=spec.get("province"),
+                city=spec.get("city"),
+                district=spec.get("district"),
+            )
         )
 
     async def validate(self, resource: Resource) -> HealthReport:

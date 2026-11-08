@@ -7,11 +7,13 @@ exercised by the pool-level behavioural suites in test_pool / test_reaper.
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
 
 from purser.backends.base import ResourcePatch
+from purser.backends.coordination import _encode_lease
 from purser.config import PoolConfig
 from purser.core.resource import Concurrency, HealthStats, Lease, Resource
 from purser.core.state import ResourceState
@@ -230,6 +232,15 @@ async def test_coordination_lease_lifecycle(coordination):
     assert await coordination.get_lease(POOL, lease.token) is None
     assert await coordination.leases_for(POOL, "a") == []
     assert await coordination.active(POOL) == []
+
+
+def test_encoded_lease_drops_process_local_snapshot():
+    lease = Lease.new(POOL, "a")
+    lease.payload = {"host": "127.0.0.1"}
+    lease.resource = make_resource("a")
+    encoded = json.loads(_encode_lease(lease))
+    assert encoded["token"] == lease.token
+    assert "payload" not in encoded and "resource" not in encoded
 
 
 @pytest.mark.asyncio

@@ -6,13 +6,66 @@ import asyncio
 import time
 
 import pytest
-from conftest import seed
+from conftest import FakeChecker, seed
 
+from purser import Purser
 from purser.backends.base import ResourcePatch
 from purser.core.lease import LeaseManager
 from purser.core.resource import AcquireRequest, Lease
 from purser.core.state import ResourceState
-from purser.errors import PoolExhausted
+from purser.errors import NotStarted, PoolExhausted
+
+
+async def test_runtime_ops_require_start_management_ops_do_not():
+    ps = Purser(maintenance_enabled=False)
+    ps.register_type(FakeChecker())
+    pool = ps.create_pool("proxies", "fakecheck")
+    try:
+        assert ps.started is False and pool.started is False
+        # Management plane stays usable for offline preloading.
+        report = await pool.import_resources(
+            [{"id": "p1", "host": "1.1.1.1", "port": 8080}],
+            import_validate="on_import",
+        )
+        assert report.imported == 1
+        assert await pool.get("p1") is not None
+        assert len(await pool.query()) == 1
+
+        with pytest.raises(NotStarted) as acquire_err:
+            await pool.acquire(AcquireRequest(consumer="c"))
+        assert "await ps.start()" in str(acquire_err.value)
+        with pytest.raises(NotStarted):
+            await pool.acquire_many(1)
+        with pytest.raises(NotStarted):
+            async with pool.lease(AcquireRequest(consumer="c")):
+                pass
+
+        await ps.start()
+        assert ps.started is True and pool.started is True
+        lease = await pool.acquire(AcquireRequest(consumer="c"))
+        assert lease.resource_id == "p1"
+        await pool.release(lease)
+    finally:
+        await ps.close()
+
+    assert ps.started is False and pool.started is False
+    with pytest.raises(NotStarted):
+        await pool.acquire(AcquireRequest(consumer="late"))
+
+
+async def test_pool_created_after_start_is_immediately_usable():
+    async with Purser(maintenance_enabled=False) as ps:
+        ps.register_type(FakeChecker())
+        pool = ps.create_pool("proxies", "fakecheck")
+        await pool.import_resources(
+            [{"id": "p1", "host": "1.1.1.1", "port": 8080}],
+            import_validate="on_import",
+        )
+        # create_pool() starts the pool on a pending task; acquire must wait for
+        # that reconcile instead of racing it.
+        lease = await pool.acquire(AcquireRequest(consumer="c"))
+        assert lease.resource_id == "p1"
+        await pool.release(lease)
 
 
 async def test_close_fails_inflight_waiters_promptly(make_pool):

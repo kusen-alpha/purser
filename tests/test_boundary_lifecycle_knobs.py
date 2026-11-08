@@ -1,4 +1,4 @@
-"""Lifecycle knobs that were never exercised: expiry, target quota, cooldown."""
+"""Lifecycle knobs that were never exercised: expiry, total quota, cooldown."""
 
 from __future__ import annotations
 
@@ -49,8 +49,15 @@ async def test_expires_in_quota_policy(make_pool):
     assert res is not None and res.state is ResourceState.QUOTA_EXHAUSTED
 
 
-async def test_target_quota_exhausts_and_top_up_recovers(make_pool):
-    pool = make_pool(target_quota={"site1": 1, "site2": 0})
+@pytest.mark.parametrize(
+    "knob",
+    [
+        {"total_quota": 1},
+        {"target_quota": {"site1": 1, "site2": 0}},
+    ],
+)
+async def test_quota_exhausts_and_top_up_recovers(make_pool, knob):
+    pool = make_pool(**knob)
     [rid] = await seed(pool, n=1)
     res = await pool.get(rid)
     assert res is not None and res.quota is not None and res.quota.limit == 1

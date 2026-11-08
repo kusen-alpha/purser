@@ -18,11 +18,14 @@ from purser.core.resource import (
 )
 from purser.core.state import ResourceState
 from purser.errors import (
+    ConfigError,
     NoSuitableResource,
     PoolEmpty,
     PoolExhausted,
     ResourceBusy,
 )
+from purser.types.account import AccountResource
+from purser.types.proxy import ProxyResource
 
 
 async def test_lifecycle_roundtrip(make_pool):
@@ -46,8 +49,91 @@ async def test_lease_context_manager_auto_release(make_pool):
     async with pool.lease(AcquireRequest(consumer="ctx")) as lease:
         assert lease.resource_id == rid
         assert lease.payload == {"host": "127.0.0.1", "port": 8000}
+        assert lease.resource is not None
+        assert lease.resource.id == rid
+        assert lease.resource.payload == lease.payload
     res = await pool.get(rid)
     assert res.state is ResourceState.IDLE
+
+
+async def test_counts_by_name_matches_stats(make_pool):
+    pool = make_pool()
+    await seed(pool, n=2)
+    enum_counts = await pool.counts()
+    named = await pool.counts(by_name=True)
+    assert named == {state.value: n for state, n in enum_counts.items()}
+    assert named == (await pool.stats())["counts"]
+
+
+async def test_iter_resources_streams_filters_and_hydrates(make_pool):
+    pool = make_pool()
+    await seed(pool, n=2, tags=["http"])
+    await pool.import_resources(
+        [{"id": "eu-1", "host": "9.9.9.9", "port": 1, "tags": ["https"]}],
+        import_validate="on_import",
+    )
+
+    assert [r.id async for r in pool.iter_resources()] == ["eu-1", "r-0", "r-1"]
+    assert [r.id async for r in pool.iter_resources(tags=["http"])] == ["r-0", "r-1"]
+    assert [r.id async for r in pool.iter_resources(tags=frozenset())] == [
+        "eu-1",
+        "r-0",
+        "r-1",
+    ]
+    assert [r.id async for r in pool.iter_resources(search="eu")] == ["eu-1"]
+
+    lease = await pool.acquire(AcquireRequest(consumer="c", resource_id="r-0"))
+    idle = [r.id async for r in pool.iter_resources(states={ResourceState.IDLE})]
+    assert idle == ["eu-1", "r-1"]
+    await pool.release(lease)
+
+    streamed = [r async for r in pool.iter_resources(batch_size=1)]
+    assert streamed[0].payload["host"] == "9.9.9.9"
+    assert streamed[0].kind == "fakecheck"
+
+    with pytest.raises(ConfigError):
+        _ = [r async for r in pool.iter_resources(batch_size=0)]
+    with pytest.raises(TypeError):
+        _ = [r async for r in pool.iter_resources(tags="http")]
+
+
+async def test_admin_methods_default_operator_but_require_reason(purser, make_pool):
+    pool = make_pool()
+    [rid] = await seed(pool, n=1)
+
+    await pool.suspend(rid, reason="maintenance")
+    await pool.resume(rid)
+    await pool.drain(rid, reason="retired")
+
+    operators = {entry.action: entry.operator for entry in purser.audit.entries()}
+    assert operators["suspend"] == "system"
+    assert operators["resume"] == "system"
+    assert operators["drain"] == "system"
+
+    with pytest.raises(TypeError):
+        await pool.ban(rid)
+
+
+async def test_leases_query_lists_active_leases(make_pool):
+    pool = make_pool()
+    rids = await seed(pool, n=2)
+    assert await pool.leases() == []
+
+    first = await pool.acquire(AcquireRequest(consumer="a", resource_id=rids[0]))
+    second = await pool.acquire(AcquireRequest(consumer="b"))
+    assert {lease.token for lease in await pool.leases()} == {
+        first.token,
+        second.token,
+    }
+    assert [lease.token for lease in await pool.leases(rids[0])] == [first.token]
+
+    res = await pool.get(rids[0])
+    assert res is not None
+    assert "leases" not in pool.describe(res)
+
+    await pool.release(first)
+    assert await pool.leases(rids[0]) == []
+    await pool.release(second)
 
 
 async def test_tags_filter(make_pool):
@@ -254,6 +340,25 @@ async def test_import_dedup_report(make_pool):
     assert bad.skipped == 0
 
 
+async def test_import_on_import_records_validation(make_pool):
+    pool = make_pool()
+    report = await pool.import_resources(
+        [
+            {"id": "v-1", "host": "127.0.0.1", "port": 1},
+            {"id": "v-2", "host": "127.0.0.1", "port": 2},
+        ],
+        import_validate="on_import",
+    )
+    assert {entry["id"] for entry in report.validation} == {"v-1", "v-2"}
+    assert all(entry["alive"] is True for entry in report.validation)
+    assert all(entry["action"] == "ok" for entry in report.validation)
+    assert all(entry["latency_ms"] == 10.0 for entry in report.validation)
+    assert report.to_dict()["validation"] == report.validation
+
+    plain = await pool.import_resources([{"id": "v-3", "host": "127.0.0.1", "port": 3}])
+    assert plain.validation == []
+
+
 async def test_quarantine_gc_releases_after_cooloff(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
@@ -406,3 +511,362 @@ async def test_acquire_rejects_unknown_kwargs(make_pool):
     await seed(pool, n=1)
     with pytest.raises(TypeError):
         await pool.acquire(AcquireRequest(), bogus_arg=1)
+
+
+async def test_proxy_location_fields_are_optional_payload(purser):
+    pool = purser.create_pool("proxy-locations", "proxy")
+    report = await pool.import_resources(
+        [
+            {
+                "id": "p1",
+                "host": "1.2.3.4",
+                "port": 8080,
+                "country": "US",
+                "province": "CA",
+                "city": "Los Angeles",
+                "district": "Hollywood",
+            },
+            {"id": "p2", "host": "5.6.7.8", "port": 3128},
+        ]
+    )
+    assert report.imported == 2
+    p1 = await pool.get("p1")
+    assert p1 is not None
+    assert p1.payload["country"] == "US"
+    assert p1.payload["province"] == "CA"
+    assert p1.payload["city"] == "Los Angeles"
+    assert p1.payload["district"] == "Hollywood"
+    p2 = await pool.get("p2")
+    assert p2 is not None
+    assert "country" not in p2.payload
+
+
+async def test_import_accepts_resource_objects(make_pool):
+    pool = make_pool()
+    built = Resource(
+        id="built-1",
+        kind="fakecheck",
+        payload={"host": "10.0.0.1", "port": 8080},
+        tags=frozenset({"US"}),
+    )
+    report = await pool.import_resources(
+        [built, {"id": "dict-1", "host": "10.0.0.2", "port": 8081}]
+    )
+    assert report.imported == 2
+    stored = await pool.get("built-1")
+    assert stored is not None
+    assert stored.payload == {"host": "10.0.0.1", "port": 8080}
+    assert stored.tags == frozenset({"US"})
+    assert await pool.get("dict-1") is not None
+
+
+async def test_import_rejects_resource_kind_mismatch(make_pool):
+    pool = make_pool()
+    report = await pool.import_resources(
+        [Resource(id="wrong", kind="proxy", payload={"host": "1.1.1.1", "port": 1})]
+    )
+    assert report.imported == 0
+    assert len(report.errors) == 1
+    assert await pool.get("wrong") is None
+
+
+async def test_import_proxy_resource_is_adopted_without_mutating_input(purser):
+    pool = purser.create_pool("proxy-adopt", "proxy")
+    source = Resource(
+        id="rp-1",
+        kind="proxy",
+        payload={
+            "host": "1.2.3.4",
+            "port": "8080",
+            "country": "US",
+            "custom": "kept",
+        },
+    )
+    report = await pool.import_resources([source])
+    assert report.imported == 1
+    stored = await pool.get("rp-1")
+    assert stored is not None
+    assert stored.payload["port"] == 8080
+    assert stored.payload["protocol"] == "http"
+    assert stored.payload["country"] == "US"
+    assert stored.payload["custom"] == "kept"
+    assert source.payload["port"] == "8080"
+    assert "protocol" not in source.payload
+
+
+async def test_import_resource_uses_dedup_key_from_payload(make_pool):
+    pool = make_pool()
+    report = await pool.import_resources(
+        [Resource(id="ignored", kind="fakecheck", payload={"host": "h1", "port": 1})],
+        dedup_key="host",
+    )
+    assert report.imported == 1
+    assert await pool.get("h1") is not None
+    assert await pool.get("ignored") is None
+
+
+async def test_generate_accepts_resource_objects(make_pool):
+    pool = make_pool()
+    report = await pool.generate(
+        [Resource(id="gen-1", kind="fakecheck", payload={"host": "1.1.1.1", "port": 1})]
+    )
+    assert report.imported == 1
+    assert await pool.get("gen-1") is not None
+
+
+async def test_import_accepts_proxy_resource_array(purser):
+    pool = purser.create_pool("proxy-typed", "proxy")
+    typed = ProxyResource(
+        id="typed-1",
+        payload={"host": "1.2.3.4", "port": "8080"},
+        tags=frozenset({"US"}),
+        country="US",
+        province="CA",
+        city="Los Angeles",
+        district="Hollywood",
+    )
+    inferred = ProxyResource(
+        id="typed-2",
+        payload={"host": "5.6.7.8", "port": 3128, "city": "Tokyo"},
+        country="JP",
+    )
+    report = await pool.import_resources([typed, inferred])
+    assert report.imported == 2
+
+    stored = await pool.get("typed-1")
+    assert stored is not None
+    assert stored.payload["port"] == 8080
+    assert stored.payload["protocol"] == "http"
+    assert stored.payload["country"] == "US"
+    assert stored.payload["province"] == "CA"
+    assert stored.payload["city"] == "Los Angeles"
+    assert stored.payload["district"] == "Hollywood"
+    assert stored.tags == frozenset({"US"})
+
+    second = await pool.get("typed-2")
+    assert second is not None
+    assert second.payload["country"] == "JP"
+    assert second.payload["city"] == "Tokyo"
+
+    # Construction already canonicalizes typed fields; import deep-copies and
+    # adopts without touching the caller's object.
+    assert typed.payload["port"] == 8080
+    assert typed.port == 8080
+    assert inferred.city == "Tokyo"
+
+
+async def test_proxy_resource_location_syncs_on_adopt(purser):
+    pool = purser.create_pool("proxy-typed-mutation", "proxy")
+    typed = ProxyResource(id="typed-3", payload={"host": "1.2.3.4", "port": 8080})
+    typed.country = "JP"
+    typed.city = "Osaka"
+    report = await pool.import_resources([typed])
+    assert report.imported == 1
+    stored = await pool.get("typed-3")
+    assert stored is not None
+    assert stored.payload["country"] == "JP"
+    assert stored.payload["city"] == "Osaka"
+
+
+async def test_proxy_generate_returns_typed_resource(purser):
+    pool = purser.create_pool("proxy-generate-typed", "proxy")
+    resource = await pool.type.generate(
+        {
+            "host": "1.2.3.4",
+            "port": 8080,
+            "country": "US",
+            "province": "CA",
+            "city": "Los Angeles",
+            "district": "Hollywood",
+        }
+    )
+    assert isinstance(resource, ProxyResource)
+    assert resource.kind == "proxy"
+    assert resource.country == "US"
+    assert resource.province == "CA"
+    assert resource.payload["country"] == "US"
+    assert resource.payload["city"] == "Los Angeles"
+
+
+async def test_proxy_resource_typed_fields_mirror_payload(purser):
+    pool = purser.create_pool("proxy-typed-fields", "proxy")
+    report = await pool.import_resources(
+        [
+            {
+                "id": "tf-1",
+                "host": "1.2.3.4",
+                "port": "8080",
+                "protocol": "socks5",
+                "username": "user",
+                "password": "pass",
+                "country": "US",
+            }
+        ]
+    )
+    assert report.imported == 1
+    stored = await pool.get("tf-1")
+    assert isinstance(stored, ProxyResource)
+    assert stored.host == "1.2.3.4"
+    assert stored.port == 8080
+    assert stored.protocol == "socks5"
+    assert stored.username == "user"
+    assert stored.password == "pass"
+    assert stored.country == "US"
+    for name in ("host", "port", "protocol", "username", "password", "country"):
+        assert stored.payload[name] == getattr(stored, name)
+
+
+async def test_reads_hydrate_generic_proxy_resource(purser):
+    pool = purser.create_pool("proxy-hydrate", "proxy")
+    report = await pool.import_resources(
+        [
+            Resource(
+                id="gh-1",
+                kind="proxy",
+                payload={"host": "9.9.9.9", "port": 1080, "city": "Paris"},
+            )
+        ]
+    )
+    assert report.imported == 1
+    found = await pool.get("gh-1")
+    required = await pool.require("gh-1")
+    [queried] = await pool.query()
+    for resource in (found, required, queried):
+        assert isinstance(resource, ProxyResource)
+        assert resource.host == "9.9.9.9"
+        assert resource.port == 1080
+        assert resource.city == "Paris"
+        assert resource.payload["host"] == "9.9.9.9"
+
+
+async def test_account_resource_typed_fields_and_hydrate(purser):
+    pool = purser.create_pool("account-typed-fields", "account")
+    report = await pool.import_resources(
+        [
+            {
+                "id": "ac-1",
+                "username": "alice",
+                "password": "secret",
+                "cookie": "session=1",
+            },
+            Resource(
+                id="ac-2",
+                kind="account",
+                payload={"username": "bob", "access_token": "token"},
+            ),
+        ]
+    )
+    assert report.imported == 2
+
+    first = await pool.get("ac-1")
+    assert isinstance(first, AccountResource)
+    assert first.username == "alice"
+    assert first.password == "secret"
+    assert first.cookie == "session=1"
+    assert first.payload["password"] == "secret"
+
+    second = await pool.get("ac-2")
+    assert isinstance(second, AccountResource)
+    assert second.username == "bob"
+    assert second.access_token == "token"
+
+
+def test_payload_property_merges_typed_fields():
+    resource = ProxyResource(
+        id="derive-1",
+        payload={"host": "1.2.3.4", "port": 8080, "custom": "kept"},
+    )
+    assert resource.host == "1.2.3.4"
+    assert resource.payload == {
+        "host": "1.2.3.4",
+        "port": 8080,
+        "custom": "kept",
+    }
+
+    # Typed attributes are the write API and show up without any resync.
+    resource.host = "5.6.7.8"
+    resource.city = "Tokyo"
+    assert resource.payload["host"] == "5.6.7.8"
+    assert resource.payload["city"] == "Tokyo"
+
+    # Whole-payload assignment replaces the typed view as well.
+    resource.payload = {"host": "9.9.9.9", "note": "replaced"}
+    assert resource.host == "9.9.9.9"
+    assert resource.port is None
+    assert resource.city is None
+    assert resource.payload == {"host": "9.9.9.9", "note": "replaced"}
+
+
+def test_payload_defaults_to_empty_when_omitted():
+    assert Resource(id="r", kind="k").payload == {}
+    assert ProxyResource(id="p").payload == {}
+    assert AccountResource(id="a").payload == {}
+
+
+async def test_acquire_does_not_mutate_reused_request(make_pool):
+    pool = make_pool()
+    await seed(pool, n=2)
+    req = AcquireRequest(consumer="c")
+    first = await pool.acquire(req)
+    second = await pool.acquire(req)
+    assert req.trace_id is None and req.timeout is None
+    assert first.trace_id != second.trace_id
+    await pool.release(first)
+    await pool.release(second)
+
+
+async def test_acquire_kwargs_stay_per_call(make_pool):
+    pool = make_pool()
+    await seed(pool, n=1)
+    req = AcquireRequest(consumer="c")
+    lease = await pool.acquire(req, timeout=5.0)
+    assert req.timeout is None
+    assert lease.trace_id is not None
+    await pool.release(lease)
+
+
+async def test_import_default_leaves_new_and_acquire_explains(make_pool):
+    pool = make_pool()
+    await pool.import_resources([{"id": "new-1", "host": "127.0.0.1", "port": 1}])
+    assert (await pool.counts())[ResourceState.NEW] == 1
+
+    started = time.perf_counter()
+    with pytest.raises(PoolExhausted, match="all are in NEW"):
+        await pool.acquire(AcquireRequest(consumer="c"))
+    assert time.perf_counter() - started < 1.0
+
+
+async def test_stats_health_ignores_query_pagination(make_pool, monkeypatch):
+    pool = make_pool()
+    await seed(pool, n=3)
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("stats must not page through resources")
+
+    monkeypatch.setattr(pool, "query", forbidden)
+    stats = await pool.stats()
+    assert stats["avg_health"] is not None
+
+
+async def test_update_resource_payload_updates_typed_fields(purser):
+    pool = purser.create_pool("proxy-payload-update", "proxy")
+    await pool.import_resources(
+        [{"id": "pu-1", "host": "1.1.1.1", "port": 8080, "note": "old"}]
+    )
+    updated = await pool.update_resource(
+        "pu-1",
+        payload={"host": "2.2.2.2", "port": 3128, "note": "new"},
+        operator="tester",
+        reason="payload update",
+    )
+    assert isinstance(updated, ProxyResource)
+    assert updated.host == "2.2.2.2"
+    assert updated.port == 3128
+    # Reads normalize defaults, so the effective protocol is materialized.
+    assert updated.protocol == "http"
+    assert updated.payload == {
+        "host": "2.2.2.2",
+        "port": 3128,
+        "protocol": "http",
+        "note": "new",
+    }

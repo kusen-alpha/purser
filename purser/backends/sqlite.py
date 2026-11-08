@@ -17,11 +17,11 @@ a file path persists across restarts.
 from __future__ import annotations
 
 import asyncio
-import json
+import random
 import sqlite3
 import time
-from collections.abc import AsyncIterator, Callable
-from typing import Any, TypeVar
+from collections.abc import AsyncIterator, Callable, Mapping
+from typing import Any, TypeVar, cast
 
 from purser.backends.base import (
     ResourcePatch,
@@ -29,16 +29,12 @@ from purser.backends.base import (
     TransitionResult,
 )
 from purser.backends.serde import (
+    STORAGE_COLUMNS,
     decode_health,
-    decode_quota,
-    decode_site_failures,
-    encode_health,
-    encode_meta,
-    encode_quota,
-    encode_site_failures,
-    json_str,
+    deserialize_row,
+    serialize_row,
 )
-from purser.core.resource import Concurrency, Resource
+from purser.core.resource import Resource
 from purser.core.state import (
     ALL_STATES,
     ALLOCATABLE_STATES,
@@ -48,6 +44,7 @@ from purser.core.state import (
     StateMachine,
 )
 from purser.crypto import SecretCodec
+from purser.errors import VersionConflict
 
 _RT = TypeVar("_RT")
 
@@ -60,27 +57,6 @@ async def _to_thread(func: Callable[..., _RT], *args: Any) -> _RT:
 
 def _now() -> float:
     return time.time()
-
-
-_STORAGE_COLUMNS = (
-    "kind",
-    "state",
-    "max_slots",
-    "used_slots",
-    "payload",
-    "tags",
-    "health",
-    "quota",
-    "site_failures",
-    "usage_quota",
-    "used_count",
-    "expires_at",
-    "next_available_at",
-    "mutex_group",
-    "schedule_window",
-    "meta",
-    "updated_at",
-)
 
 
 class SqliteStorage(StorageBackend):
@@ -153,76 +129,44 @@ class SqliteStorage(StorageBackend):
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_resource_tags_tag ON resource_tags(pool, tag)"
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pool_bindings (
+                    pool TEXT NOT NULL PRIMARY KEY,
+                    storage_kind TEXT NOT NULL,
+                    coordination_kind TEXT NOT NULL,
+                    coordination_id TEXT NOT NULL,
+                    claim_token TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
 
     # -- serialization -----------------------------------------------------
 
     def _serialize(self, resource: Resource) -> dict[str, Any]:
-        return {
-            "kind": resource.kind,
-            "state": resource.state.value,
-            "max_slots": resource.concurrency.max_slots,
-            "used_slots": resource.concurrency.used_slots,
-            "payload": json_str(
-                self._codec.encrypt_payload(resource.payload, self.secret_fields)
-            ),
-            "tags": json_str(sorted(resource.tags)),
-            "health": encode_health(resource.health),
-            "quota": encode_quota(resource.quota),
-            "site_failures": encode_site_failures(resource.site_failures),
-            "usage_quota": resource.usage_quota,
-            "used_count": resource.used_count,
-            "expires_at": resource.expires_at,
-            "next_available_at": resource.next_available_at,
-            "mutex_group": resource.mutex_group,
-            "schedule_window": (
-                json_str(list(resource.schedule_window))
-                if resource.schedule_window
-                else ""
-            ),
-            "meta": encode_meta(resource.meta),
-            "updated_at": _now(),
-        }
+        return serialize_row(
+            resource,
+            codec=self._codec,
+            secret_fields=self.secret_fields,
+            updated_at=_now(),
+        )
 
     def _deserialize(self, row: sqlite3.Row) -> Resource:
-        def parse(raw: str, default: Any) -> Any:
-            return json.loads(raw) if raw else default
-
-        payload = self._codec.decrypt_payload(parse(row["payload"], {}), self.secret_fields)
-        return Resource(
-            id=row["id"],
-            kind=row["kind"],
-            payload=payload,
-            state=ResourceState(row["state"]),
-            version=int(row["version"]),
-            tags=frozenset(parse(row["tags"], [])),
-            concurrency=Concurrency(
-                max_slots=int(row["max_slots"]),
-                used_slots=int(row["used_slots"]),
-            ),
-            health=decode_health(row["health"] or ""),
-            site_failures=decode_site_failures(row["site_failures"] or "{}"),
-            quota=decode_quota(row["quota"] or ""),
-            usage_quota=row["usage_quota"],
-            used_count=int(row["used_count"]),
-            expires_at=row["expires_at"],
-            next_available_at=row["next_available_at"],
-            mutex_group=row["mutex_group"],
-            schedule_window=(
-                tuple(parse(row["schedule_window"], []))
-                if row["schedule_window"]
-                else None
-            ),
-            meta=parse(row["meta"], {}),
+        return deserialize_row(
+            cast(Mapping[str, Any], row),
+            codec=self._codec,
+            secret_fields=self.secret_fields,
         )
 
     def _values(self, resource: Resource) -> tuple[Any, ...]:
         serialized = self._serialize(resource)
-        return tuple(serialized[col] for col in _STORAGE_COLUMNS)
+        return tuple(serialized[col] for col in STORAGE_COLUMNS)
 
     def _update_row(
         self, pool: str, rid: str, resource: Resource, *, expected: int
     ) -> bool:
-        assignments = ", ".join(f"{col} = ?" for col in _STORAGE_COLUMNS)
+        assignments = ", ".join(f"{col} = ?" for col in STORAGE_COLUMNS)
         sql = (
             f"UPDATE resources SET {assignments}, version = version + 1 "
             "WHERE pool = ? AND id = ? AND version = ?"
@@ -267,35 +211,59 @@ class SqliteStorage(StorageBackend):
         async with self._lock:
             return await _to_thread(self._load_sync, pool, rid)
 
-    async def put(self, pool: str, resource: Resource) -> Resource:
+    async def put(
+        self,
+        pool: str,
+        resource: Resource,
+        *,
+        expected_version: int | None = None,
+    ) -> Resource:
         async with self._lock:
             return await _to_thread(
-                self._retry_locked, self._put_sync, pool, resource
+                self._retry_locked, self._put_sync, pool, resource, expected_version
             )
 
-    def _put_sync(self, pool: str, resource: Resource) -> Resource:
-        columns = ", ".join(("pool", "id", "version") + _STORAGE_COLUMNS)
-        placeholders = ", ".join("?" for _ in range(len(_STORAGE_COLUMNS) + 3))
-        updates = ", ".join(f"{col} = excluded.{col}" for col in _STORAGE_COLUMNS)
+    def _put_sync(
+        self, pool: str, resource: Resource, expected_version: int | None = None
+    ) -> Resource:
         values = self._values(resource)
-        with self._conn:
-            self._conn.execute(
-                f"""
-                INSERT INTO resources ({columns}) VALUES ({placeholders})
-                ON CONFLICT(pool, id) DO UPDATE SET
-                    {updates},
-                    version = resources.version + 1
-                """,
-                (pool, resource.id, 1, *values),
-            )
-            self._conn.execute(
-                "DELETE FROM resource_tags WHERE pool = ? AND rid = ?",
-                (pool, resource.id),
-            )
-            self._conn.executemany(
-                "INSERT OR IGNORE INTO resource_tags (pool, rid, tag) VALUES (?, ?, ?)",
-                [(pool, resource.id, tag) for tag in sorted(resource.tags)],
-            )
+        if expected_version is None:
+            columns = ", ".join(("pool", "id", "version") + STORAGE_COLUMNS)
+            placeholders = ", ".join("?" for _ in range(len(STORAGE_COLUMNS) + 3))
+            updates = ", ".join(f"{col} = excluded.{col}" for col in STORAGE_COLUMNS)
+            with self._conn:
+                self._conn.execute(
+                    f"""
+                    INSERT INTO resources ({columns}) VALUES ({placeholders})
+                    ON CONFLICT(pool, id) DO UPDATE SET
+                        {updates},
+                        version = resources.version + 1
+                    """,
+                    (pool, resource.id, 1, *values),
+                )
+                self._set_tags_sync(pool, resource.id, resource.tags)
+        elif expected_version == 0:
+            columns = ", ".join(("pool", "id", "version") + STORAGE_COLUMNS)
+            placeholders = ", ".join("?" for _ in range(len(STORAGE_COLUMNS) + 3))
+            with self._conn:
+                try:
+                    self._conn.execute(
+                        f"INSERT INTO resources ({columns}) VALUES ({placeholders})",
+                        (pool, resource.id, 1, *values),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise VersionConflict(
+                        f"resource {resource.id!r} already exists"
+                    ) from exc
+                self._set_tags_sync(pool, resource.id, resource.tags)
+        else:
+            with self._conn:
+                if not self._update_row(pool, resource.id, resource, expected=expected_version):
+                    raise VersionConflict(
+                        f"resource {resource.id!r} version changed "
+                        f"(expected {expected_version})"
+                    )
+                self._set_tags_sync(pool, resource.id, resource.tags)
         stored = self._load_sync(pool, resource.id)
         assert stored is not None
         return stored
@@ -373,6 +341,21 @@ class SqliteStorage(StorageBackend):
             out[ResourceState(row["state"])] = int(row["n"])
         return out
 
+    async def health_scores(self, pool: str) -> list[float]:
+        async with self._lock:
+            return await _to_thread(self._health_scores_sync, pool)
+
+    def _health_scores_sync(self, pool: str) -> list[float]:
+        rows = self._conn.execute(
+            "SELECT health FROM resources WHERE pool = ?", (pool,)
+        ).fetchall()
+        scores: list[float] = []
+        for row in rows:
+            health = decode_health(row["health"] or "")
+            if health.samples:
+                scores.append(health.score)
+        return scores
+
     async def transition_acquire(
         self, pool: str, rid: str, slots: int
     ) -> TransitionResult:
@@ -429,10 +412,10 @@ class SqliteStorage(StorageBackend):
     def _transition_release_sync(
         self, pool: str, rid: str, slots: int
     ) -> TransitionResult:
-        # A concurrent writer in another process can win the optimistic-lock
-        # CAS between our read and write.  Re-read and retry a few times so a
-        # release is not reported as a spurious LeaseConflict under contention.
-        for attempt in range(3):
+        # A concurrent writer in another instance can win the optimistic-lock
+        # CAS between our read and write.  Retry with jitter so a release is
+        # not reported as a spurious LeaseConflict under contention.
+        for attempt in range(10):
             with self._conn:
                 row = self._conn.execute(
                     "SELECT * FROM resources WHERE pool = ? AND id = ?", (pool, rid)
@@ -469,7 +452,7 @@ class SqliteStorage(StorageBackend):
                     return TransitionResult(
                         ok=True, state=loaded.state, resource=loaded
                     )
-            time.sleep(0.01 * (attempt + 1))
+            time.sleep(0.005 * (attempt + 1) + random.uniform(0.0, 0.005))
         return TransitionResult(ok=False)
 
     async def reset_usage(self, pool: str, rid: str, slots: int = 0) -> bool:

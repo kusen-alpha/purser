@@ -6,7 +6,7 @@ import time
 
 import pytest
 from conftest import seed
-from test_api import auth, make_client
+from test_api import auth
 
 from purser.core.health import HealthStats
 from purser.core.resource import AcquireRequest, Quota
@@ -71,7 +71,7 @@ def test_health_quota_boundaries():
     assert past.reset_daily() is True and past.used == 0
 
 
-def test_metrics_endpoint_renders_text():
+def test_metrics_endpoint_renders_text(make_client):
     client, _ = make_client()
     client.post("/pools", json={"name": "px", "kind": "fakecheck"}, headers=auth("admin-key"))
     resp = client.get("/metrics")
@@ -80,7 +80,7 @@ def test_metrics_endpoint_renders_text():
     assert "purser_" in resp.text
 
 
-def test_open_mode_include_secrets():
+def test_open_mode_include_secrets(make_client):
     client, _ = make_client(api_key=None, readonly_key=None)
     client.post("/pools", json={"name": "acc", "kind": "account"})
     client.post(

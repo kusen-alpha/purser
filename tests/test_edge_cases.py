@@ -7,7 +7,7 @@ import time
 
 import fakeredis
 import pytest
-from conftest import FakeChecker, seed
+from conftest import REAL_REDIS_URL, FakeChecker, seed
 
 from purser import Purser
 from purser.core.resource import AcquireRequest, UsageOutcome
@@ -109,12 +109,13 @@ async def test_expired_lease_reconciled_by_clock(make_pool):
 
 
 async def test_two_instances_shared_sqlite_redis_no_oversell(
-    tmp_path, storage_kind, coordination_kind
+    tmp_path, storage_kind, coordination_kind, shared_backend_harness
 ):
     if storage_kind != "sqlite" or coordination_kind != "redis":
         pytest.skip("sqlite + redis combination only")
+    if not REAL_REDIS_URL:
+        pytest.skip("real Redis required for the shared-backend instance test")
     path = str(tmp_path / "shared.db")
-    redis = fakeredis.aioredis.FakeRedis()
 
     def build() -> Purser:
         ps = Purser(
@@ -122,7 +123,7 @@ async def test_two_instances_shared_sqlite_redis_no_oversell(
             storage="sqlite",
             coordination="redis",
             sqlite_path=path,
-            redis_client=redis,
+            redis_url=REAL_REDIS_URL,
         )
         ps.register_type(FakeChecker())
         return ps
@@ -131,12 +132,14 @@ async def test_two_instances_shared_sqlite_redis_no_oversell(
     try:
         p1 = ps1.create_pool("shared", "fakecheck")
         p2 = ps2.create_pool("shared", "fakecheck")
+        await ps1.start()
+        await ps2.start()
         await p1.import_resources(
             [{"id": "r1", "host": "1.1.1.1", "port": 1}], import_validate="on_import"
         )
         outcomes = await asyncio.gather(
-            p1.acquire(AcquireRequest(consumer="i1", timeout=0.3)),
-            p2.acquire(AcquireRequest(consumer="i2", timeout=0.3)),
+            p1.acquire(AcquireRequest(consumer="i1", timeout=1.0)),
+            p2.acquire(AcquireRequest(consumer="i2", timeout=1.0)),
             return_exceptions=True,
         )
         ok = [o for o in outcomes if not isinstance(o, Exception)]

@@ -12,7 +12,6 @@ import functools
 import json
 import time
 from collections.abc import Callable, Coroutine
-from dataclasses import asdict
 from typing import Any, TypeVar
 
 from redis import asyncio as aioredis
@@ -25,7 +24,10 @@ from purser.errors import BackendUnavailable, ConfigError
 
 
 def _encode_lease(lease: Lease) -> str:
-    return json.dumps({k: v for k, v in asdict(lease).items() if k != "payload"})
+    # ``resource`` is a process-local typed snapshot, not coordination state.
+    return json.dumps(
+        {k: v for k, v in vars(lease).items() if k not in ("payload", "resource")}
+    )
 
 
 def _decode_lease(raw: str) -> Lease:
@@ -36,6 +38,22 @@ def _decode_lease(raw: str) -> Lease:
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+
+# KEYS: ids set, token -> rid hash.  ARGV: token, lease-key prefix.
+# The lease key is derived inside the script so lookup + removal is one step;
+# all derived keys share the ``{pool}`` hash tag with KEYS.
+_UNREGISTER_LUA = """
+local rid = redis.call('HGET', KEYS[2], ARGV[1])
+if not rid then return nil end
+local lease_key = ARGV[2] .. rid
+local raw = redis.call('HGET', lease_key, ARGV[1])
+redis.call('HDEL', lease_key, ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+if redis.call('HLEN', lease_key) == 0 then
+  redis.call('SREM', KEYS[1], rid)
+end
+return raw
+"""
 
 
 def _fail_closed(
@@ -148,15 +166,17 @@ class RedisCoordination(Coordination):
 
     @_fail_closed
     async def unregister_lease(self, pool: str, token: str) -> Lease | None:
-        rid = await self._client.hget(self._token_key(pool), token)
-        if not rid:
-            return None
-        rid = rid.decode()
-        raw = await self._client.hget(self._lease_key(pool, rid), token)
-        await self._client.hdel(self._lease_key(pool, rid), token)
-        await self._client.hdel(self._token_key(pool), token)
-        if not await self._client.hlen(self._lease_key(pool, rid)):
-            await self._client.srem(self._ids_key(pool), rid)
+        # Remove the token and its lease atomically.  Two concurrent removers
+        # (release vs force_revoke, or two releases) must not both observe the
+        # same lease: the storage slot is decremented only by the one that won.
+        raw = await self._client.eval(
+            _UNREGISTER_LUA,
+            2,
+            self._ids_key(pool),
+            self._token_key(pool),
+            token,
+            f"{self.key_prefix}:{{{pool}}}:lease:",
+        )
         return _decode_lease(raw.decode()) if raw else None
 
     @_fail_closed

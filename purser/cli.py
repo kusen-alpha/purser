@@ -1,4 +1,4 @@
-"""purSer CLI: operate a running service (8.3)."""
+"""Purser CLI: operate a running service (8.3)."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def cmd_status(args: argparse.Namespace, client: httpx.Client) -> None:
     if resp.status_code != 200:
         _fail(resp)
     table = Table(title="资源池概览")
-    for col in ("池", "类型", "总量", "可分配", "在租约", "等待", "隔离", "封禁"):
+    for col in ("池", "类型", "总量", "可分配", "活跃租约", "等待", "隔离", "封禁"):
         table.add_column(col)
     for pool in resp.json().get("pools", []):
         table.add_row(
@@ -64,7 +64,7 @@ def cmd_ls(args: argparse.Namespace, client: httpx.Client) -> None:
         _fail(resp)
     data = resp.json()
     table = Table(title=f"资源（{args.pool}）")
-    for col in ("ID", "状态", "健康", "槽", "标签"):
+    for col in ("ID", "状态", "健康", "槽位", "标签"):
         table.add_column(col)
     for r in data.get("resources", []):
         table.add_row(
@@ -170,10 +170,13 @@ def cmd_import(args: argparse.Namespace, client: httpx.Client) -> None:
     if not records:
         console.print("[yellow]没有可导入的记录[/]")
         return
+    headers = {}
+    if args.idempotency_key:
+        headers["Idempotency-Key"] = args.idempotency_key
     resp = client.post(
         f"/pools/{args.pool}/resources",
         json={"records": records, "import_validate": args.import_validate},
-        headers={"Idempotency-Key": f"cli-import-{args.pool}-{args.rid or 'x'}"},
+        headers=headers,
     )
     if resp.status_code != 200:
         _fail(resp)
@@ -256,8 +259,16 @@ def _parser() -> argparse.ArgumentParser:
     add_common(p)
     p.add_argument("pool")
     p.add_argument("file", nargs="?")
-    p.add_argument("--import-validate", default="none")
-    p.add_argument("--rid")
+    p.add_argument(
+        "--import-validate",
+        default="batch",
+        choices=("none", "on_import", "batch"),
+        help="导入后验活策略；batch 交给后台任务（默认），none 保持 NEW 直到手动验活",
+    )
+    p.add_argument(
+        "--idempotency-key",
+        help="重复提交时复用首次结果；默认每次真正导入",
+    )
     p.set_defaults(fn=cmd_import)
 
     p = sub.add_parser("events", help="订阅事件流")
@@ -268,6 +279,12 @@ def _parser() -> argparse.ArgumentParser:
     p = sub.add_parser("serve", help="启动服务")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--storage", choices=["memory", "sqlite", "mysql"], default=None)
+    p.add_argument("--sqlite-path", default=None)
+    p.add_argument("--coordination", choices=["memory", "redis"], default=None)
+    p.add_argument("--redis-url", default=None)
+    p.add_argument("--mysql-url", default=None)
+    p.add_argument("--audit-path", default=None)
     p.set_defaults(fn=lambda args, _client: _serve(args))
     return parser
 
@@ -275,7 +292,16 @@ def _parser() -> argparse.ArgumentParser:
 def _serve(args: argparse.Namespace) -> None:
     from purser.ui.server import serve
 
-    serve(host=args.host, port=args.port)
+    serve(
+        host=args.host,
+        port=args.port,
+        storage=args.storage,
+        sqlite_path=args.sqlite_path,
+        coordination=args.coordination,
+        redis_url=args.redis_url,
+        mysql_url=args.mysql_url,
+        audit_path=args.audit_path,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:

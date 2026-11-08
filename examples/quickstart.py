@@ -1,4 +1,4 @@
-"""purSer 端到端演示：嵌入式、服务态、Redis、自定义类型。
+"""Purser 端到端演示：嵌入式、服务态、Redis、自定义类型。
 
 运行：.venv\\Scripts\\python examples\\quickstart.py
 """
@@ -11,10 +11,14 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from purser import Purser
-from purser.core.health import HealthReport
-from purser.core.resource import AcquireRequest, Resource, UsageOutcome
-from purser.types.base import ResourceType
+from purser import (
+    AcquireRequest,
+    HealthReport,
+    Purser,
+    Resource,
+    ResourceType,
+    UsageOutcome,
+)
 
 
 class LocalChecker(ResourceType):
@@ -48,8 +52,9 @@ async def embedded() -> None:
         ],
         import_validate="on_import",
     )
+    await ps.start()
 
-    async with pool.lease(AcquireRequest(consumer="crawler", tags=frozenset({"US"}))) as lease:
+    async with pool.lease(AcquireRequest(consumer="crawler", tags=["US"])) as lease:
         print(f"拿到 {lease.resource_id} -> {lease.payload}")
         lease.outcome = UsageOutcome.OK
 
@@ -78,7 +83,9 @@ async def service() -> None:
     thread.start()
     time.sleep(0.5)
 
-    with httpx.Client(base_url="http://127.0.0.1:8011") as client:
+    # trust_env=False keeps local calls off any ambient HTTP proxy, including
+    # malformed NO_PROXY values that make httpx fail to parse the URL.
+    with httpx.Client(base_url="http://127.0.0.1:8011", trust_env=False) as client:
         client.post(
             "/pools/demo/resources",
             json={"records": [{"id": "s1"}, {"id": "s2"}], "import_validate": "on_import"},
@@ -108,10 +115,11 @@ async def redis_backend() -> None:
     await pool.import_resources(
         [{"id": f"r{i}"} for i in range(3)], import_validate="on_import"
     )
+    await ps.start()
     async with pool.lease(AcquireRequest(consumer="x")) as lease:
         print(f"Redis 池获取 {lease.resource_id}，槽位 {lease.slots}")
-    counts = await pool.counts()
-    print(f"Redis 池状态分布: { {s.value: n for s, n in counts.items()} }")
+    counts = await pool.counts(by_name=True)
+    print(f"Redis 池状态分布: {counts}")
     await ps.close()
 
 

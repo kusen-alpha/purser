@@ -122,6 +122,7 @@ async def test_restart_partial_active_reconciled(tmp_path, storage_kind, coordin
 
     ps1 = build()
     pool = ps1.create_pool("px", "fakecheck", max_slots=2)
+    await ps1.start()
     [rid] = await seed(pool, n=1)
     await pool.acquire(AcquireRequest(consumer="c"))  # ACTIVE: 1 of 2 slots used
     res = await pool.get(rid)

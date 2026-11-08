@@ -140,6 +140,7 @@ def _crash_worker(sqlite_path: str, marker_path: str, ttl: float) -> None:
         )
         ps.register_type(FakeChecker())
         pool = ps.create_pool("crash", "fakecheck", max_slots=1, lease_ttl=ttl)
+        await ps.start()
         await pool.import_resources(
             [{"id": "r0", "host": "10.0.0.9", "port": 9001}],
             import_validate="on_import",
@@ -228,7 +229,9 @@ async def test_hard_crash_reclaims_slot_after_ttl(tmp_path):
         await ps.close()
 
 
-async def test_cross_instance_visibility_revoke_and_stale_release(tmp_path):
+async def test_cross_instance_visibility_revoke_and_stale_release(
+    tmp_path, shared_backend_harness
+):
     """B sees A's lease, revokes it, then a stale A release must not steal B's slot."""
 
     sqlite_path = str(tmp_path / "x.db")

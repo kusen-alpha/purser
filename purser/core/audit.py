@@ -54,7 +54,9 @@ class _AuditStore:
     """SQLite persistence for the audit chain."""
 
     def __init__(self, path: str) -> None:
-        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn = sqlite3.connect(
+            path, check_same_thread=False, isolation_level=None
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA busy_timeout = 5000")
         if path != ":memory:":
@@ -77,32 +79,72 @@ class _AuditStore:
             """
         )
 
-    def insert(self, entry: AuditEntry) -> None:
-        self._conn.execute(
-            """
-            INSERT OR REPLACE INTO audit_log (
-                seq, ts, operator, action, pool, rid, reason, trace_id,
-                detail, prev_hash, digest
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                entry.seq,
-                entry.ts,
-                entry.operator,
-                entry.action,
-                entry.pool,
-                entry.rid,
-                entry.reason,
-                entry.trace_id,
-                json.dumps(entry.detail, sort_keys=True),
-                entry.prev_hash,
-                entry.digest,
-            ),
-        )
-        self._conn.commit()
+    def append(self, entry: AuditEntry) -> AuditEntry:
+        """Allocate the next sequence and digest inside an immediate
+        transaction, so concurrent writers cannot fork the chain."""
 
-    def load(self) -> list[AuditEntry]:
-        rows = self._conn.execute("SELECT * FROM audit_log ORDER BY seq").fetchall()
+        for attempt in range(20):
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                row = self._conn.execute(
+                    "SELECT seq, digest FROM audit_log ORDER BY seq DESC LIMIT 1"
+                ).fetchone()
+                entry.seq = row["seq"] + 1 if row is not None else 1
+                entry.prev_hash = row["digest"] if row is not None else ""
+                entry.digest = entry.compute_digest()
+                self._conn.execute(
+                    """
+                    INSERT INTO audit_log (
+                        seq, ts, operator, action, pool, rid, reason, trace_id,
+                        detail, prev_hash, digest
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entry.seq,
+                        entry.ts,
+                        entry.operator,
+                        entry.action,
+                        entry.pool,
+                        entry.rid,
+                        entry.reason,
+                        entry.trace_id,
+                        json.dumps(entry.detail, sort_keys=True),
+                        entry.prev_hash,
+                        entry.digest,
+                    ),
+                )
+                self._conn.execute("COMMIT")
+                return entry
+            except sqlite3.OperationalError as exc:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                if "locked" not in str(exc).lower() or attempt == 19:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+            except sqlite3.IntegrityError:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                if attempt == 19:
+                    raise
+                time.sleep(0.01)
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def last(self) -> tuple[int, str] | None:
+        row = self._conn.execute(
+            "SELECT seq, digest FROM audit_log ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return int(row["seq"]), str(row["digest"])
+
+    def load(self, after_seq: int = 0) -> list[AuditEntry]:
+        rows = self._conn.execute(
+            "SELECT * FROM audit_log WHERE seq > ? ORDER BY seq", (after_seq,)
+        ).fetchall()
         return [
             AuditEntry(
                 seq=row["seq"],
@@ -140,6 +182,17 @@ class AuditLog:
             self._entries = self._store.load()
             self._seq = max((entry.seq for entry in self._entries), default=0)
 
+    def _sync_from_store(self) -> None:
+        """Adopt entries another writer appended since our last access."""
+
+        if self._store is None:
+            return
+        last = self._store.last()
+        if last is None or last[0] <= self._seq:
+            return
+        self._entries.extend(self._store.load(after_seq=self._seq))
+        self._seq = self._entries[-1].seq
+
     def record(
         self,
         *,
@@ -151,10 +204,10 @@ class AuditLog:
         trace_id: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> AuditEntry:
-        self._seq += 1
+        self._sync_from_store()
         prev = self._entries[-1].digest if self._entries else ""
         entry = AuditEntry(
-            seq=self._seq,
+            seq=self._seq + 1,
             ts=time.time(),
             operator=operator,
             action=action,
@@ -165,10 +218,12 @@ class AuditLog:
             detail=detail or {},
             prev_hash=prev,
         )
-        entry.digest = entry.compute_digest()
-        self._entries.append(entry)
         if self._store is not None:
-            self._store.insert(entry)
+            self._store.append(entry)
+        else:
+            entry.digest = entry.compute_digest()
+        self._seq = entry.seq
+        self._entries.append(entry)
         return entry
 
     def close(self) -> None:
@@ -176,11 +231,10 @@ class AuditLog:
             self._store.close()
             self._store = None
 
-    def verify(self) -> bool:
-        """Recompute the chain; returns False if any entry was modified."""
-
+    @staticmethod
+    def _verify_chain(entries: list[AuditEntry]) -> bool:
         prev = ""
-        for entry in self._entries:
+        for entry in entries:
             if entry.prev_hash != prev:
                 return False
             if entry.compute_digest() != entry.digest:
@@ -188,11 +242,29 @@ class AuditLog:
             prev = entry.digest
         return True
 
+    def verify(self) -> bool:
+        """Recompute the chain; returns False if any entry was modified.
+
+        When persisted, the on-disk chain is verified too so tampering by a
+        process that does not share this instance's memory is still caught."""
+
+        self._sync_from_store()
+        if not self._verify_chain(self._entries):
+            return False
+        if self._store is not None:
+            disk = self._store.load()
+            if len(disk) != len(self._entries):
+                return False
+            return self._verify_chain(disk)
+        return True
+
     def entries(self, *, limit: int | None = None, after_seq: int = 0) -> list[AuditEntry]:
+        self._sync_from_store()
         items = [e for e in self._entries if e.seq > after_seq]
         if limit is not None:
             items = items[-limit:]
         return items
 
     def __len__(self) -> int:
+        self._sync_from_store()
         return len(self._entries)

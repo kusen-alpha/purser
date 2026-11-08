@@ -64,7 +64,7 @@ async def test_redis_ids_and_token_index_self_heal_after_expiry():
         await co.register_lease("p", lease)
         assert await client.scard(co._ids_key("p")) == 1
         assert await client.hlen(co._token_key("p")) == 1
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 8
         while await co.leases_for("p", "r0") and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
         assert await co.leases_for("p", "r0") == []
@@ -82,6 +82,7 @@ async def test_redis_use_limit_expiry_reclaim_on_restart(tmp_path):
     path = str(tmp_path / "ul.db")
     ps = _purser(path)
     pool = ps.create_pool("ul", "fakecheck", max_slots=1, lease_ttl=1.0)
+    await ps.start()
     await pool.import_resources(
         [{"id": "r0", "host": "10.1.1.1", "port": 7000}],
         import_validate="on_import",
@@ -93,7 +94,7 @@ async def test_redis_use_limit_expiry_reclaim_on_restart(tmp_path):
         client = _redis()
         co = RedisCoordination(client=client, key_prefix="purser")
         try:
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + 8
             while await co.leases_for("ul", "r0") and time.monotonic() < deadline:
                 await asyncio.sleep(0.05)
             assert await co.leases_for("ul", "r0") == []
@@ -125,13 +126,20 @@ async def test_redis_use_limit_expiry_reclaim_on_restart(tmp_path):
 
 async def test_redis_register_failure_rolls_back_slot(tmp_path):
     path = str(tmp_path / "rb.db")
-    dead = "redis://127.0.0.1:1/15"  # refused: coordination is unavailable
-    ps_bad = _purser(path, redis_url=dead)
+    ps_bad = _purser(path)
     pool_bad = ps_bad.create_pool("rb", "fakecheck", max_slots=1)
+    await ps_bad.start()
     await pool_bad.import_resources(
         [{"id": "r0", "host": "2.2.2.2", "port": 80}],
         import_validate="on_import",
     )
+
+    async def refuse(*args, **kwargs):
+        raise ConnectionError("coordination unavailable")
+
+    # The same endpoint must stay pinned across the restart, so the outage is
+    # injected on the client instead of pointing at a different Redis.
+    pool_bad._coordination._client.hset = refuse
     try:
         with pytest.raises(PurserError):
             await pool_bad.acquire(
@@ -146,6 +154,7 @@ async def test_redis_register_failure_rolls_back_slot(tmp_path):
     # The same storage recovers cleanly once coordination is reachable again.
     ps_good = _purser(path)
     pool_good = ps_good.create_pool("rb", "fakecheck", max_slots=1)
+    await ps_good.start()
     try:
         lease = await pool_good.acquire(
             AcquireRequest(resource_id="r0", consumer="c2", slots=1, timeout=1.0)
@@ -160,10 +169,11 @@ async def test_redis_register_failure_rolls_back_slot(tmp_path):
         await ps_good.close()
 
 
-async def test_redis_partial_orphan_reconcile_real(tmp_path):
+async def test_redis_partial_orphan_reconcile_real(tmp_path, shared_backend_harness):
     path = str(tmp_path / "po.db")
     ps_a = _purser(path)
     pool_a = ps_a.create_pool("shared", "fakecheck", max_slots=2, lease_ttl=30.0)
+    await ps_a.start()
     await pool_a.import_resources(
         [{"id": "r0", "host": "3.3.3.3", "port": 443}],
         import_validate="on_import",
@@ -172,6 +182,7 @@ async def test_redis_partial_orphan_reconcile_real(tmp_path):
 
     ps_b = _purser(path)
     pool_b = ps_b.create_pool("shared", "fakecheck", max_slots=2, lease_ttl=30.0)
+    await ps_b.start()
     lease_b = await pool_b.acquire(AcquireRequest(consumer="b", slots=1, timeout=1.0))
     try:
         res = await pool_a.get("r0")

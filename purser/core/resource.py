@@ -5,8 +5,10 @@ from __future__ import annotations
 import enum
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Any
+from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import InitVar, asdict, dataclass, field, replace
+from typing import Any, ClassVar, TypeVar, get_origin, get_type_hints
 
 try:
     from zoneinfo import ZoneInfo
@@ -14,6 +16,10 @@ except ImportError:  # pragma: no cover - Python < 3.9
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from purser.core.state import ResourceState
+from purser.errors import ConfigError
+
+_MISSING = object()
+ResourceT = TypeVar("ResourceT", bound="Resource")
 
 
 def _now() -> float:
@@ -193,6 +199,9 @@ class Lease:
     outcome: UsageOutcome = UsageOutcome.OK
     target: str | None = None
     payload: dict[str, Any] | None = None  # populated by the pool for holder convenience
+    resource: Resource | None = field(
+        default=None, repr=False, compare=False
+    )  # typed snapshot loaded by this process at acquire time
 
     @staticmethod
     def new(
@@ -226,18 +235,53 @@ class Lease:
         return (now or _now()) >= self.expires_at
 
 
+@dataclass(frozen=True)
+class PayloadField:
+    """Declarative metadata for one typed payload field.
+
+    A subclass lists these in :attr:`Resource.payload_fields`; the field names
+    become ``typed_payload_fields`` automatically.  One table therefore drives
+    coercion, required checks, defaults and at-rest encryption.
+
+    ``coerce`` must be pure and idempotent: hydration may run it again on an
+    already-typed value.  ``required`` means present and non-empty (``None``
+    and ``""`` are rejected; ``0`` and ``False`` are valid).
+    """
+
+    name: str
+    coerce: Callable[[Any], Any] | None = None
+    required: bool = False
+    secret: bool = False
+    default: Any = None
+    doc: str = ""
+
+    def normalize(self, value: Any) -> Any:
+        return value if self.coerce is None else self.coerce(value)
+
+
 @dataclass
 class Resource:
-    """One resource: a proxy, account or custom object (3.2)."""
+    """One resource: a proxy, account or custom object (3.2).
+
+    ``payload`` is a derived view: ``_payload`` only keeps custom keys while
+    subclasses declare their common fields in ``payload_fields``.  The merge
+    happens on read, so typed attributes never drift from the bag.  Writing
+    ``payload`` replaces the typed view as well; unknown keys stay in
+    :attr:`extra`.
+
+    This is not a plain DTO: ``dataclasses.asdict`` exposes ``_payload`` and
+    ``dataclasses.replace(..., payload=...)`` cannot apply typed payload keys.
+    Use :meth:`to_dict` and :meth:`copy_with` instead.
+    """
 
     id: str
     kind: str
-    payload: dict[str, Any]
+    payload: InitVar[dict[str, Any] | None] = None
+    _payload: dict[str, Any] = field(default_factory=dict, repr=False, init=False)
     state: ResourceState = ResourceState.NEW
     version: int = 0
     tags: frozenset[str] = frozenset()
     concurrency: Concurrency = field(default_factory=Concurrency)
-    leases: dict[str, Lease] = field(default_factory=dict)
     health: HealthStats = field(default_factory=HealthStats)
     site_failures: dict[str, SiteFailure] = field(default_factory=dict)
     quota: Quota | None = None
@@ -248,6 +292,185 @@ class Resource:
     mutex_group: str | None = None
     schedule_window: tuple[str, str] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+
+    payload_fields: ClassVar[tuple[PayloadField, ...]] = ()
+    typed_payload_fields: ClassVar[tuple[str, ...]] = ()
+    _payload_field_map: ClassVar[dict[str, PayloadField]] = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if "payload_fields" not in cls.__dict__:
+            return
+        declared = cls.payload_fields
+        for spec in declared:
+            if not isinstance(spec, PayloadField):
+                raise TypeError(
+                    f"{cls.__name__}.payload_fields must contain PayloadField"
+                )
+        names = [spec.name for spec in declared]
+        if len(set(names)) != len(names):
+            raise TypeError(f"{cls.__name__}.payload_fields has duplicate names")
+        # Dataclass fields accumulate down the MRO, so declarations must too;
+        # nearer bases override by name but never drop inherited fields.
+        merged: dict[str, PayloadField] = {}
+        for base in reversed(cls.__mro__[1:]):
+            inherited = base.__dict__.get("payload_fields")
+            if inherited is not None:
+                merged.update({spec.name: spec for spec in inherited})
+        merged.update({spec.name: spec for spec in declared})
+        known: set[str] = set()
+        for base in cls.__mro__:
+            known.update(getattr(base, "__dataclass_fields__", {}))
+            known.update(base.__dict__.get("__annotations__", {}))
+        known -= {"payload", "_payload", "typed_payload_fields", "payload_fields"}
+        try:
+            hints = get_type_hints(cls)
+        except Exception:
+            hints = {}
+        known -= {
+            name for name, hint in hints.items() if get_origin(hint) is ClassVar
+        }
+        unknown = [name for name in merged if name not in known]
+        if unknown:
+            raise TypeError(
+                f"{cls.__name__}.payload_fields names are not dataclass fields: "
+                + ", ".join(unknown)
+            )
+        cls.payload_fields = tuple(merged.values())
+        cls.typed_payload_fields = tuple(merged)
+        cls._payload_field_map = merged
+
+    def __post_init__(self, payload: dict[str, Any] | None) -> None:
+        # The property shadows the InitVar default, so dataclasses passes the
+        # property object itself when the caller omits ``payload``.
+        if not isinstance(payload, dict):
+            payload = None
+        self._load_payload(payload, overwrite_typed=False)
+        self._coerce_typed()
+
+    def _load_payload(
+        self, value: dict[str, Any] | None, *, overwrite_typed: bool
+    ) -> None:
+        data = dict(value or {})
+        for name in self.typed_payload_fields:
+            incoming = data.pop(name, _MISSING)
+            if incoming is _MISSING:
+                if overwrite_typed:
+                    setattr(self, name, None)
+                continue
+            if overwrite_typed or getattr(self, name, None) is None:
+                spec = self._payload_field_map.get(name)
+                if incoming is not None and spec is not None:
+                    incoming = self._coerce(spec, incoming)
+                setattr(self, name, incoming)
+        self._payload = data
+
+    def _coerce(self, spec: PayloadField, value: Any) -> Any:
+        try:
+            return spec.normalize(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid {spec.name!r} for {self.kind} resource: {value!r}"
+            ) from exc
+
+    def _coerce_typed(self) -> None:
+        for name in self.typed_payload_fields:
+            spec = self._payload_field_map.get(name)
+            if spec is None or spec.coerce is None:
+                continue
+            value = getattr(self, name, None)
+            if value is not None:
+                setattr(self, name, self._coerce(spec, value))
+
+    def normalize_payload(self, *, require: bool = False) -> None:
+        """Coerce declared fields to their canonical types and fill defaults.
+
+        ``adopt`` runs this with ``require=True`` on the write boundary, so
+        missing required fields fail early; ``hydrate`` runs it without the
+        flag so a stored record is typed but never rejected on read.
+
+        Direct attribute assignment is not intercepted: typed attributes are
+        canonical after construction and at adopt/hydrate boundaries, so call
+        this after mutating them in bulk.  A default filled on read becomes
+        part of the derived view but is only persisted by the next write.
+        """
+
+        for spec in self.payload_fields:
+            value = getattr(self, spec.name, None)
+            if value is None:
+                if spec.default is None:
+                    if require and spec.required:
+                        raise ValueError(
+                            f"{self.kind} resource requires {spec.name!r}"
+                        )
+                    continue
+                value = deepcopy(spec.default)
+                setattr(self, spec.name, value)
+            elif require and spec.required and value == "":
+                raise ValueError(f"{self.kind} resource requires {spec.name!r}")
+            if spec.coerce is not None:
+                setattr(self, spec.name, self._coerce(spec, value))
+
+    @property
+    def extra(self) -> dict[str, Any]:
+        """Deep copy of the custom keys that have no declared typed field."""
+
+        return deepcopy(self._payload)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Deep-copy the resource in its storage shape.
+
+        Typed fields are folded back into ``payload`` instead of appearing at
+        the top level, which ``dataclasses.asdict`` cannot express.
+        """
+
+        data = asdict(self)
+        custom = data.pop("_payload", {})
+        typed: dict[str, Any] = {}
+        for name in self.typed_payload_fields:
+            value = data.pop(name, _MISSING)
+            if value is not _MISSING and value is not None:
+                typed[name] = value
+        data["payload"] = {**custom, **typed}
+        data["state"] = self.state.value
+        data["tags"] = sorted(self.tags)
+        return data
+
+    def copy_with(
+        self: ResourceT,
+        *,
+        payload: dict[str, Any] | None = None,
+        **changes: Any,
+    ) -> ResourceT:
+        """Copy with base/typed changes, optionally replacing the whole payload.
+
+        ``dataclasses.replace`` copies the merged payload but lets typed kwargs
+        win, so a ``payload=`` change is silently ignored.  This is the
+        supported replacement.
+        """
+
+        clone = replace(self, **changes)
+        if payload is not None:
+            clone.payload = dict(payload)
+        return clone
+
+    # mypy rejects an InitVar/property pair even though dataclasses allows it.
+    @property  # type: ignore[misc]
+    def payload(self) -> dict[str, Any]:  # noqa: F811
+        """Detached view: mutating it never changes the resource."""
+
+        data = deepcopy(self._payload)
+        for name in self.typed_payload_fields:
+            value = getattr(self, name)
+            if value is None:
+                data.pop(name, None)
+            else:
+                data[name] = deepcopy(value)
+        return data
+
+    @payload.setter
+    def payload(self, value: dict[str, Any] | None) -> None:
+        self._load_payload(value, overwrite_typed=True)
 
     @property
     def available_slots(self) -> int:
@@ -320,6 +543,31 @@ class AcquireRequest:
     required_tag: str | None = None  # tag that must match (hard constraint)
     affinity: str | None = None
 
+    def __post_init__(self) -> None:
+        if isinstance(self.tags, str):
+            raise TypeError(
+                "AcquireRequest.tags must be an iterable of strings, not a str"
+            )
+        try:
+            tags = frozenset(self.tags)
+        except TypeError as exc:
+            raise TypeError(
+                "AcquireRequest.tags must be an iterable of strings"
+            ) from exc
+        if any(not isinstance(tag, str) or not tag for tag in tags):
+            raise ValueError("AcquireRequest.tags must contain non-empty strings")
+        self.tags = tags
+        if self.probe is not None:
+            raise ConfigError(
+                "AcquireRequest.probe is not implemented; configure probe targets "
+                "on the resource type: ProxyType(probe_targets=[...])"
+            )
+        if self.affinity is not None:
+            raise ConfigError(
+                "AcquireRequest.affinity is not implemented; enable affinity scoring "
+                "with PoolConfig(affinity_weight=...)"
+            )
+
     def ensure_trace(self) -> str:
         if self.trace_id is None:
             self.trace_id = new_trace_id()
@@ -350,20 +598,26 @@ def describe_resource(resource: Resource, *, secret: bool = False) -> dict[str, 
             "samples": resource.health.samples,
             "last_latency_ms": resource.health.last_latency_ms,
             "last_checked_at": resource.health.last_checked_at,
+            "last_error": resource.health.last_error,
             "consecutive_failures": resource.health.consecutive_failures,
         },
         "used_count": resource.used_count,
         "usage_quota": resource.usage_quota,
+        "quota": (
+            {
+                "limit": resource.quota.limit,
+                "used": resource.quota.used,
+                "reset_at": resource.quota.reset_at,
+            }
+            if resource.quota is not None
+            else None
+        ),
         "expires_at": resource.expires_at,
         "next_available_at": resource.next_available_at,
-        "leases": {
-            t: {
-                "consumer": lease.consumer,
-                "slots": lease.slots,
-                "expires_at": lease.expires_at,
-            }
-            for t, lease in resource.leases.items()
-        },
+        "mutex_group": resource.mutex_group,
+        "schedule_window": (
+            list(resource.schedule_window) if resource.schedule_window else None
+        ),
         "site_failures": {
             site: {"count": f.count, "until": f.until}
             for site, f in resource.site_failures.items()

@@ -11,9 +11,28 @@ from __future__ import annotations
 class PurserError(Exception):
     """Base class for all purser errors."""
 
+    code: str | None = None
+
 
 class ConfigError(PurserError):
     """Invalid pool or library configuration."""
+
+
+class IsolationConflict(ConfigError):
+    """A Purser instance would be shared across owners or processes."""
+
+
+class NotStarted(PurserError):
+    """Pool runtime is not started; acquire/lease need ``await ps.start()``."""
+
+    def __init__(self, pool: str | None = None, *, operation: str = "acquire") -> None:
+        self.pool = pool
+        self.operation = operation
+        target = f"pool {pool!r}" if pool else "purser"
+        super().__init__(
+            f"cannot {operation}: {target} is not started; "
+            "call `await ps.start()` or use `async with Purser() as ps`"
+        )
 
 
 class PoolNotFound(PurserError):
@@ -84,6 +103,10 @@ class QuotaExceeded(PurserError):
 
 class BadPayload(PurserError):
     """Resource payload failed validation or serialization."""
+
+
+class VersionConflict(PurserError):
+    """Optimistic-lock conflict: the stored version no longer matches."""
 
 
 class BackendUnavailable(PurserError):

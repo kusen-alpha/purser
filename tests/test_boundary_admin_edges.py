@@ -214,6 +214,7 @@ async def test_restart_cooldown_preserved(tmp_path, storage_kind, coordination_k
 
     ps1 = build()
     pool = ps1.create_pool("px", "fakecheck", cooldown_after_release=60)
+    await ps1.start()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     await pool.release(lease)

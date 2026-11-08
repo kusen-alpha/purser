@@ -136,6 +136,9 @@ class ValidationGate:
         return (now - resource.health.last_checked_at) >= self.stale_after
 
     def due_background(self, resource: Resource, now: float | None = None) -> bool:
+        # Usage failures (timeout/network) mark the resource for early re-check.
+        if resource.meta.get("needs_validate"):
+            return True
         if not self.stale(resource, now):
             return False
         if self.sample >= 1.0:

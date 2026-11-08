@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from dataclasses import fields
+from typing import Any, ClassVar, TypeVar
 
 from purser.core.health import HealthReport
 from purser.core.resource import (
@@ -15,6 +16,19 @@ from purser.core.resource import (
 from purser.core.state import ResourceState
 from purser.errors import ConfigError
 
+ResourceT = TypeVar("ResourceT", bound=Resource)
+
+
+def rehydrate(resource: Resource, cls: type[ResourceT]) -> ResourceT:
+    """Rebuild a generic stored Resource as a typed subclass."""
+
+    values = {
+        f.name: getattr(resource, f.name)
+        for f in fields(Resource)
+        if f.name != "_payload"
+    }
+    return cls(payload=resource.payload, **values)
+
 
 class ResourceType(ABC):
     """One plugin per resource family.  The kernel has zero knowledge of
@@ -23,11 +37,70 @@ class ResourceType(ABC):
 
     kind: str = ""
     default_concurrency: int = 1
+    resource_class: ClassVar[type[Resource]] = Resource
     secret_fields: tuple[str, ...] = ()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Derive ``secret_fields`` from ``resource_class.payload_fields``.
+
+        Declare ``resource_class`` in the class body; assigning it after class
+        creation is not observed.  An explicit ``secret_fields`` always wins.
+        """
+
+        super().__init_subclass__(**kwargs)
+        if "secret_fields" in cls.__dict__:
+            return
+        resource_class = getattr(cls, "resource_class", Resource)
+        cls.secret_fields = tuple(
+            spec.name
+            for spec in getattr(resource_class, "payload_fields", ())
+            if spec.secret
+        )
 
     @abstractmethod
     async def generate(self, spec: dict[str, Any]) -> Resource:
         """Build a NEW resource from an import/generation spec (S11)."""
+
+    def _typed(self, resource: Resource) -> Resource:
+        if self.resource_class is Resource or isinstance(
+            resource, self.resource_class
+        ):
+            return resource
+        return rehydrate(resource, self.resource_class)
+
+    def adopt(self, resource: Resource) -> Resource:
+        """Validate and normalize a caller-built Resource on the import path.
+
+        Dict records go through :meth:`generate`; this is the equivalent
+        boundary for ``Resource`` instances handed to ``import_resources``.
+        Typed fields are rehydrated and required ones enforced here.
+        """
+
+        if resource.kind != self.kind:
+            raise ValueError(
+                f"resource kind {resource.kind!r} does not match type {self.kind!r}"
+            )
+        if not resource.id:
+            raise ValueError("resource id must be non-empty")
+        if not isinstance(resource.payload, dict):
+            raise ValueError("resource payload must be a dict")
+        resource.tags = frozenset(resource.tags or ())
+        resource.meta = dict(resource.meta or {})
+        typed = self._typed(resource)
+        typed.normalize_payload(require=True)
+        return typed
+
+    def hydrate(self, resource: Resource) -> Resource:
+        """Return the typed view of a stored resource (read boundary).
+
+        Storage is generic; the declared ``resource_class`` rebuilds the
+        typed subclass so ``get``/``require``/``query`` hand callers the
+        same shape they imported.
+        """
+
+        typed = self._typed(resource)
+        typed.normalize_payload()
+        return typed
 
     @abstractmethod
     async def validate(self, resource: Resource) -> HealthReport:

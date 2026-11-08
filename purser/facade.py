@@ -13,31 +13,44 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import heapq
 import inspect
 import logging
+import math
 import random
 import time
 import uuid
 from collections import defaultdict
-from collections.abc import AsyncIterator, Callable, Iterator
-from dataclasses import dataclass, field
-from typing import Any, cast
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Iterable,
+    Iterator,
+    Sequence,
+)
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal, cast, overload
 
+from purser.authority import make_authority
 from purser.backends.base import Coordination, ResourcePatch, StorageBackend
 from purser.backends.coordination import MemoryCoordination, RedisCoordination
 from purser.backends.memory import MemoryStorage
 from purser.backends.sqlite import SqliteStorage
-from purser.config import PoolConfig
+from purser.binding import make_binding
+from purser.config import PoolConfig, Weights
 from purser.core.allocator import AllocationContext, Allocator, make_allocator
 from purser.core.audit import AuditLog
 from purser.core.events import EventBus
 from purser.core.health import HealthReport, ProbeGuard, ValidationGate
 from purser.core.lease import LeaseManager
+from purser.core.quarantine import QuarantinePolicy
 from purser.core.resource import (
     AcquireRequest,
     CheckVerdict,
     Concurrency,
+    HealthStats,
     Lease,
     Quota,
     Resource,
@@ -49,22 +62,47 @@ from purser.core.scheduler import PeriodicScheduler
 from purser.core.state import (
     ADMIN_ALLOWED,
     ALLOCATABLE_STATES,
+    Event,
     ResourceState,
+    StateContext,
+    StateMachine,
+)
+from purser.core.usage import UsageLedger
+from purser.core.views import (
+    ActiveUsageGroup,
+    PoolStats,
+    PoolUsage,
+    UsageReport,
+    ValidateJobCancelView,
+    ValidateJobView,
 )
 from purser.crypto import SecretCodec, load_or_create_key
 from purser.errors import (
     BadState,
     ConfigError,
+    IsolationConflict,
     LeaseConflict,
     NoSuitableResource,
+    NotStarted,
     PoolEmpty,
     PoolExhausted,
     PoolExists,
     PoolNotFound,
     ResourceBusy,
     ResourceNotFound,
+    VersionConflict,
 )
-from purser.idempotency import IdempotencyStore
+from purser.idempotency import IdempotencyStore, RedisIdempotencyStore
+from purser.isolation import (
+    PICKLE_MESSAGE,
+    IsolationGuard,
+    mysql_connection_identity,
+    mysql_identity,
+    redis_client_identity,
+    redis_identity,
+    resource_type_identity,
+    sqlite_identity,
+)
 from purser.metrics import Metrics
 from purser.types.base import ResourceType, ResourceTypeRegistry
 
@@ -79,9 +117,112 @@ MAINTENANCE_NAMES = (
     "archive_gc",
 )
 
+# Shared coordination has no push channel; general waiters poll storage on this
+# interval so a release on another instance can wake them (V03).
+WAITER_POLL_INTERVAL = 0.1
+
+BACKUP_FORMAT = "purser-backup"
+BACKUP_VERSION = 1
+
+# Operational states cannot survive a restore: leases are not migrated, so
+# anything that implies occupancy comes back as IDLE and reconciles normally.
+_RESTORE_IDLE_STATES = frozenset(
+    {
+        ResourceState.NEW,
+        ResourceState.VALIDATING,
+        ResourceState.ACTIVE,
+        ResourceState.FULL,
+        ResourceState.DRAINING,
+        ResourceState.LOST,
+    }
+)
+_RESTORE_TRANSIENT_META = ("drain_reason", "drained_at", "drain_cancelled_at")
+
 
 def _now() -> float:
     return time.time()
+
+
+_MISSING = object()
+
+
+def _record_value(record: dict[str, Any] | Resource, key: str) -> Any:
+    """Look up a dedup key on an import record (dict spec or Resource)."""
+
+    if isinstance(record, dict):
+        return record[key] if key in record else _MISSING
+    if key == "id":
+        return record.id
+    if key in record.payload:
+        return record.payload[key]
+    return record.meta.get(key, _MISSING)
+
+
+# Scheduling fields accepted next to resource payload keys on the import path.
+_IMPORT_RESERVED = (
+    "max_slots",
+    "usage_quota",
+    "expires_at",
+    "mutex_group",
+    "schedule_window",
+    "source",
+)
+
+
+def _optional_int(value: Any, name: str, *, minimum: int = 0) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ConfigError(f"{name} must be an integer >= {minimum} or null")
+    return value
+
+
+def _optional_float(value: Any, name: str = "value") -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{name} must be a number or null")
+    return float(value)
+
+
+def _schedule_window(value: Any) -> tuple[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ConfigError("schedule_window must be [start, end] in HH:MM")
+    parts = []
+    for raw in value:
+        try:
+            parsed = time.strptime(str(raw), "%H:%M")
+        except ValueError:
+            raise ConfigError(f"bad schedule_window time {raw!r}; expected HH:MM") from None
+        parts.append(time.strftime("%H:%M", parsed))
+    return (parts[0], parts[1])
+
+
+def _apply_import_fields(resource: Resource, data: dict[str, Any]) -> None:
+    """Apply scheduling fields carried alongside an import spec."""
+
+    if "max_slots" in data:
+        value = data["max_slots"]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ConfigError("max_slots must be an integer > 0")
+        resource.concurrency = Concurrency(max_slots=value)
+    if "usage_quota" in data:
+        resource.usage_quota = _optional_int(data["usage_quota"], "usage_quota")
+    if "expires_at" in data:
+        raw = data["expires_at"]
+        if raw is not None and (isinstance(raw, bool) or not isinstance(raw, (int, float))):
+            raise ConfigError("expires_at must be an epoch number or null")
+        resource.expires_at = float(raw) if raw is not None else None
+    if "mutex_group" in data:
+        raw = data["mutex_group"]
+        resource.mutex_group = str(raw) if raw else None
+    if "schedule_window" in data:
+        resource.schedule_window = _schedule_window(data["schedule_window"])
+    source = data.get("source")
+    if source:
+        resource.meta["source"] = str(source)
 
 
 @dataclass
@@ -91,6 +232,7 @@ class ImportReport:
     skipped: int = 0
     errors: list[dict[str, Any]] = field(default_factory=list)
     batch_id: str | None = None
+    validation: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -103,6 +245,7 @@ class ImportReport:
             "skipped": self.skipped,
             "errors": self.errors,
             "batch_id": self.batch_id,
+            "validation": self.validation,
             "total": self.total,
         }
 
@@ -114,6 +257,7 @@ class _WaitHandle:
     future: asyncio.Future[Any]
     req: AcquireRequest
     cancelled: bool = False
+    serving: bool = False
 
     def __lt__(self, other: _WaitHandle) -> bool:
         if self.priority != other.priority:
@@ -165,6 +309,13 @@ class ResourcePool:
         self.cfg = cfg
         self.storage = storage
         self._coordination = coordination
+        self._authority = make_authority(
+            name, cfg.storage, cfg.coordination, storage, coordination
+        )
+        self._binding = make_binding(
+            name, cfg.storage, cfg.coordination, storage, coordination
+        )
+        self._isolation_keys: list[tuple[Any, ...]] = []
         self._allocator: Allocator = make_allocator(cfg.allocator)
         self._leases = LeaseManager(
             on_expire=self._on_lease_expired,
@@ -178,6 +329,9 @@ class ResourcePool:
         )
         self._validate_sem = asyncio.Semaphore(cfg.validate_concurrency)
         self._waiters: list[_WaitHandle] = []
+        self._active_polls = 0
+        self._polls_idle = asyncio.Event()
+        self._polls_idle.set()
         self._seq = 0
         self._consumer_holds: dict[str, set[str]] = defaultdict(set)
         self._affinity: dict[str, dict[str, float]] = defaultdict(dict)
@@ -186,8 +340,17 @@ class ResourcePool:
         self._scheduler = PeriodicScheduler()
         self._tasks: list[asyncio.Task[Any]] = []
         self._bg_tasks: set[asyncio.Task[Any]] = set()
+        self._validate_jobs: dict[str, dict[str, Any]] = {}
+        self._validate_job_queues: dict[str, asyncio.Queue[str]] = {}
+        self._start_task: asyncio.Task[None] | None = None
         self._started = False
         self._register_scheduler()
+
+    def __getstate__(self) -> Any:
+        raise IsolationConflict(PICKLE_MESSAGE)
+
+    def _ensure_process(self) -> None:
+        self.purser._isolation.ensure_process()
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -214,18 +377,65 @@ class ResourcePool:
         return runner
 
     async def start(self) -> None:
+        self._ensure_process()
         if self._started:
             return
-        self._started = True
-        if self.purser.maintenance_enabled:
-            await self._scheduler.start()
-        self._tasks.append(asyncio.create_task(self._reaper_loop()))
-        if self.purser.maintenance_enabled:
-            self._tasks.append(asyncio.create_task(self._background_validate_loop()))
-        await self._reconcile_leases()
+        try:
+            await self._binding.claim()
+        except BaseException:
+            await self._binding.rollback()
+            raise
+        try:
+            await self._authority.acquire()
+            self._started = True
+            if self.purser.maintenance_enabled:
+                await self._scheduler.start()
+            self._tasks.append(asyncio.create_task(self._reaper_loop()))
+            if self.purser.maintenance_enabled:
+                self._tasks.append(asyncio.create_task(self._background_validate_loop()))
+            await self._reconcile_leases()
+        except BaseException:
+            self._started = False
+            for task in self._tasks:
+                task.cancel()
+            self._tasks.clear()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._scheduler.stop()
+            await self._authority.release()
+            await self._binding.rollback()
+            raise
+
+    @property
+    def started(self) -> bool:
+        """Whether the pool runtime (reaper, validation, wake-ups) is running."""
+
+        return self._started
+
+    async def _ensure_started(self, operation: str) -> None:
+        self._ensure_process()
+        task = self._start_task
+        if task is not None and not task.done():
+            # A pool created after Purser.start() is starting on a pending task;
+            # wait for its reconcile to finish instead of racing acquisitions.
+            # Shield it: cancelling one waiter (timeout/consumer cancellation)
+            # must not cancel the start task shared by every other waiter.
+            await asyncio.shield(task)
+            return
+        if self._started:
+            return
+        if self.purser.started:
+            await self.start()
+            return
+        raise NotStarted(self.name, operation=operation)
 
     async def close(self) -> None:
+        self._ensure_process()
         self._started = False
+        start_task, self._start_task = self._start_task, None
+        if start_task is not None and not start_task.done():
+            start_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await start_task
         await self._scheduler.stop()
         try:
             # Shutdown must never wedge on a stuck heartbeat task.
@@ -258,12 +468,27 @@ class ResourcePool:
                     PoolExhausted(f"pool {self.name} closed while waiting")
                 )
         self._waiters.clear()
-        closer = getattr(self.storage, "close", None)
-        if closer is not None:
-            result = closer()
-            if inspect.isawaitable(result):
-                await result
-        await self._coordination.close()
+        # A waiter may be mid-poll on shared storage. Let that in-flight check
+        # land before teardown: closing a sqlite connection under a scan thread
+        # crashes the interpreter.
+        if self._active_polls:
+            try:
+                await asyncio.wait_for(self._polls_idle.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "pool %s close timed out draining waiter polls", self.name
+                )
+        try:
+            closer = getattr(self.storage, "close", None)
+            if closer is not None:
+                result = closer()
+                if inspect.isawaitable(result):
+                    await result
+            await self._coordination.close()
+        finally:
+            await self._authority.release()
+            await self._binding.release()
+            self.purser._release_pool_claims(self)
 
     async def _reconcile_leases(self) -> None:
         """F2: align slot usage with the currently live coordination leases.
@@ -311,6 +536,7 @@ class ResourcePool:
         if immutable:
             fields = ", ".join(sorted(immutable))
             raise ConfigError(f"cannot change {fields} at runtime")
+        self._ensure_process()
         cfg = self.cfg.with_overrides(**updates)
         self.cfg = cfg
         self._allocator = make_allocator(cfg.allocator)
@@ -372,16 +598,183 @@ class ResourcePool:
         except Exception:
             logger.exception("background validate %s failed", rid)
 
+    # -- batch validate jobs (V2) -----------------------------------------
+
+    def _start_validate_job(
+        self, job_id: str, rids: Sequence[str], operator: str
+    ) -> ValidateJobView:
+        """Track a batch validation run under ``job_id`` (the import batch id).
+
+        Workers pull from a shared queue so a cancellation stops pending
+        items while in-flight probes finish normally.
+        """
+
+        now = _now()
+        existing = self._validate_jobs.get(job_id)
+        queue = self._validate_job_queues.get(job_id)
+        if existing is not None and queue is not None and existing["status"] in (
+            "running",
+            "cancelling",
+        ):
+            for rid in rids:
+                queue.put_nowait(rid)
+            existing["total"] += len(rids)
+            existing["updated_at"] = now
+            return self._validate_job_view(existing)
+        self._prune_validate_jobs()
+        job = {
+            "id": job_id,
+            "pool": self.name,
+            "status": "running",
+            "total": len(rids),
+            "done": 0,
+            "alive": 0,
+            "failed": 0,
+            "skipped": 0,
+            "errors": [],
+            "created_at": now,
+            "updated_at": now,
+            "operator": operator,
+            "cancelled": False,
+        }
+        self._validate_jobs[job_id] = job
+        queue = asyncio.Queue()
+        self._validate_job_queues[job_id] = queue
+        for rid in rids:
+            queue.put_nowait(rid)
+        workers = max(1, min(self.cfg.validate_concurrency, len(rids)))
+        for _ in range(workers):
+            self._spawn(self._validate_job_worker(job_id))
+        self.purser.bus.publish(
+            "validate_job_started",
+            self.name,
+            data={"job_id": job_id, "total": job["total"]},
+        )
+        return self._validate_job_view(job)
+
+    async def _validate_job_worker(self, job_id: str) -> None:
+        queue = self._validate_job_queues.get(job_id)
+        job = self._validate_jobs.get(job_id)
+        if queue is None or job is None:
+            return
+        while True:
+            try:
+                rid = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if job["cancelled"]:
+                job["skipped"] += 1
+                job["done"] += 1
+                job["updated_at"] = _now()
+                self._finish_validate_job(job_id)
+                continue
+            try:
+                report = await self.validate_now(rid, operator=job["operator"])
+                if report.alive:
+                    job["alive"] += 1
+                else:
+                    job["failed"] += 1
+            except Exception as exc:
+                job["failed"] += 1
+                job["errors"].append({"rid": rid, "error": str(exc)})
+                if len(job["errors"]) > 100:
+                    del job["errors"][0]
+                logger.exception("batch validate %s failed for %s", job_id, rid)
+            finally:
+                job["done"] += 1
+                job["updated_at"] = _now()
+                self._finish_validate_job(job_id)
+
+    def _finish_validate_job(self, job_id: str) -> None:
+        job = self._validate_jobs.get(job_id)
+        if job is None or job["done"] < job["total"]:
+            return
+        if job["status"] == "running" or job["status"] == "cancelling":
+            job["status"] = "cancelled" if job["cancelled"] else "completed"
+            job["updated_at"] = _now()
+            self.purser.bus.publish(
+                "validate_job_finished",
+                self.name,
+                data={
+                    "job_id": job_id,
+                    "status": job["status"],
+                    "alive": job["alive"],
+                    "failed": job["failed"],
+                    "skipped": job["skipped"],
+                },
+            )
+
+    def _validate_job_view(self, job: dict[str, Any]) -> ValidateJobView:
+        return {
+            "id": job["id"],
+            "pool": job["pool"],
+            "status": job["status"],
+            "total": job["total"],
+            "done": job["done"],
+            "alive": job["alive"],
+            "failed": job["failed"],
+            "skipped": job["skipped"],
+            "errors": list(job["errors"]),
+            "created_at": job["created_at"],
+            "updated_at": job["updated_at"],
+            "operator": job["operator"],
+            "pending": max(0, job["total"] - job["done"]),
+        }
+
+    def validate_jobs(self) -> list[ValidateJobView]:
+        return [
+            self._validate_job_view(job)
+            for job in sorted(
+                self._validate_jobs.values(),
+                key=lambda item: item["created_at"],
+                reverse=True,
+            )
+        ]
+
+    def validate_job(self, job_id: str) -> ValidateJobView | None:
+        job = self._validate_jobs.get(job_id)
+        return None if job is None else self._validate_job_view(job)
+
+    def cancel_validate_job(self, job_id: str) -> ValidateJobCancelView | None:
+        job = self._validate_jobs.get(job_id)
+        if job is None:
+            return None
+        if job["status"] not in ("running", "cancelling"):
+            view = self._validate_job_view(job)
+            return {**view, "cancelled": False}
+        job["cancelled"] = True
+        job["status"] = "cancelling" if job["done"] < job["total"] else "cancelled"
+        job["updated_at"] = _now()
+        queue = self._validate_job_queues.get(job_id)
+        if queue is not None:
+            while not queue.empty():
+                queue.get_nowait()
+                job["skipped"] += 1
+                job["done"] += 1
+        self._finish_validate_job(job_id)
+        return {**self._validate_job_view(job), "cancelled": True}
+
+    def _prune_validate_jobs(self, keep: int = 100) -> None:
+        terminal = [
+            job_id
+            for job_id, job in self._validate_jobs.items()
+            if job["status"] in ("completed", "cancelled")
+        ]
+        for job_id in terminal[:-keep]:
+            self._validate_jobs.pop(job_id, None)
+            self._validate_job_queues.pop(job_id, None)
+
     # -- reads -------------------------------------------------------------
 
     async def get(self, rid: str) -> Resource | None:
-        return await self.storage.get(self.name, rid)
+        resource = await self.storage.get(self.name, rid)
+        return None if resource is None else self.type.hydrate(resource)
 
     async def require(self, rid: str) -> Resource:
         resource = await self.storage.get(self.name, rid)
         if resource is None:
             raise ResourceNotFound(f"{self.name}:{rid}")
-        return resource
+        return self.type.hydrate(resource)
 
     async def query(
         self,
@@ -390,26 +783,172 @@ class ResourcePool:
         tags: frozenset[str] | None = None,
         limit: int = 100,
         offset: int = 0,
+        search: str | None = None,
+        sort: str | None = None,
+        order: str | None = None,
     ) -> list[Resource]:
         if limit < 0 or offset < 0:
             raise ConfigError("limit and offset must be >= 0")
-        return await self.storage.query(
+        sort_key = sort or "id"
+        if sort_key not in ("id", "health", "recent"):
+            raise ConfigError(f"unsupported sort {sort_key!r}")
+        direction = (order or ("asc" if sort_key == "id" else "desc")).lower()
+        if direction not in ("asc", "desc"):
+            raise ConfigError(f"unsupported order {order!r}")
+        if search or sort:
+            matched = await self._search_resources(states=states, tags=tags, search=search)
+            if sort:
+                # _search_resources already ordered by id, and Python sorts are
+                # stable, so equal scores keep an id tiebreak in either direction.
+                if sort_key == "health":
+                    matched.sort(
+                        key=lambda r: r.health.score, reverse=direction == "desc"
+                    )
+                elif sort_key == "recent":
+                    matched.sort(
+                        key=lambda r: r.last_used_at or 0.0, reverse=direction == "desc"
+                    )
+                elif direction == "desc":
+                    matched.reverse()
+            if limit == 0:
+                return []
+            return [self.type.hydrate(r) for r in matched[offset : offset + limit]]
+        resources = await self.storage.query(
             self.name, states=states, tags=tags, limit=limit, offset=offset
         )
+        return [self.type.hydrate(resource) for resource in resources]
 
-    async def counts(self) -> dict[ResourceState, int]:
-        return await self.storage.counts(self.name)
+    async def iter_resources(
+        self,
+        *,
+        states: set[ResourceState] | None = None,
+        tags: Iterable[str] | None = None,
+        search: str | None = None,
+        batch_size: int = 100,
+    ) -> AsyncGenerator[Resource, None]:
+        """Stream matching resources without building a full result list.
 
-    async def stats(self) -> dict[str, Any]:
-        counts = await self.counts()
-        resources = await self.query(limit=10_000)
-        health_scores = [r.health.score for r in resources if r.health.samples]
+        Ordering and filters match ``query()``; there is no offset window, so
+        writes during iteration cannot shift the caller's position.
+        """
+
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+            raise ConfigError("batch_size must be an integer >= 1")
+        tag_filter: frozenset[str] | None = None
+        if tags is not None:
+            if isinstance(tags, str):
+                raise TypeError("tags must be an iterable of strings, not a str")
+            tag_filter = frozenset(tags)
+            if any(not isinstance(tag, str) or not tag for tag in tag_filter):
+                raise ValueError("tags must contain non-empty strings")
+        needle = (search or "").casefold()
+        async for resource in self.storage.scan(
+            self.name, states=states, batch=batch_size
+        ):
+            if tag_filter and not tag_filter.issubset(resource.tags):
+                continue
+            if needle and not self._matches(resource, needle):
+                continue
+            yield self.type.hydrate(resource)
+
+    async def count_matching(
+        self,
+        *,
+        states: set[ResourceState] | None = None,
+        tags: frozenset[str] | None = None,
+        search: str | None = None,
+    ) -> int:
+        """Number of resources matching the filters, ignoring pagination."""
+
+        if not search and not tags and not states:
+            return sum((await self.counts()).values())
+        return len(await self._search_resources(states=states, tags=tags, search=search))
+
+    async def _search_resources(
+        self,
+        *,
+        states: set[ResourceState] | None = None,
+        tags: frozenset[str] | None = None,
+        search: str | None = None,
+    ) -> list[Resource]:
+        needle = (search or "").casefold()
+        matched: list[Resource] = []
+        async for resource in self.storage.scan(self.name, states=states):
+            if tags and not tags.issubset(resource.tags):
+                continue
+            if needle and not self._matches(resource, needle):
+                continue
+            matched.append(resource)
+        matched.sort(key=lambda r: r.id)
+        return matched
+
+    @staticmethod
+    def _matches(resource: Resource, needle: str) -> bool:
+        fields = [resource.id, resource.kind, *resource.tags]
+        for key in ("batch_id", "source"):
+            value = resource.meta.get(key)
+            if value is not None:
+                fields.append(str(value))
+        return needle in " ".join(fields).casefold()
+
+    async def batches(self) -> list[dict[str, Any]]:
+        """Aggregate resources by their import/generation batch."""
+
+        grouped: dict[str, dict[str, Any]] = {}
+        async for resource in self.storage.scan(self.name):
+            batch_id = str(resource.meta.get("batch_id") or "").strip()
+            if not batch_id:
+                continue
+            item = grouped.setdefault(
+                batch_id,
+                {
+                    "batch_id": batch_id,
+                    "total": 0,
+                    "states": {},
+                    "source": resource.meta.get("source"),
+                    "created_at": None,
+                },
+            )
+            item["total"] += 1
+            states = item["states"]
+            states[resource.state.value] = states.get(resource.state.value, 0) + 1
+            created = resource.meta.get("created_at")
+            if isinstance(created, (int, float)) and (
+                item["created_at"] is None or created < item["created_at"]
+            ):
+                item["created_at"] = created
+        return sorted(grouped.values(), key=lambda item: item["batch_id"])
+
+    @overload
+    async def counts(
+        self, *, by_name: Literal[False] = False
+    ) -> dict[ResourceState, int]: ...
+
+    @overload
+    async def counts(self, *, by_name: Literal[True]) -> dict[str, int]: ...
+
+    async def counts(self, *, by_name: bool = False) -> dict[Any, int]:
+        """State distribution.
+
+        The default returns enum keys; ``by_name=True`` returns the same data
+        with ``ResourceState.value`` string keys, matching ``stats()``.
+        """
+
+        counts = await self.storage.counts(self.name)
+        if by_name:
+            return {state.value: n for state, n in counts.items()}
+        return counts
+
+    async def stats(self) -> PoolStats:
+        counts = await self.counts(by_name=True)
+        health_scores = await self.storage.health_scores(self.name)
         return {
             "name": self.name,
             "kind": self.cfg.kind,
             "total": sum(counts.values()),
-            "counts": {s.value: n for s, n in counts.items()},
-            "allocatable": counts[ResourceState.IDLE] + counts[ResourceState.ACTIVE],
+            "counts": counts,
+            "allocatable": counts[ResourceState.IDLE.value]
+            + counts[ResourceState.ACTIVE.value],
             "active_leases": len(await self._coordination.active(self.name)),
             "waiting": len(self._waiters),
             "avg_health": round(sum(health_scores) / len(health_scores), 3) if health_scores else None,
@@ -419,11 +958,23 @@ class ResourcePool:
     def describe(self, resource: Resource, *, secret: bool = False) -> dict[str, Any]:
         return describe_resource(resource, secret=secret)
 
+    async def leases(self, resource_id: str | None = None) -> list[Lease]:
+        """Active leases from the coordination plane.
+
+        ``resource_id=None`` returns every active lease in the pool.  Leases
+        issued by other instances sharing the same coordination backend are
+        included; their ``resource`` snapshot is ``None``.
+        """
+
+        if resource_id is None:
+            return await self._coordination.active(self.name)
+        return await self._coordination.leases_for(self.name, resource_id)
+
     # -- import / generate ------------------------------------------------
 
     async def import_resources(
         self,
-        records: list[dict[str, Any]],
+        records: Sequence[dict[str, Any] | Resource],
         *,
         dedup_key: str = "id",
         source: str = "manual",
@@ -432,53 +983,98 @@ class ResourcePool:
         import_validate: str | None = None,
         batch_id: str | None = None,
     ) -> ImportReport:
-        """Bulk import with dedup (O4), dirty-row skipping and a report (O15)."""
+        """Bulk import dict specs or pre-built Resources with dedup (O4)."""
 
         report = ImportReport(batch_id=batch_id or uuid.uuid4().hex)
         mode = import_validate or self.cfg.import_validate
+        pending_validate: list[str] = []
         for index, record in enumerate(records):
             try:
-                resource = await self.type.generate(record)
+                explicit_slots = False
+                if isinstance(record, Resource):
+                    resource = self.type.adopt(copy.deepcopy(record))
+                elif isinstance(record, dict):
+                    spec = dict(record)
+                    reserved = {
+                        key: spec.pop(key) for key in _IMPORT_RESERVED if key in spec
+                    }
+                    resource = await self.type.generate(spec)
+                    _apply_import_fields(resource, reserved)
+                    explicit_slots = "max_slots" in reserved
+                else:
+                    raise TypeError("import record must be a dict or Resource")
             except Exception as exc:
                 self._guard_error("import.generate", exc)
                 report.errors.append({"line": index, "error": str(exc)})
                 if fail_fast:
                     break
                 continue
-            if dedup_key and dedup_key in record:
-                resource.id = str(record[dedup_key])
+            value = _record_value(record, dedup_key) if dedup_key else _MISSING
+            if value is not _MISSING:
+                resource.id = str(value)
             resource.meta.setdefault("source", source)
             resource.meta["batch_id"] = report.batch_id
-            resource.concurrency.max_slots = self.cfg.max_slots or resource.concurrency.max_slots
+            if not explicit_slots and self.cfg.max_slots:
+                resource.concurrency.max_slots = self.cfg.max_slots
             if resource.expires_at is None and self.cfg.expires_in:
                 resource.expires_at = _now() + self.cfg.expires_in
             if self.cfg.usage_quota is not None and resource.usage_quota is None:
                 resource.usage_quota = self.cfg.usage_quota
-            if self.cfg.target_quota and resource.quota is None:
-                resource.quota = Quota(limit=int(sum(self.cfg.target_quota.values())))
-            existing = await self.storage.get(self.name, resource.id)
-            if existing is not None:
-                if existing.state is ResourceState.ARCHIVED:
+            if self.cfg.total_quota is not None and resource.quota is None:
+                resource.quota = Quota(limit=int(self.cfg.total_quota))
+            stored = False
+            for attempt in range(3):
+                existing = await self.storage.get(self.name, resource.id)
+                if existing is not None and existing.state is ResourceState.ARCHIVED:
                     report.skipped += 1
+                    break
+                if existing is not None:
+                    resource.state = existing.state
+                    resource.concurrency = existing.concurrency
+                    resource.health = existing.health
+                    resource.quota = existing.quota
+                    resource.site_failures = existing.site_failures
+                    resource.used_count = existing.used_count
+                    resource.next_available_at = existing.next_available_at
+                    resource.meta = {**existing.meta, **resource.meta}
+                    resource.meta["updated_at"] = _now()
+                    expected = existing.version
+                else:
+                    resource.meta["created_at"] = _now()
+                    expected = 0
+                try:
+                    await self.storage.put(
+                        self.name, resource, expected_version=expected
+                    )
+                except VersionConflict:
+                    if attempt == 2:
+                        raise
                     continue
-                resource.state = existing.state
-                resource.concurrency = existing.concurrency
-                resource.health = existing.health
-                resource.quota = existing.quota
-                resource.site_failures = existing.site_failures
-                resource.used_count = existing.used_count
-                resource.next_available_at = existing.next_available_at
-                resource.meta = {**existing.meta, **resource.meta}
-                resource.meta["updated_at"] = _now()
-                report.updated += 1
-            else:
-                resource.meta["created_at"] = _now()
-                report.imported += 1
-            await self.storage.put(self.name, resource)
+                if existing is not None:
+                    report.updated += 1
+                else:
+                    report.imported += 1
+                stored = True
+                break
+            if not stored:
+                continue
             if mode == "on_import":
-                await self.validate_now(resource.id, operator=operator)
+                verdict = await self.validate_now(resource.id, operator=operator)
+                report.validation.append(
+                    {
+                        "id": resource.id,
+                        "alive": verdict.alive,
+                        "latency_ms": verdict.latency_ms,
+                        "error": verdict.error,
+                        "action": verdict.action.value,
+                    }
+                )
             elif mode == "batch":
-                self._spawn(self._validate_in_background(resource.id))
+                pending_validate.append(resource.id)
+        if mode == "batch" and pending_validate:
+            self._start_validate_job(
+                report.batch_id or uuid.uuid4().hex, pending_validate, operator
+            )
         self.purser.bus.publish(
             "import_finished",
             self.name,
@@ -492,15 +1088,167 @@ class ResourcePool:
         )
         return report
 
-    async def generate(self, specs: list[dict[str, Any]], *, source: str = "builtin", operator: str = "system") -> ImportReport:
+    async def generate(self, specs: Sequence[dict[str, Any] | Resource], *, source: str = "builtin", operator: str = "system") -> ImportReport:
         return await self.import_resources(
             specs, source=source, operator=operator, import_validate="on_import"
         )
 
+    async def _restore_resources(
+        self, records: Sequence[Any], *, conflict: str, operator: str
+    ) -> dict[str, Any]:
+        stats: dict[str, Any] = {
+            "imported": 0,
+            "updated": 0,
+            "skipped": 0,
+            "normalized": 0,
+            "errors": [],
+        }
+        for index, entry in enumerate(records):
+            try:
+                resource, normalized = self._restore_resource(entry)
+            except Exception as exc:
+                stats["errors"].append({"line": index, "error": str(exc)})
+                continue
+            existing = await self.storage.get(self.name, resource.id)
+            if existing is not None and conflict == "skip":
+                stats["skipped"] += 1
+                continue
+            if existing is not None:
+                resource.version = existing.version
+                resource.meta.setdefault("created_at", existing.meta.get("created_at", _now()))
+                expected = existing.version
+            else:
+                resource.meta["created_at"] = resource.meta.get("created_at") or _now()
+                expected = 0
+            resource.meta["updated_at"] = _now()
+            try:
+                for attempt in range(3):
+                    try:
+                        await self.storage.put(
+                            self.name, resource, expected_version=expected
+                        )
+                        break
+                    except VersionConflict:
+                        if attempt == 2:
+                            raise
+                        current = await self.storage.get(self.name, resource.id)
+                        expected = current.version if current is not None else 0
+            except Exception as exc:
+                stats["errors"].append(
+                    {"line": index, "id": resource.id, "error": str(exc)}
+                )
+                continue
+            if existing is not None:
+                stats["updated"] += 1
+            else:
+                stats["imported"] += 1
+            if normalized:
+                stats["normalized"] += 1
+            self.purser.bus.publish(
+                "resource_restored",
+                self.name,
+                rid=resource.id,
+                data={"state": resource.state.value, "conflict": conflict},
+            )
+        return stats
+
+    def _restore_resource(self, entry: Any) -> tuple[Resource, bool]:
+        if not isinstance(entry, dict):
+            raise ValueError("resource entry must be an object")
+        rid = str(entry.get("id") or "").strip()
+        if not rid:
+            raise ValueError("resource id must be non-empty")
+        payload = entry.get("payload")
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be an object")
+        tags_raw = entry.get("tags") or ()
+        if not isinstance(tags_raw, (list, tuple, set, frozenset)):
+            raise ValueError("tags must be a list")
+        raw_state = str(entry.get("state") or "idle")
+        try:
+            state = ResourceState(raw_state)
+        except ValueError:
+            state = ResourceState.IDLE
+            normalized = True
+        else:
+            normalized = state in _RESTORE_IDLE_STATES
+            if normalized:
+                state = ResourceState.IDLE
+        meta_raw = entry.get("meta")
+        meta = dict(meta_raw) if isinstance(meta_raw, dict) else {}
+        if normalized:
+            for key in _RESTORE_TRANSIENT_META:
+                meta.pop(key, None)
+        concurrency_raw = entry.get("concurrency")
+        concurrency_raw = concurrency_raw if isinstance(concurrency_raw, dict) else {}
+        slots_raw = concurrency_raw.get("max_slots", entry.get("max_slots"))
+        max_slots = (
+            int(slots_raw)
+            if slots_raw is not None
+            else (self.cfg.max_slots or self.type.default_concurrency)
+        )
+        if max_slots <= 0:
+            raise ValueError("max_slots must be positive")
+        health_raw = entry.get("health")
+        health_raw = health_raw if isinstance(health_raw, dict) else {}
+        health = HealthStats(
+            score=float(health_raw.get("score", 0.5)),
+            samples=int(health_raw.get("samples", 0)),
+            last_latency_ms=_optional_float(health_raw.get("last_latency_ms")),
+            last_checked_at=_optional_float(health_raw.get("last_checked_at")),
+            last_error=health_raw.get("last_error"),
+            consecutive_failures=int(health_raw.get("consecutive_failures", 0)),
+        )
+        quota_raw = entry.get("quota")
+        quota = None
+        if isinstance(quota_raw, dict):
+            quota = Quota(
+                limit=int(quota_raw.get("limit", 0)),
+                used=int(quota_raw.get("used", 0)),
+                reset_at=_optional_float(quota_raw.get("reset_at")),
+            )
+        site_failures: dict[str, SiteFailure] = {}
+        failures_raw = entry.get("site_failures")
+        if isinstance(failures_raw, dict):
+            now = _now()
+            for site, data in failures_raw.items():
+                data = data if isinstance(data, dict) else {}
+                site_failures[str(site)] = SiteFailure(
+                    site=str(site),
+                    count=int(data.get("count", 1)),
+                    since=_optional_float(data.get("since")) or now,
+                    until=_optional_float(data.get("until")) or now,
+                )
+        resource = Resource(
+            id=rid,
+            kind=self.type.kind,
+            payload=payload,
+            state=state,
+            tags=frozenset(str(tag) for tag in tags_raw),
+            concurrency=Concurrency(max_slots=max_slots),
+            health=health,
+            site_failures=site_failures,
+            quota=quota,
+            usage_quota=_optional_int(entry.get("usage_quota"), "usage_quota"),
+            used_count=max(0, int(entry.get("used_count") or 0)),
+            expires_at=_optional_float(entry.get("expires_at")),
+            next_available_at=_optional_float(entry.get("next_available_at")),
+            mutex_group=str(entry["mutex_group"]) if entry.get("mutex_group") else None,
+            schedule_window=_schedule_window(entry.get("schedule_window")),
+            meta=meta,
+        )
+        typed = self.type.adopt(resource)
+        return typed, normalized
+
     # -- acquisition -------------------------------------------------------
 
     async def acquire(self, req: AcquireRequest | None = None, **kwargs: Any) -> Lease:
-        request = req or AcquireRequest()
+        await self._ensure_started("acquire")
+        # Work on a copy: kwargs and the generated trace id are per-call, so a
+        # reusable request must not accumulate them between acquisitions.
+        request = replace(req) if req is not None else AcquireRequest()
         unknown = set(kwargs) - set(AcquireRequest.__dataclass_fields__)
         if unknown:
             fields = ", ".join(sorted(unknown))
@@ -522,8 +1270,16 @@ class ResourcePool:
         if lease is not None:
             return lease
 
-        if not await self._has_any_resources():
+        counts = await self.counts()
+        total = sum(counts.values())
+        if total == 0:
             raise PoolEmpty(f"pool {self.name} has no allocatable resources")
+        if counts.get(ResourceState.NEW, 0) == total:
+            raise PoolExhausted(
+                f"pool {self.name} has {total} resource(s) but all are in NEW "
+                "(not validated); import with import_validate='on_import'|'batch' "
+                "or call validate_now()"
+            )
         if timeout <= 0:
             raise PoolExhausted(f"pool {self.name} could not satisfy request immediately")
 
@@ -532,16 +1288,83 @@ class ResourcePool:
         if current is not None:
             current.add_done_callback(lambda _task: handle.cancel_pending())
         try:
-            await asyncio.wait_for(asyncio.shield(handle.future), timeout)
-        except asyncio.TimeoutError:
-            if handle.future.done():
-                return cast(Lease, handle.future.result())
-            handle.cancel_pending()
-            raise PoolExhausted(
-                f"pool {self.name} exhausted after {timeout:.1f}s"
-                f" (consumer={request.consumer!r}, slots={request.slots})"
-            ) from None
-        return cast(Lease, handle.future.result())
+            return await self._await_slot(handle, request, timeout, counts)
+        except asyncio.CancelledError:
+            await self._abandon_wait_handle(handle)
+            raise
+
+    async def _await_slot(
+        self,
+        handle: _WaitHandle,
+        request: AcquireRequest,
+        timeout: float,
+        counts: dict[ResourceState, int],
+    ) -> Lease:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        # Redis has no push channel: the waiter itself re-checks shared
+        # storage so a release on another instance can wake it (V03).
+        poll = self.cfg.coordination == "redis"
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            window = min(WAITER_POLL_INTERVAL, remaining) if poll else remaining
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(handle.future), window
+                )
+            except asyncio.TimeoutError:
+                if handle.future.done():
+                    return cast(Lease, handle.future.result())
+                if not poll or loop.time() >= deadline:
+                    break
+                lease = await self._poll_wait_handle(handle, request)
+                if lease is not None:
+                    return lease
+
+        handle.cancel_pending()
+        state_hint = ", ".join(
+            f"{state.value}={n}" for state, n in counts.items() if n
+        )
+        raise PoolExhausted(
+            f"pool {self.name} exhausted after {timeout:.1f}s"
+            f" (consumer={request.consumer!r}, slots={request.slots},"
+            f" states: {state_hint})"
+        )
+
+    async def _poll_wait_handle(
+        self, handle: _WaitHandle, request: AcquireRequest
+    ) -> Lease | None:
+        if handle.cancelled or handle.future.done() or handle.serving:
+            return None
+        handle.serving = True
+        if self._active_polls == 0:
+            self._polls_idle.clear()
+        self._active_polls += 1
+        try:
+            try:
+                lease = await self._try_allocate(request)
+            except (NoSuitableResource, PoolEmpty, BadState):
+                lease = None
+            except Exception:
+                # A close/cancel may win while the poll is in flight; let the
+                # completed future surface that outcome to the caller.
+                if handle.cancelled or handle.future.done():
+                    return None
+                raise
+            if lease is None:
+                return None
+            if handle.cancelled or handle.future.done():
+                await self._abandon_lease(lease)
+                return None
+            handle.future.set_result(lease)
+            return lease
+        finally:
+            self._active_polls -= 1
+            if self._active_polls == 0:
+                self._polls_idle.set()
+            handle.serving = False
 
     def _enqueue_waiter(self, req: AcquireRequest) -> _WaitHandle:
         loop = asyncio.get_running_loop()
@@ -554,35 +1377,49 @@ class ResourcePool:
         heapq.heappush(self._waiters, handle)
         return handle
 
-    async def _has_any_resources(self) -> bool:
-        counts = await self.counts()
-        return sum(counts.values()) > 0
-
     async def _serve_waiters(self, limit: int = 64) -> int:
         served = 0
         pending: list[_WaitHandle] = []
-        while self._waiters and served < limit:
-            handle = heapq.heappop(self._waiters)
-            if handle.cancelled or handle.future.done():
-                continue
-            try:
-                lease = await self._try_allocate(handle.req)
-            except (NoSuitableResource, PoolEmpty, BadState):
-                lease = None
-            if handle.cancelled or handle.future.done():
-                if lease is not None:
-                    # The waiter timed out or was cancelled while we were
-                    # allocating; give the freshly acquired slot straight back.
-                    await self._abandon_lease(lease)
+        current: _WaitHandle | None = None
+        try:
+            while self._waiters and served < limit:
+                handle = heapq.heappop(self._waiters)
+                if handle.cancelled or handle.future.done():
                     continue
-            if lease is not None:
-                handle.future.set_result(lease)
-                served += 1
-            else:
-                pending.append(handle)
-        for handle in pending:
-            if not handle.cancelled and not handle.future.done():
-                heapq.heappush(self._waiters, handle)
+                if handle.serving:
+                    pending.append(handle)
+                    continue
+                current = handle
+                handle.serving = True
+                try:
+                    try:
+                        lease = await self._try_allocate(handle.req)
+                    except (NoSuitableResource, PoolEmpty, BadState):
+                        lease = None
+                finally:
+                    handle.serving = False
+                current = None
+                if handle.cancelled or handle.future.done():
+                    if lease is not None:
+                        # The waiter timed out or was cancelled while we were
+                        # allocating; give the freshly acquired slot back.
+                        await self._abandon_lease(lease)
+                        continue
+                if lease is not None:
+                    handle.future.set_result(lease)
+                    served += 1
+                else:
+                    pending.append(handle)
+        finally:
+            if (
+                current is not None
+                and not current.cancelled
+                and not current.future.done()
+            ):
+                heapq.heappush(self._waiters, current)
+            for handle in pending:
+                if not handle.cancelled and not handle.future.done():
+                    heapq.heappush(self._waiters, handle)
         return served
 
     async def _abandon_lease(self, lease: Lease) -> None:
@@ -598,6 +1435,15 @@ class ResourcePool:
                 lease.resource_id
             )
 
+    async def _abandon_wait_handle(self, handle: _WaitHandle) -> None:
+        """Undo a lease delivered to a waiter whose task was cancelled."""
+
+        handle.cancel_pending()
+        if not handle.future.done() or handle.future.cancelled():
+            return
+        with contextlib.suppress(Exception):
+            await self._abandon_lease(handle.future.result())
+
     async def _acquire_directed(self, req: AcquireRequest, timeout: float) -> Lease:
         rid = req.resource_id
         assert rid is not None
@@ -610,6 +1456,7 @@ class ResourcePool:
                 held = await self._consumer_hold(rid, req.consumer)
                 if held is not None:
                     held.payload = dict(resource.payload)
+                    held.resource = resource
                     return held
             if resource.allocatable and resource.concurrency.available >= req.slots:
                 lease = await self._commit(req, rid)
@@ -811,6 +1658,7 @@ class ResourcePool:
                 rid, old_state, result.resource.state, "acquire"
             )
         lease.payload = dict(result.resource.payload)
+        lease.resource = result.resource
         registered = False
         try:
             try:
@@ -837,7 +1685,6 @@ class ResourcePool:
                 self.name,
                 rid=rid,
                 data={
-                    "token": lease.token,
                     "consumer": req.consumer,
                     "slots": lease.slots,
                     "target": lease.target,
@@ -906,13 +1753,14 @@ class ResourcePool:
             raise ConfigError("outcome must be a UsageOutcome")
         before = await self.storage.get(self.name, lease.resource_id)
         before_state = before.state if before is not None else None
-        held = await self._coordination.get_lease(self.name, lease.token)
-        if held is None:
-            # A revoke, expiry or coordination wipe already removed our token.
-            # Never decrement storage here: the busy slot may now belong to a
-            # fresh lease from another instance, and a blind decrement would
-            # steal it.  Orphaned slots are recovered by _reconcile_leases()
-            # on the next start(), which is the designated restart path.
+        removed = await self._coordination.unregister_lease(self.name, lease.token)
+        if removed is None:
+            # A revoke, expiry, concurrent retry or coordination wipe already
+            # removed our token.  Never decrement storage here: the busy slot
+            # may now belong to a fresh lease from another instance, and a
+            # blind decrement would steal it.  Orphaned slots are recovered by
+            # _reconcile_leases() on the next start(), which is the designated
+            # restart path.
             self._leases.unregister(lease.token)
             if lease.consumer:
                 self._consumer_holds.get(lease.consumer, set()).discard(
@@ -921,14 +1769,31 @@ class ResourcePool:
             self.purser.metrics.inc(f"pool.{self.name}.release_total")
             await self._serve_waiters()
             return True
-        result = await self.storage.transition_release(
-            self.name, lease.resource_id, lease.slots
-        )
+        try:
+            result = await self.storage.transition_release(
+                self.name, lease.resource_id, lease.slots
+            )
+        except BaseException:
+            # The token is already gone from coordination.  Put it back when
+            # storage still counts our slots, otherwise the retry path would
+            # see no token and leave the slot orphaned until reconcile.
+            try:
+                await self._restore_release_claim(lease, removed)
+            except BaseException:
+                logger.exception(
+                    "failed to restore lease %s after storage release error",
+                    lease.token,
+                )
+            raise
         if not result.ok:
+            # Put the token back only if the resource still counts our slots.
+            # If used_slots already dropped to zero, a concurrent revoke or
+            # reconcile returned them; re-registering would leave a ghost lease
+            # in ``active()`` that the storage plane no longer backs.
+            await self._restore_release_claim(lease, removed)
             raise LeaseConflict(
                 f"token {lease.token} could not return {lease.resource_id} slots"
             )
-        await self._coordination.unregister_lease(self.name, lease.token)
         self._leases.unregister(lease.token)
         if lease.consumer:
             self._consumer_holds.get(lease.consumer, set()).discard(lease.resource_id)
@@ -943,16 +1808,79 @@ class ResourcePool:
             self.name,
             rid=lease.resource_id,
             data={
-                "token": lease.token,
                 "outcome": outcome.value,
                 "consumer": lease.consumer,
             },
             trace_id=lease.trace_id,
         )
         await self._apply_usage_outcome(lease.resource_id, outcome, used, lease)
+        self.purser.usage.record(
+            ts=_now(),
+            pool=self.name,
+            kind=self.cfg.kind,
+            rid=lease.resource_id,
+            consumer=lease.consumer,
+            target=lease.target,
+            outcome=outcome.value,
+            used=used if used is not None else (lease.used or 1),
+            slots=lease.slots,
+        )
         await self._serve_waiters()
         self.purser.metrics.inc(f"pool.{self.name}.release_total")
         return True
+
+    async def _restore_release_claim(self, lease: Lease, removed: Lease) -> None:
+        """Put a failed release's token back without resurrecting a freed slot."""
+
+        try:
+            current = await self.storage.get(self.name, lease.resource_id)
+        except Exception:
+            # Storage state is unknown: keep the coordination claim rather than
+            # letting another instance treat a possibly-live slot as free.
+            logger.exception(
+                "could not verify %s after failed release; restoring token",
+                lease.resource_id,
+            )
+            await self._coordination.register_lease(self.name, removed)
+            return
+        if (
+            current is not None
+            and current.concurrency.used_slots >= lease.slots
+        ):
+            await self._coordination.register_lease(self.name, removed)
+
+    async def release_consumer(
+        self,
+        consumer: str,
+        *,
+        outcome: UsageOutcome = UsageOutcome.OK,
+        operator: str = "system",
+    ) -> list[Lease]:
+        """Return every live lease held by ``consumer`` (logout / teardown)."""
+
+        if not consumer:
+            raise ConfigError("consumer must be non-empty")
+        if not isinstance(outcome, UsageOutcome):
+            raise ConfigError("outcome must be a UsageOutcome")
+        released: list[Lease] = []
+        for lease in await self._coordination.active(self.name):
+            if lease.consumer != consumer:
+                continue
+            await self.release(lease, outcome=outcome)
+            released.append(lease)
+        if released:
+            self.purser.audit.record(
+                operator=operator,
+                action="release_consumer",
+                pool=self.name,
+                reason=f"consumer {consumer}",
+                detail={
+                    "consumer": consumer,
+                    "outcome": outcome.value,
+                    "tokens": [lease.token for lease in released],
+                },
+            )
+        return released
 
     async def _apply_usage_outcome(
         self, rid: str, outcome: UsageOutcome, used: int | None, lease: Lease
@@ -1069,7 +1997,7 @@ class ResourcePool:
                 "lease_lost",
                 self.name,
                 rid=lease.resource_id,
-                data={"token": lease.token, "reason": "token already gone"},
+                data={"reason": "token already gone"},
                 trace_id=lease.trace_id,
             )
             self.purser.metrics.inc(f"pool.{self.name}.lease_lost_total")
@@ -1083,7 +2011,7 @@ class ResourcePool:
                 "lease_expired",
                 self.name,
                 rid=lease.resource_id,
-                data={"token": lease.token, "consumer": lease.consumer},
+                data={"consumer": lease.consumer},
                 trace_id=lease.trace_id,
             )
         else:
@@ -1091,24 +2019,34 @@ class ResourcePool:
                 "lease_lost",
                 self.name,
                 rid=lease.resource_id,
-                data={"token": lease.token},
+                data={},
                 trace_id=lease.trace_id,
             )
         await self._serve_waiters()
 
     async def _on_lease_lost(self, lease: Lease) -> None:
         # The heartbeat gave up on this lease (e.g. use_limit reached or the
-        # coordination token vanished).  Stop tracking it in the manager so a
-        # non-expired lost lease does not linger in `stats.active_leases`.
+        # coordination token vanished).  Stop tracking it in the manager and
+        # return the slots if we still own the token; a token that is already
+        # gone may now belong to a fresh holder, so leave those slots to
+        # _reconcile_leases() instead of stealing them.
+        removed = await self._coordination.unregister_lease(self.name, lease.token)
         self._leases.unregister(lease.token)
+        if lease.consumer:
+            self._consumer_holds.get(lease.consumer, set()).discard(lease.resource_id)
+        if removed is not None:
+            await self.storage.transition_release(
+                self.name, lease.resource_id, lease.slots
+            )
         self.purser.bus.publish(
             "lease_lost",
             self.name,
             rid=lease.resource_id,
-            data={"token": lease.token, "reason": "heartbeat rejected"},
+            data={"reason": "heartbeat rejected"},
             trace_id=lease.trace_id,
         )
         self.purser.metrics.inc(f"pool.{self.name}.lease_lost_total")
+        await self._serve_waiters()
 
     def _guard_error(self, context: str, error: Exception) -> None:
         logger.warning("%s hook failed for pool %s: %s", context, self.name, error)
@@ -1354,7 +2292,7 @@ class ResourcePool:
             rid, patch, expect_state=expect_state, attempts=attempts, reason="op"
         )
 
-    async def ban(self, rid: str, *, reason: str, operator: str) -> None:
+    async def ban(self, rid: str, *, reason: str, operator: str = "system") -> None:
         resource = await self.require(rid)
         if resource.state in (ResourceState.BANNED, ResourceState.ARCHIVED):
             raise BadState(f"resource {rid} is already {resource.state.value}")
@@ -1385,7 +2323,7 @@ class ResourcePool:
         self.purser.bus.publish("banned", self.name, rid=rid, data={"reason": reason})
 
     async def unban(
-        self, rid: str, *, operator: str, reason: str = "manual unban", revalidate: bool = True
+        self, rid: str, *, operator: str = "system", reason: str = "manual unban", revalidate: bool = True
     ) -> None:
         resource = await self.require(rid)
         if resource.state is not ResourceState.BANNED:
@@ -1406,7 +2344,7 @@ class ResourcePool:
         if revalidate:
             await self.validate_now(rid, operator=operator)
 
-    async def suspend(self, rid: str, *, operator: str, reason: str) -> None:
+    async def suspend(self, rid: str, *, operator: str = "system", reason: str) -> None:
         resource = await self.require(rid)
         if resource.state is not ResourceState.IDLE:
             raise BadState(f"only IDLE resources can be suspended, got {resource.state.value}")
@@ -1422,7 +2360,7 @@ class ResourcePool:
         )
 
     async def resume(
-        self, rid: str, *, operator: str, reason: str = "manual resume", revalidate: bool = False
+        self, rid: str, *, operator: str = "system", reason: str = "manual resume", revalidate: bool = False
     ) -> None:
         resource = await self.require(rid)
         if resource.state is not ResourceState.SUSPENDED:
@@ -1442,7 +2380,7 @@ class ResourcePool:
         )
         await self._serve_waiters()
 
-    async def top_up(self, rid: str, *, operator: str, amount: int | None = None, reason: str = "manual top_up") -> None:
+    async def top_up(self, rid: str, *, operator: str = "system", amount: int | None = None, reason: str = "manual top_up") -> None:
         resource = await self.require(rid)
         quota = resource.quota
         if quota is None and resource.usage_quota is None:
@@ -1469,7 +2407,7 @@ class ResourcePool:
         self.purser.bus.publish("quota_reset", self.name, rid=rid)
         await self._serve_waiters()
 
-    async def drain(self, rid: str, *, operator: str, reason: str) -> None:
+    async def drain(self, rid: str, *, operator: str = "system", reason: str) -> None:
         """Retire a resource: no new leases, archived once leases return (O10)."""
 
         resource = await self.require(rid)
@@ -1486,7 +2424,46 @@ class ResourcePool:
             operator=operator, action="drain", pool=self.name, rid=rid, reason=reason
         )
 
-    async def restore(self, rid: str, *, operator: str, reason: str = "manual restore") -> None:
+    async def cancel_drain(
+        self, rid: str, *, operator: str = "system", reason: str = "cancel drain"
+    ) -> None:
+        """Undo a drain before the resource is archived (back online)."""
+
+        resource = await self.require(rid)
+        if resource.state is not ResourceState.DRAINING:
+            raise BadState(f"resource {rid} is not draining")
+        target = StateMachine.trigger(
+            resource.state,
+            Event.UNDRAIN,
+            ctx=StateContext(
+                used_slots=resource.concurrency.used_slots,
+                slots=0,
+                max_slots=resource.concurrency.max_slots,
+            ),
+        )
+        meta = {
+            key: value
+            for key, value in resource.meta.items()
+            if key not in ("drained_at", "drain_reason")
+        }
+        meta["drain_cancelled_at"] = _now()
+        await self._apply_state(
+            rid,
+            ResourcePatch(state=target, meta_patch=meta),
+            expect_state=ResourceState.DRAINING,
+            reason="cancel_drain",
+        )
+        self.purser.audit.record(
+            operator=operator,
+            action="cancel_drain",
+            pool=self.name,
+            rid=rid,
+            reason=reason,
+            detail={"target": target.value},
+        )
+        await self._serve_waiters()
+
+    async def restore(self, rid: str, *, operator: str = "system", reason: str = "manual restore") -> None:
         resource = await self.require(rid)
         if resource.state is not ResourceState.ARCHIVED:
             raise BadState(f"resource {rid} is not archived")
@@ -1505,13 +2482,18 @@ class ResourcePool:
         await self.validate_now(rid, operator=operator)
 
     async def admin_set_state(
-        self, rid: str, *, target: ResourceState, operator: str, reason: str
+        self, rid: str, *, target: ResourceState, operator: str = "system", reason: str
     ) -> None:
         if target not in ADMIN_ALLOWED:
             raise BadState(f"admin_set_state disallows {target.value}") from None
         resource = await self.require(rid)
         if resource.concurrency.used_slots > 0:
             raise BadState(f"cannot force-set state while {rid} is busy")
+        StateMachine.trigger(
+            resource.state,
+            Event.ADMIN_SET_STATE,
+            ctx=StateContext(target_state=target),
+        )
         await self._apply_state(
             rid,
             ResourcePatch(
@@ -1527,7 +2509,7 @@ class ResourcePool:
         await self._serve_waiters()
 
     async def force_revoke(
-        self, rid: str, *, operator: str, reason: str, token: str | None = None
+        self, rid: str, *, operator: str = "system", reason: str, token: str | None = None
     ) -> Lease:
         """Administrative kick (O1): returns and releases the lease."""
 
@@ -1541,7 +2523,13 @@ class ResourcePool:
         )
         if lease is None:
             raise LeaseConflict(f"lease token {token} not found on {rid}")
-        await self._coordination.unregister_lease(self.name, lease.token)
+        removed = await self._coordination.unregister_lease(self.name, lease.token)
+        if removed is None:
+            # A concurrent release/reaper removed it first and owns the storage
+            # decrement.  Revoking again would return the same slot twice.
+            raise LeaseConflict(
+                f"lease token {lease.token} is no longer active on {rid}"
+            )
         self._leases.unregister(lease.token)
         result = await self.storage.transition_release(self.name, rid, lease.slots)
         if not result.ok:
@@ -1555,8 +2543,19 @@ class ResourcePool:
         )
         self.purser.bus.publish(
             "lease_revoked", self.name, rid=rid,
-            data={"token": lease.token, "reason": reason},
+            data={"reason": reason},
             trace_id=lease.trace_id,
+        )
+        self.purser.usage.record(
+            ts=_now(),
+            pool=self.name,
+            kind=self.cfg.kind,
+            rid=rid,
+            consumer=lease.consumer,
+            target=lease.target,
+            outcome=UsageOutcome.PREEMPTED.value,
+            used=0,
+            slots=lease.slots,
         )
         await self._serve_waiters()
         return lease
@@ -1580,16 +2579,48 @@ class ResourcePool:
         payload: dict[str, Any] | None = None,
         tags: frozenset[str] | None = None,
         max_slots: int | None = None,
-        operator: str,
+        usage_quota: Any = _MISSING,
+        expires_at: Any = _MISSING,
+        mutex_group: Any = _MISSING,
+        schedule_window: Any = _MISSING,
+        operator: str = "system",
         reason: str,
     ) -> Resource:
-        """O2: mutate metadata/payload/slots; busy resources are rejected."""
+        """O2: mutate metadata/payload/slots; busy resources are rejected.
+
+        ``usage_quota`` / ``expires_at`` / ``mutex_group`` / ``schedule_window``
+        accept ``None`` to clear the value and ``_MISSING`` (omitted) to keep it.
+        """
 
         resource = await self.require(rid)
         if resource.concurrency.used_slots > 0:
             raise BadState("cannot update a resource with active leases")
         if max_slots is not None and max_slots <= 0:
             raise ConfigError("max_slots must be > 0")
+        clear: set[str] = set()
+        extra: dict[str, Any] = {}
+        if usage_quota is not _MISSING:
+            if usage_quota is None:
+                clear.add("usage_quota")
+            else:
+                extra["usage_quota"] = _optional_int(usage_quota, "usage_quota")
+        if expires_at is not _MISSING:
+            if expires_at is None:
+                clear.add("expires_at")
+            else:
+                if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+                    raise ConfigError("expires_at must be an epoch number or null")
+                extra["expires_at"] = float(expires_at)
+        if mutex_group is not _MISSING:
+            if mutex_group in (None, ""):
+                clear.add("mutex_group")
+            else:
+                extra["mutex_group"] = str(mutex_group)
+        if schedule_window is not _MISSING:
+            if schedule_window is None:
+                clear.add("schedule_window")
+            else:
+                extra["schedule_window"] = _schedule_window(schedule_window)
         patch = ResourcePatch(
             payload=payload if payload is not None else dict(resource.payload),
             tags=tags if tags is not None else resource.tags,
@@ -1599,6 +2630,8 @@ class ResourcePool:
                 else resource.concurrency
             ),
             meta_patch={**resource.meta, "updated_by": operator, "update_reason": reason},
+            clear_fields=frozenset(clear),
+            **extra,
         )
         await self._cas(rid, patch)
         self.purser.audit.record(
@@ -1608,13 +2641,18 @@ class ResourcePool:
         return updated
 
     async def move_resource(
-        self, rid: str, target_pool: ResourcePool, *, operator: str, reason: str
+        self, rid: str, target_pool: ResourcePool, *, operator: str = "system", reason: str
     ) -> Resource:
         """O3: cross-pool migration; busy resources are rejected."""
 
         resource = await self.require(rid)
         if resource.concurrency.used_slots > 0:
             raise BadState("cannot move a resource with active leases")
+        if target_pool.cfg.kind != self.cfg.kind:
+            raise BadState(
+                f"cannot move {self.cfg.kind} resource into "
+                f"{target_pool.cfg.kind} pool {target_pool.name!r}"
+            )
         existing = await target_pool.storage.get(target_pool.name, rid)
         if existing is not None:
             raise BadState(f"target pool {target_pool.name} already contains {rid}")
@@ -1631,11 +2669,15 @@ class ResourcePool:
         batch_id: str,
         *,
         action: str = "requalify",
-        operator: str,
+        operator: str = "system",
         reason: str,
     ) -> dict[str, Any]:
         """B1-lite: requalify / isolate / retire every resource of a batch."""
 
+        if not isinstance(batch_id, str) or not batch_id:
+            raise ConfigError("batch_id must be a non-empty string")
+        if action not in ("requalify", "isolate", "retire"):
+            raise ConfigError(f"unknown recall action {action!r}")
         report: dict[str, Any] = {
             "action": action,
             "batch_id": batch_id,
@@ -1681,8 +2723,8 @@ class ResourcePool:
         moved = 0
         async for resource in self.storage.scan(self.name, states={ResourceState.QUOTA_EXHAUSTED}):
             quota = resource.quota
-            if quota is not None:
-                quota.reset_daily(timezone=self.cfg.timezone)
+            if quota is not None and not quota.reset_daily(timezone=self.cfg.timezone):
+                continue
             patch = ResourcePatch(
                 state=ResourceState.IDLE,
                 quota=quota,
@@ -1781,6 +2823,7 @@ class ResourcePool:
         """O13: acquire ``n`` leases; ``atomic`` rolls back on partial failure,
         ``best_effort`` returns what it got (below ``n_min`` it raises)."""
 
+        await self._ensure_started("acquire_many")
         if n <= 0:
             raise ConfigError("n must be positive")
         basis = req or AcquireRequest()
@@ -1791,7 +2834,12 @@ class ResourcePool:
         leased: list[Lease] = []
         try:
             for _ in range(n):
-                leased.append(await self.acquire(basis))
+                try:
+                    leased.append(await self.acquire(basis))
+                except (PoolExhausted, PoolEmpty):
+                    if mode != "best_effort":
+                        raise
+                    break
             if mode == "best_effort" and len(leased) < (n_min or n):
                 raise PoolExhausted(
                     f"only got {len(leased)}/{n} (n_min={n_min or n})"
@@ -1819,6 +2867,7 @@ class Purser:
         *,
         maintenance_enabled: bool = True,
         event_queue_size: int = 10_000,
+        usage_ledger_size: int = 50_000,
         storage: str = "memory",
         coordination: str = "memory",
         mysql_url: str | None = None,
@@ -1828,12 +2877,27 @@ class Purser:
         sqlite_path: str | None = None,
         audit_path: str | None = None,
         secret_key: bytes | None = None,
+        secret_key_id: str = "1",
+        previous_secret_keys: dict[str, bytes | str] | None = None,
     ) -> None:
+        self._isolation = IsolationGuard(self)
+        self._isolation.claim_many(
+            [
+                redis_client_identity(redis_client)
+                if redis_client is not None
+                else redis_identity(redis_url)
+            ]
+        )
         self.types = ResourceTypeRegistry()
         self.bus = EventBus(maxsize=event_queue_size)
+        self.usage = UsageLedger(capacity=usage_ledger_size)
         self.audit = AuditLog(sqlite_path=audit_path)
         self.metrics = Metrics()
-        self.idempotency = IdempotencyStore()
+        self.idempotency = (
+            RedisIdempotencyStore(url=redis_url, client=redis_client)
+            if redis_url or redis_client is not None
+            else IdempotencyStore()
+        )
         self.probe_guard = ProbeGuard()
         self.maintenance_enabled = maintenance_enabled
         self.storage_kind = storage
@@ -1848,7 +2912,11 @@ class Purser:
         key = secret_key
         if key is None and sqlite_path:
             key = load_or_create_key(sqlite_path)
-        self._codec = SecretCodec(key)
+        self._codec = SecretCodec(
+            key,
+            key_id=secret_key_id,
+            previous_keys=dict(previous_secret_keys or {}),
+        )
         self._pools: dict[str, ResourcePool] = {}
         self._running = False
 
@@ -1857,15 +2925,62 @@ class Purser:
         self.types.register(ProxyType(probe_guard=self.probe_guard))
         self.types.register(AccountType())
 
+    def __getstate__(self) -> Any:
+        raise IsolationConflict(PICKLE_MESSAGE)
+
+    def _ensure_process(self) -> None:
+        self._isolation.ensure_process()
+
     # -- plugins / pools ---------------------------------------------------
 
     def register_type(self, rtype: ResourceType) -> None:
-        self.types.register(rtype)
+        self._ensure_process()
+        identity = resource_type_identity(rtype)
+        self._isolation.claim_many([identity])
+        try:
+            self.types.register(rtype)
+        except BaseException:
+            self._isolation.release_many([identity[0]])
+            raise
+
+    def _pool_isolation_entries(
+        self, cfg: PoolConfig, rtype: ResourceType
+    ) -> list[Any]:
+        """Scheduling-plane identities this pool would actually use."""
+
+        entries: list[Any] = []
+        if cfg.storage == "sqlite":
+            entries.append(sqlite_identity(self.sqlite_path))
+        elif cfg.storage == "mysql":
+            entries.append(
+                mysql_connection_identity(self.mysql_connection)
+                if self.mysql_connection is not None
+                else mysql_identity(self.mysql_url)
+            )
+        if cfg.coordination == "redis":
+            entries.append(
+                redis_client_identity(self.redis_client)
+                if self.redis_client is not None
+                else redis_identity(self.redis_url)
+            )
+        entries.append(resource_type_identity(rtype))
+        return entries
+
+    def _release_pool_claims(self, pool: ResourcePool) -> None:
+        keys = pool._isolation_keys
+        if keys:
+            pool._isolation_keys = []
+            self._isolation.release_many(keys)
 
     def _make_storage(self, cfg: PoolConfig) -> StorageBackend:
         if cfg.storage == "memory":
             return MemoryStorage()
         if cfg.storage == "sqlite":
+            if not self.sqlite_path:
+                raise ConfigError(
+                    "storage='sqlite' requires sqlite_path; refusing to fall "
+                    "back to a silent in-memory database"
+                )
             return SqliteStorage(
                 path=self.sqlite_path,
                 codec=self._codec,
@@ -1874,6 +2989,12 @@ class Purser:
         if cfg.storage == "mysql":
             from purser.backends.mysql import MySqlStorage
 
+            if cfg.secret_fields and self._codec.ephemeral:
+                raise ConfigError(
+                    "storage='mysql' with secret_fields requires an explicit "
+                    "secret_key (or PURSER_SECRET_KEY); an ephemeral key would "
+                    "make encrypted payloads unreadable by other instances"
+                )
             return MySqlStorage(
                 url=self.mysql_url,
                 connection=self.mysql_connection,
@@ -1900,6 +3021,7 @@ class Purser:
         config: PoolConfig | dict[str, Any] | None = None,
         **overrides: Any,
     ) -> ResourcePool:
+        self._ensure_process()
         if name in self._pools:
             raise PoolExists(f"pool {name!r} already exists")
         rtype = self.types.get(kind)
@@ -1917,12 +3039,22 @@ class Purser:
             cfg = cfg.with_overrides(max_slots=rtype.default_concurrency)
         if not cfg.secret_fields:
             cfg = cfg.with_overrides(secret_fields=rtype.secret_fields)
-        storage = self._make_storage(cfg)
-        coordination = self._make_coordination(cfg)
-        pool = ResourcePool(name, self, rtype, cfg, storage, coordination)
+        entries = self._pool_isolation_entries(cfg, rtype)
+        self._isolation.claim_many(entries)
+        keys = list(
+            dict.fromkeys(entry[0] for entry in entries if entry is not None)
+        )
+        try:
+            storage = self._make_storage(cfg)
+            coordination = self._make_coordination(cfg)
+            pool = ResourcePool(name, self, rtype, cfg, storage, coordination)
+        except BaseException:
+            self._isolation.release_many(keys)
+            raise
+        pool._isolation_keys = keys
         self._pools[name] = pool
         if self._running:
-            asyncio.create_task(pool.start())
+            pool._start_task = asyncio.create_task(pool.start())
         self.audit.record(
             operator="system", action="create_pool", pool=name,
             detail={
@@ -1944,6 +3076,7 @@ class Purser:
     ) -> ResourcePool:
         """Get an existing pool, or create it (convenience for quick starts)."""
 
+        self._ensure_process()
         existing = self._pools.get(name)
         if existing is not None:
             return existing
@@ -1955,6 +3088,7 @@ class Purser:
         return self._pools.get(name)
 
     def require_pool(self, name: str) -> ResourcePool:
+        self._ensure_process()
         pool = self._pools.get(name)
         if pool is None:
             raise PoolNotFound(f"pool {name!r} does not exist")
@@ -1963,9 +3097,335 @@ class Purser:
     def pool_names(self) -> list[str]:
         return list(self._pools)
 
+    # -- usage report (R1) -------------------------------------------------
+
+    async def report_usage(
+        self,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        group_by: str = "consumer",
+        pool: str | None = None,
+        limit: int = 20,
+    ) -> UsageReport:
+        """Aggregate completed leases plus the current arena snapshot.
+
+        History comes from the bounded in-memory usage ledger: one row per
+        returned (or force-revoked) lease, evicted oldest-first at capacity.
+        Active leases and pool load are read live, so the report mixes
+        historical usage with the present bottleneck view.
+        """
+
+        self._ensure_process()
+        if group_by not in ("consumer", "target", "pool", "kind"):
+            raise ConfigError(
+                f"unknown group_by {group_by!r}; use consumer/target/pool/kind"
+            )
+        if not isinstance(limit, int) or limit < 1:
+            raise ConfigError("limit must be an integer >= 1")
+        for name, value in (("since", since), ("until", until)):
+            if value is not None and (
+                not isinstance(value, (int, float)) or not math.isfinite(value)
+            ):
+                raise ConfigError(f"{name} must be a finite epoch")
+        if since is not None and until is not None and since > until:
+            raise ConfigError("since must be <= until")
+        names = [pool] if pool else list(self._pools)
+        for name in names:
+            if name not in self._pools:
+                raise PoolNotFound(name)
+
+        snapshot = self.usage.snapshot(
+            since=since, until=until, group_by=group_by, pool=pool, limit=limit
+        )
+        active_groups: dict[str, dict[str, Any]] = {}
+        pools: list[PoolUsage] = []
+        for name in names:
+            item = self._pools[name]
+            active = await item._coordination.active(name)
+            for lease in active:
+                if group_by == "consumer":
+                    key = lease.consumer or "(anonymous)"
+                elif group_by == "target":
+                    key = lease.target or "(no target)"
+                elif group_by == "pool":
+                    key = name
+                else:
+                    key = item.cfg.kind
+                row = active_groups.setdefault(
+                    key, {"key": key, "leases": 0, "slots": 0}
+                )
+                row["leases"] += 1
+                row["slots"] += lease.slots
+            stats = await item.stats()
+            pools.append(
+                {
+                    "name": name,
+                    "kind": item.cfg.kind,
+                    "total": sum(stats["counts"].values()),
+                    "counts": stats["counts"],
+                    "allocatable": stats["allocatable"],
+                    "active_leases": stats["active_leases"],
+                    "waiting": stats["waiting"],
+                    "avg_health": stats["avg_health"],
+                }
+            )
+        groups: list[ActiveUsageGroup] = [
+            {
+                "key": str(row["key"]),
+                "leases": int(row["leases"]),
+                "slots": int(row["slots"]),
+            }
+            for row in sorted(
+                active_groups.values(), key=lambda row: (-row["slots"], str(row["key"]))
+            )
+        ]
+        return {
+            "window": snapshot["window"],
+            "group_by": snapshot["group_by"],
+            "totals": snapshot["totals"],
+            "groups": snapshot["groups"],
+            "groups_total": snapshot["groups_total"],
+            "truncated": snapshot["truncated"],
+            "active": {"group_by": group_by, "groups": groups},
+            "pools": pools,
+        }
+
+    # -- backup / restore --------------------------------------------------
+
+    async def backup(self, *, operator: str = "system") -> dict[str, Any]:
+        """Snapshot pool configs and resource state, secrets included (O5).
+
+        Callers must be trusted: the document carries plaintext payloads so a
+        restore can reproduce resources exactly.  Leases live on the
+        coordination plane and are deliberately not exported.
+        """
+
+        self._ensure_process()
+        pools: list[dict[str, Any]] = []
+        resources_total = 0
+        for name in self._pools:
+            pool = self._pools[name]
+            records = []
+            async for resource in pool.storage.scan(name):
+                item = resource.to_dict()
+                item.pop("leases", None)
+                records.append(item)
+            records.sort(key=lambda item: str(item.get("id", "")))
+            resources_total += len(records)
+            active = await pool._coordination.active(name)
+            pools.append(
+                {
+                    "name": name,
+                    "kind": pool.cfg.kind,
+                    "config": pool.cfg.to_dict(),
+                    "resources": records,
+                    "leases": [
+                        {
+                            "token": lease.token,
+                            "resource_id": lease.resource_id,
+                            "consumer": lease.consumer,
+                            "slots": lease.slots,
+                            "started_at": lease.started_at,
+                            "expires_at": lease.expires_at,
+                            "priority": lease.priority,
+                            "use_limit": lease.use_limit,
+                            "used": lease.used,
+                            "target": lease.target,
+                            "trace_id": lease.trace_id,
+                            "outcome": lease.outcome.value,
+                        }
+                        for lease in active
+                    ],
+                }
+            )
+        document = {
+            "format": BACKUP_FORMAT,
+            "version": BACKUP_VERSION,
+            "schema_version": 1,
+            "created_at": _now(),
+            "pools": pools,
+        }
+        self.audit.record(
+            operator=operator,
+            action="backup",
+            pool="*",
+            detail={"pools": len(pools), "resources": resources_total},
+        )
+        return document
+
+    async def restore(
+        self,
+        document: dict[str, Any],
+        *,
+        conflict: str = "skip",
+        operator: str = "system",
+    ) -> dict[str, Any]:
+        """Recreate pools/resources from :meth:`backup` output (O5 / F2).
+
+        Occupancy states (new/validating/active/full/draining/lost) return as
+        IDLE because leases are not migrated; banned/quarantined/suspended/
+        quota-exhausted/archived states are preserved.  ``conflict="skip"``
+        leaves existing resources untouched, ``"overwrite"`` applies backup
+        fields.  Pool storage/coordination are deployment choices, so they are
+        taken from this service rather than the backup.
+        """
+
+        self._ensure_process()
+        if conflict not in ("skip", "overwrite"):
+            raise ConfigError("conflict must be 'skip' or 'overwrite'")
+        if not isinstance(document, dict):
+            raise ConfigError("backup document must be an object")
+        if document.get("format") != BACKUP_FORMAT:
+            raise ConfigError("backup document has an unknown format")
+        if document.get("version") != BACKUP_VERSION:
+            raise ConfigError(
+                f"unsupported backup version {document.get('version')!r}"
+            )
+        entries = document.get("pools")
+        if not isinstance(entries, list):
+            raise ConfigError("backup.pools must be a list")
+
+        created_pools: list[str] = []
+        reused_pools: list[str] = []
+        errors: list[dict[str, Any]] = []
+        imported = updated = skipped = normalized = leases_ignored = 0
+        for item in entries:
+            if not isinstance(item, dict):
+                errors.append({"pool": None, "error": "pool entry must be an object"})
+                continue
+            name = str(item.get("name") or "").strip()
+            kind = str(item.get("kind") or "").strip()
+            records = item.get("resources", [])
+            if not name or not kind or not isinstance(records, list):
+                errors.append(
+                    {
+                        "pool": name or None,
+                        "error": "pool entry needs name, kind and resources[]",
+                    }
+                )
+                continue
+            pool = self._pools.get(name)
+            if pool is not None:
+                if pool.cfg.kind != kind:
+                    errors.append(
+                        {
+                            "pool": name,
+                            "error": f"pool already exists with kind {pool.cfg.kind!r}",
+                        }
+                    )
+                    continue
+                reused_pools.append(name)
+            else:
+                raw = item.get("config")
+                config = raw if isinstance(raw, dict) else {}
+                config = {
+                    key: value
+                    for key, value in config.items()
+                    if key not in ("kind", "storage", "coordination", "schema_version")
+                }
+                if isinstance(config.get("weights"), dict):
+                    config["weights"] = Weights.from_dict(config["weights"])
+                if isinstance(config.get("quarantine"), dict):
+                    quarantine = config["quarantine"]
+                    allowed = set(QuarantinePolicy.__dataclass_fields__) - {"rng"}
+                    config["quarantine"] = QuarantinePolicy(
+                        **{k: v for k, v in quarantine.items() if k in allowed}
+                    )
+                if isinstance(config.get("secret_fields"), list):
+                    config["secret_fields"] = tuple(config["secret_fields"])
+                try:
+                    pool = self.create_pool(name, kind, config=config)
+                except Exception as exc:
+                    errors.append({"pool": name, "error": str(exc)})
+                    continue
+                created_pools.append(name)
+            if self._running:
+                await pool._ensure_started("restore")
+            stats = await pool._restore_resources(
+                records, conflict=conflict, operator=operator
+            )
+            pool_leases = item.get("leases")
+            if isinstance(pool_leases, list):
+                leases_ignored += len(pool_leases)
+            imported += stats["imported"]
+            updated += stats["updated"]
+            skipped += stats["skipped"]
+            normalized += stats["normalized"]
+            if stats["errors"]:
+                errors.extend({"pool": name, **err} for err in stats["errors"])
+            self.audit.record(
+                operator=operator,
+                action="restore",
+                pool=name,
+                detail={**stats, "conflict": conflict},
+            )
+        return {
+            "ok": True,
+            "format": BACKUP_FORMAT,
+            "conflict": conflict,
+            "created_pools": created_pools,
+            "reused_pools": reused_pools,
+            "imported": imported,
+            "updated": updated,
+            "skipped": skipped,
+            "normalized": normalized,
+            "leases_ignored": leases_ignored,
+            "errors": errors,
+        }
+
+    async def delete_pool(
+        self, name: str, *, force: bool = False, operator: str = "system"
+    ) -> dict[str, Any]:
+        """Remove a pool from the registry.
+
+        A pool with live leases is never deleted, even with ``force``: release
+        or revoke them first.  ``force`` allows deleting a pool that still has
+        stored resources, and flushes the backing stores before closing.
+        """
+
+        self._ensure_process()
+        pool = self.require_pool(name)
+        active = await pool._coordination.active(name)
+        if active:
+            raise BadState(
+                f"pool {name!r} still has {len(active)} active lease(s); "
+                "release or revoke them before deleting"
+            )
+        counts = await pool.counts()
+        total = sum(counts.values())
+        if total and not force:
+            raise BadState(
+                f"pool {name!r} still contains {total} resource(s); "
+                "pass force to delete it"
+            )
+        if force:
+            await pool.storage.flush(name)
+            await pool._coordination.flush(name)
+        await pool._binding.forget()
+        await pool.close()
+        self._pools.pop(name, None)
+        self.audit.record(
+            operator=operator,
+            action="delete_pool",
+            pool=name,
+            detail={"removed": total, "forced": force},
+        )
+        self.bus.publish(
+            "pool_deleted", name, data={"removed": total, "forced": force}
+        )
+        return {"pool": name, "removed": total, "forced": force}
+
     # -- runtimes ----------------------------------------------------------
 
+    @property
+    def started(self) -> bool:
+        """Whether ``start()`` has been called and ``close()`` has not."""
+
+        return self._running
+
     async def start(self) -> None:
+        self._ensure_process()
         if self._running:
             return
         self._running = True
@@ -1974,11 +3434,15 @@ class Purser:
             await pool.start()
 
     async def close(self) -> None:
+        self._ensure_process()
         self._running = False
-        for pool in self._pools.values():
-            await pool.close()
-        await self.bus.stop()
-        self.audit.close()
+        try:
+            for pool in self._pools.values():
+                await pool.close()
+            await self.bus.stop()
+            self.audit.close()
+        finally:
+            self._isolation.release_all()
 
     async def __aenter__(self) -> Purser:
         await self.start()

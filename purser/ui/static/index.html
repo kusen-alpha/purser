@@ -3,349 +3,2692 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>purSer 控制台</title>
+<title>Purser 控制台</title>
 <style>
   :root{
-    --bg:#0f1419; --panel:#171d24; --panel2:#1d252e; --line:#2a3440;
-    --text:#e6edf3; --muted:#8b98a5; --accent:#3b82f6; --ok:#22c55e;
-    --warn:#f59e0b; --bad:#ef4444; --q:#06b6d4; --radius:8px;
+    --bg:#0b1016; --panel:#141b23; --panel2:#1b242e; --panel3:#222d38;
+    --line:#2a3744; --text:#e6edf3; --muted:#8b98a5; --accent:#3b82f6;
+    --accent2:#60a5fa; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+    --cyan:#06b6d4; --radius:10px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
-  body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;display:flex;min-height:100vh}
-  aside{width:220px;flex:0 0 220px;background:var(--panel);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;gap:10px;overflow:auto}
-  main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-  header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
-  h1{font-size:16px;font-weight:700;letter-spacing:0}
-  h1 small{color:var(--muted);font-weight:400;margin-left:8px}
+  body{
+    background:radial-gradient(900px 500px at 80% -10%,rgba(59,130,246,.08),transparent 60%),var(--bg);
+    color:var(--text);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;
+    display:flex;min-height:100vh;
+  }
+  code{font-family:ui-monospace,Consolas,monospace;font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+  aside{
+    width:252px;flex:0 0 252px;background:var(--panel);border-right:1px solid var(--line);
+    padding:18px 14px;display:flex;flex-direction:column;gap:18px;overflow:auto;
+  }
+  .brand{padding:2px 4px 12px;border-bottom:1px solid var(--line)}
+  .logo{font-size:22px;font-weight:800;letter-spacing:-.5px}
+  .logo span{color:var(--accent2)}
+  .brand .ver{font-size:11px;color:var(--muted);letter-spacing:.14em;text-transform:uppercase}
+  main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+  header{
+    display:flex;align-items:center;gap:10px;padding:14px 22px;
+    border-bottom:1px solid var(--line);background:rgba(20,27,35,.82);backdrop-filter:blur(8px);
+  }
+  .title{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .crumb{font-size:11px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+  .hrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+  #poolTitle{font-size:17px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:420px}
   .grow{flex:1}
-  .content{padding:20px;overflow:auto;display:flex;flex-direction:column;gap:18px}
+  .content{padding:20px 22px 28px;overflow:auto;display:flex;flex-direction:column;gap:16px}
   .grid{display:grid;gap:12px}
-  .grid.stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-  .grid.cols{grid-template-columns:minmax(0,1fr) 320px;align-items:start}
-  @media(max-width:960px){.grid.cols{grid-template-columns:1fr}}
+  .grid.stats{grid-template-columns:repeat(auto-fit,minmax(138px,1fr))}
+  .grid.cols{grid-template-columns:minmax(0,1fr) 340px;align-items:start}
+  .rightcol{display:flex;flex-direction:column;gap:12px;min-width:0}
+  @media(max-width:1080px){.grid.cols{grid-template-columns:1fr}}
+  @media(max-width:760px){
+    body{flex-direction:column}
+    aside{width:100%;flex:0 0 auto;border-right:0;border-bottom:1px solid var(--line)}
+    #pools{display:flex;gap:6px;overflow:auto;padding-bottom:2px}
+    #pools button{min-width:160px}
+    header{padding:12px 14px;flex-wrap:wrap}
+    .content{padding:14px}
+  }
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
-  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
-  .kpi .n{font-size:22px;font-weight:700}
-  .kpi .l{color:var(--muted);font-size:12px}
-  .bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--panel2);margin-top:10px}
-  .bar span{height:100%}
+  .kpi{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:var(--radius);padding:11px 14px;min-width:0}
+  .kpi .n{font-size:22px;font-weight:750;line-height:1.2;font-variant-numeric:tabular-nums}
+  .kpi .l{color:var(--muted);font-size:11px;letter-spacing:.04em}
+  .kpi.warn .n{color:var(--warn)} .kpi.bad .n{color:var(--bad)} .kpi.ok .n{color:var(--ok)}
+  .bar{display:flex;height:8px;border-radius:999px;overflow:hidden;background:var(--panel2);margin-top:10px}
+  .bar span{height:100%;min-width:2px}
+  .legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .lg{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:11px;color:var(--muted)}
+  .lg i{width:7px;height:7px;border-radius:50%;display:inline-block}
   table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
-  th{color:var(--muted);font-weight:600;font-size:12px;position:sticky;top:0;background:var(--panel)}
-  td.id{max-width:220px;overflow:hidden;text-overflow:ellipsis}
-  .tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:11px;margin-right:4px;color:var(--muted)}
-  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px;font-size:12px;border:1px solid var(--line)}
-  .pill i{width:7px;height:7px;border-radius:50%;background:var(--muted);display:inline-block}
-  .st-idle .d,.st-active .d{background:var(--ok)} .st-full .d{background:var(--warn);width:8px;height:8px;border-radius:2px}
-  .st-banned .d,.st-lost .d,.st-quarantined .d{background:var(--bad)}
-  .st-suspended .d,.st-draining .d,.st-archived .d,.st-new .d,.st-validating .d,.st-quota_exhausted .d{background:var(--muted)}
-  input,select,textarea{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 9px;font-size:13px;width:100%}
-  textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-height:110px;resize:vertical}
-  button{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:7px 12px;font-size:13px;cursor:pointer}
-  button:hover{border-color:var(--accent);color:var(--accent)}
+  th,td{text-align:left;padding:8px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;position:sticky;top:0;background:var(--panel);z-index:1}
+  tbody tr:hover{background:rgba(34,45,56,.45)}
+  td.id{max-width:230px;overflow:hidden;text-overflow:ellipsis}
+  .tablewrap{overflow:auto;max-height:540px;border-radius:6px}
+  table.small th,table.small td{padding:6px 8px;font-size:12px}
+  .tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 6px;font-size:11px;margin:1px 4px 1px 0;color:var(--muted)}
+  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:1px 9px;font-size:12px;border:1px solid var(--line);color:var(--text);white-space:nowrap}
+  .pill .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+  input,select,textarea{
+    background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;
+    padding:7px 9px;font-size:13px;width:100%;font-family:inherit;
+  }
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(59,130,246,.16)}
+  textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-height:120px;resize:vertical}
+  button{
+    background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;
+    padding:7px 12px;font-size:13px;cursor:pointer;font-family:inherit;transition:border-color .12s,color .12s;
+  }
+  button:hover{border-color:var(--accent);color:var(--accent2)}
+  button:disabled{opacity:.45;cursor:not-allowed;border-color:var(--line);color:var(--text)}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-  button.primary:hover{filter:brightness(1.1);color:#fff}
-  button.danger:hover{border-color:var(--bad);color:var(--bad)}
+  button.primary:hover{background:var(--accent2);border-color:var(--accent2);color:#fff}
+  button.danger:hover{border-color:var(--bad);color:#fca5a5}
+  button.mini{padding:2px 6px;font-size:11px}
+  button.icon{background:transparent;border:0;font-size:20px;line-height:1;padding:0 4px;color:var(--muted)}
+  button.icon:hover{color:var(--text)}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .row > *{flex:0 0 auto}
   .row .fill{flex:1 1 auto}
+  .actions{display:flex;gap:4px;flex-wrap:nowrap}
+  td:last-child{padding-left:6px;padding-right:6px}
+  .filters{margin-bottom:10px}
+  .filters > input,.filters > select{flex:0 0 auto}
+  .filters .fill{flex:1 1 140px}
   .muted{color:var(--muted)}
-  .evlist{font-family:ui-monospace,Consolas,monospace;font-size:12px;max-height:340px;overflow:auto}
-  .evlist div{padding:3px 0;border-bottom:1px solid var(--line);color:var(--muted)}
-  .evlist b{color:var(--text);font-weight:600}
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
-  .notice{padding:8px 12px;border-radius:6px;font-size:12px;display:none}
-  .notice.err{display:block;background:rgba(239,68,68,.12);border:1px solid var(--bad);color:#fca5a5}
-  .notice.okk{display:block;background:rgba(34,197,94,.1);border:1px solid var(--ok);color:#86efac}
-  .sec-h{font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0;margin-bottom:8px}
-  .actions{display:flex;gap:4px;flex-wrap:wrap}
-  .actions button{padding:3px 8px;font-size:11px}
-  #pools button{text-align:left;width:100%;padding:8px 10px;border-radius:6px}
-  #pools button.active{border-color:var(--accent);color:var(--accent)}
-  .empty{color:var(--muted);text-align:center;padding:24px}
+  .sec-h{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:9px}
+  .notice{padding:8px 12px;border-radius:7px;font-size:13px;display:none}
+  .notice.err{display:block;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.65);color:#fca5a5}
+  .notice.okk{display:block;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.6);color:#86efac}
+  .empty{color:var(--muted);text-align:center;padding:26px 12px;font-size:13px}
+  .evlist{font-family:ui-monospace,Consolas,monospace;font-size:12px;max-height:300px;overflow:auto}
+  .evlist div.ev{padding:4px 0;border-bottom:1px solid var(--line);color:var(--muted);display:flex;gap:6px;align-items:baseline}
+  .evlist b{color:var(--text);font-weight:600}
+  .evlist .t{margin-left:auto;font-size:11px;white-space:nowrap}
+  #pools{display:flex;flex-direction:column;gap:5px}
+  #pools button{text-align:left;width:100%;padding:8px 10px;border-radius:7px;display:flex;flex-direction:column;gap:2px;line-height:1.3}
+  #pools button .name{font-size:13px;font-weight:600}
+  #pools button .meta{font-size:11px;color:var(--muted)}
+  #pools button.active{border-color:var(--accent);background:rgba(59,130,246,.12)}
+  #pools button.active .name{color:var(--accent2)}
+  .side-sec{display:flex;flex-direction:column;gap:6px}
+  .side-empty{font-size:12px;color:var(--muted);padding:4px}
+  .side-foot{margin-top:auto;border-top:1px solid var(--line);padding-top:14px;display:flex;flex-direction:column;gap:6px}
+  .empty-hero{display:flex;flex-direction:column;gap:8px;align-items:flex-start;background:linear-gradient(120deg,rgba(59,130,246,.12),transparent 55%),var(--panel)}
+  .empty-hero h2{font-size:17px}
+  .formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 12px}
+  .field{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);min-width:0}
+  .field > span{font-weight:600;color:var(--text);font-size:12px}
+  .field .req{color:var(--bad);font-style:normal;margin-left:2px}
+  .field small{font-size:11px;color:var(--muted);line-height:1.4}
+  .withpeek{display:flex;gap:6px}
+  .withpeek input{flex:1;min-width:0}
+  .withpeek button{flex:0 0 auto;padding:5px 9px;font-size:11px}
+  .check{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text);margin-top:12px}
+  .check input{width:auto;flex:0 0 auto}
+  .modal{position:fixed;inset:0;background:rgba(3,7,12,.68);display:none;align-items:center;justify-content:center;padding:22px;z-index:60}
+  .modal.open{display:flex}
+  .dialog{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(720px,100%);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.45)}
+  .dialog.small{width:min(440px,100%)}
+  .dialog.wide{width:min(880px,100%)}
+  .dialog-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+  .dialog-h strong{font-size:15px}
+  .dialog-b{padding:16px;overflow:auto;display:flex;flex-direction:column;gap:12px}
+  .dialog-f{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
+  .kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+  .box{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+  .box .l{font-size:11px;color:var(--muted)}
+  .box .v{font-size:14px;font-weight:650;font-variant-numeric:tabular-nums}
+  .block-h{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-top:4px}
+  .kvtable td{padding:5px 8px;font-size:12px;white-space:pre-wrap;word-break:break-all}
+  .kvtable td.k{color:var(--muted);width:150px}
+  .lock{display:flex;align-items:center;gap:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.5);color:#fcd34d;border-radius:8px;padding:8px 11px;font-size:12px}
+  .lease-hit{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);padding:7px 9px;margin-top:7px;font-size:12px}
+  .lease-hit .row{justify-content:space-between}
+  .mono{font-family:ui-monospace,Consolas,monospace}
+  .detail-actions{margin-top:4px}
+  details.adv{border:1px solid var(--line);border-radius:8px;background:var(--panel2);padding:8px 10px}
+  details.adv > summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
+  details.adv[open] > summary{margin-bottom:10px}
+  .pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px;font-size:12px;color:var(--muted)}
+  .batchrow{display:flex;flex-direction:column;gap:4px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);padding:7px 9px;font-size:12px}
+  .batchrow + .batchrow{margin-top:6px}
+  .batchrow .row{justify-content:space-between}
+  .auditlist{font-size:12px;max-height:420px;overflow:auto}
+  .auditlist .ev{padding:5px 0;border-bottom:1px solid var(--line);display:flex;gap:7px;align-items:baseline;color:var(--muted)}
+  .auditlist b{color:var(--text);font-weight:600}
+  .auditlist .t{margin-left:auto;font-size:11px;white-space:nowrap}
+  .evfilters{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+  .evfilters input,.evfilters select{width:auto;flex:0 0 auto;padding:4px 7px;font-size:11px}
+  .split{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+  .split > *{flex:1 1 120px;min-width:0}
+  .mini-select{width:auto;padding:4px 6px;font-size:11px}
 </style>
 </head>
 <body>
 <aside>
-  <h1>purSer <small>v0.1</small></h1>
-  <div>
-    <div class="sec-h">资源池</div>
-    <div class="row" style="margin-bottom:8px">
-      <input id="newPoolName" placeholder="池名" style="flex:1">
-      <select id="newPoolKind" style="width:110px">
-        <option value="proxy">proxy</option>
-        <option value="account">account</option>
-      </select>
-      <button class="primary" onclick="createPool()">创建</button>
-    </div>
-    <div id="pools"></div>
+  <div class="brand">
+    <div class="logo">Pur<span>ser</span></div>
+    <div class="ver">resource console</div>
   </div>
-  <div>
-    <div class="sec-h">安全</div>
-    <div class="row">
-      <input id="apiKey" type="password" placeholder="API Key（可选）" style="flex:1">
-      <button onclick="saveKey()">保存</button>
+
+  <div class="side-sec">
+    <div class="sec-h"><span>资源池</span><button class="mini" onclick="openPoolModal()">+ 新建</button></div>
+    <div id="pools"></div>
+    <div id="poolsEmpty" class="side-empty">还没有资源池</div>
+  </div>
+
+  <div class="side-foot">
+    <div class="sec-h"><span>访问密钥</span></div>
+    <input id="apiKey" type="password" placeholder="API Key（可选）" autocomplete="off">
+    <div class="row" style="margin-top:2px">
+      <button class="fill" onclick="saveKey()">保存</button>
+      <button onclick="logout()">清除</button>
     </div>
+    <div class="hint">只读 Key 可浏览，但写入操作会被拒绝。</div>
+    <div class="hint" id="svcLine"></div>
   </div>
 </aside>
+
 <main>
   <header>
-    <strong id="poolTitle">未选择资源池</strong>
-    <span class="muted" id="poolMeta"></span>
+    <div class="title">
+      <div class="crumb">资源池</div>
+      <div class="hrow">
+        <strong id="poolTitle">未选择资源池</strong>
+        <span id="poolKindPill" class="pill" style="display:none"></span>
+      </div>
+    </div>
     <span class="grow"></span>
+    <button id="poolCfgBtn" disabled onclick="openPoolSettings()">池设置</button>
+    <button id="drainBtn" class="danger" disabled onclick="drainPool()">排空</button>
+    <button id="auditBtn" onclick="openAudit()">审计</button>
+    <button id="reportBtn" onclick="openReport()">报表</button>
+    <button id="backupBtn" onclick="openBackup()">备份</button>
     <button id="refreshBtn" onclick="loadAll()">刷新</button>
-    <button class="danger" onclick="logout()">清 Key</button>
+    <button id="addResourceBtn" class="primary" disabled onclick="openAddModal()">+ 添加资源</button>
   </header>
+
   <div class="content">
     <div class="notice" id="notice"></div>
 
+    <div class="card empty-hero" id="emptyHero">
+      <h2>从这里开始管理资源</h2>
+      <div class="muted">创建资源池 → 按类型添加资源 → 获取租约。代理、账号以及自定义类型都由<strong>类型 schema</strong>驱动表单。</div>
+      <button class="primary" onclick="openPoolModal()">+ 新建资源池</button>
+    </div>
+
     <section class="grid stats" id="kpis"></section>
+
     <div class="card" id="distCard" style="display:none">
-      <div class="sec-h">状态分布</div>
+      <div class="sec-h"><span>状态分布</span><span class="muted" id="distMeta"></span></div>
       <div class="bar" id="distBar"></div>
+      <div class="legend" id="distLegend"></div>
     </div>
 
     <div class="grid cols">
       <div class="card">
-        <div class="sec-h">资源</div>
-        <div class="row" style="margin-bottom:10px">
-          <input id="fState" placeholder="状态过滤: idle,active" style="width:180px">
-          <input id="fTag" placeholder="标签" style="width:140px">
-          <input id="fQ" placeholder="关键字" style="flex:1">
-          <button onclick="loadResources()">查询</button>
+        <div class="sec-h"><span>资源</span><span class="muted" id="resMeta"></span></div>
+        <div class="row filters">
+          <select id="fState" style="width:150px" onchange="resetResourcePaging()">
+            <option value="">全部状态</option>
+            <option value="idle">空闲</option>
+            <option value="active">使用中</option>
+            <option value="full">已满</option>
+            <option value="new">新建</option>
+            <option value="validating">校验中</option>
+            <option value="quarantined">隔离</option>
+            <option value="suspended">暂停</option>
+            <option value="quota_exhausted">配额耗尽</option>
+            <option value="banned">封禁</option>
+            <option value="lost">失联</option>
+            <option value="draining">排空中</option>
+            <option value="archived">已归档</option>
+          </select>
+          <input id="fTag" placeholder="标签" style="width:120px">
+          <input id="fQ" class="fill" placeholder="搜索 ID / 标签 / 批次 / 来源">
+          <select id="fSort" class="mini-select" title="排序" onchange="resetResourcePaging()">
+            <option value="">默认顺序</option>
+            <option value="health:desc">健康分 高→低</option>
+            <option value="health:asc">健康分 低→高</option>
+            <option value="recent:desc">最近使用</option>
+            <option value="recent:asc">最久未用</option>
+          </select>
+          <select id="fLimit" class="mini-select" onchange="resetResourcePaging()">
+            <option value="20">20 / 页</option>
+            <option value="50" selected>50 / 页</option>
+            <option value="100">100 / 页</option>
+            <option value="200">200 / 页</option>
+          </select>
+          <button onclick="resetResourcePaging()">查询</button>
+          <button onclick="resetFilters()">重置</button>
         </div>
-        <div style="overflow:auto;max-height:520px">
+        <div class="tablewrap">
           <table>
-            <thead><tr><th>ID</th><th>状态</th><th>健康</th><th>槽</th><th>标签</th><th>操作</th></tr></thead>
+            <thead><tr><th>ID</th><th>状态</th><th>健康</th><th>槽位</th><th>配额</th><th>到期</th><th>标签</th><th>操作</th></tr></thead>
             <tbody id="resRows"></tbody>
           </table>
         </div>
-        <div class="hint">批量操作请先在左侧导入或使用操作按钮；危险操作会二次确认。</div>
+        <div class="pager" id="resPager"></div>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="rightcol">
         <div class="card">
-          <div class="sec-h">导入资源</div>
-          <textarea id="importText" placeholder="每行一个：id 协议 host port 标签以空格分隔&#10;prox-1 http 1.2.3.4 8080 US,http&#10;也可以粘贴 JSON 数组 [{&quot;id&quot;:&quot;x&quot;,&quot;host&quot;:&quot;1.1.1.1&quot;,&quot;port&quot;:80}]"></textarea>
-          <div class="row" style="margin-top:8px">
-            <select id="importMode" style="width:150px">
-              <option value="none">不验活</option>
-              <option value="on_import">导入即验活</option>
-              <option value="batch">后台批量验活</option>
-            </select>
-            <button class="primary fill" onclick="importResources()">导入</button>
+          <div class="sec-h"><span>获取租约</span></div>
+          <div class="formgrid">
+            <label class="field"><span>指定资源</span><input id="leaseTarget" placeholder="留空按标签调度"></label>
+            <label class="field"><span>consumer</span><input id="leaseConsumer" value="console"></label>
+            <label class="field"><span>标签（全部匹配）</span><input id="leaseTags" placeholder="us,http"></label>
+            <label class="field"><span>必需标签</span><input id="leaseRequiredTag" placeholder="gold"></label>
+            <label class="field"><span>槽位</span><input id="leaseSlots" type="number" min="1" value="1"></label>
+            <label class="field"><span>超时（秒）</span><input id="leaseTimeout" type="number" min="0" step="0.5" value="10"></label>
+            <label class="field"><span>数量</span><input id="leaseCount" type="number" min="1" value="1"></label>
+            <label class="field"><span>批次模式</span>
+              <select id="leaseMode">
+                <option value="atomic">atomic（全有或全无）</option>
+                <option value="best_effort">best_effort（尽力而为）</option>
+              </select>
+            </label>
+            <label class="field"><span>n_min</span><input id="leaseNMin" type="number" min="1" placeholder="best_effort 下限"></label>
           </div>
-        </div>
-
-        <div class="card">
-          <div class="sec-h">租约调试</div>
-          <div class="row">
-            <input id="leaseConsumer" placeholder="consumer" style="width:120px">
-            <input id="leaseTarget" placeholder="target" style="width:140px">
-            <input id="leaseTimeout" placeholder="timeout s" type="number" value="10" style="width:90px">
-            <button class="primary" onclick="acquireLease()">获取</button>
-          </div>
+          <details class="adv" style="margin-top:10px">
+            <summary>调度高级参数</summary>
+            <div class="formgrid">
+              <label class="field"><span>priority</span><input id="leasePriority" type="number" min="0" value="0"></label>
+              <label class="field"><span>use_limit</span><input id="leaseUseLimit" type="number" min="1" placeholder="不限"></label>
+              <label class="field"><span>affinity</span><input id="leaseAffinity" placeholder="亲和 consumer"></label>
+              <label class="field"><span>probe</span><input id="leaseProbe" placeholder="probe 名称"></label>
+              <label class="field"><span>trace_id</span><input id="leaseTrace" placeholder="留空自动生成"></label>
+              <label class="field"><span>目标站点</span><input id="leaseSite" placeholder="target/site"></label>
+              <label class="field"><span>Idempotency-Key</span><input id="leaseIdem" placeholder="重试去重键"></label>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <label class="check" style="margin-top:0"><input id="leaseDup" type="checkbox"> allow_duplicate</label>
+              <label class="check" style="margin-top:0"><input id="leaseCooldown" type="checkbox"> ignore_cooldown</label>
+            </div>
+          </details>
+          <button class="primary" style="width:100%;margin-top:10px" onclick="acquireLease()">获取租约</button>
           <div id="leaseResult" class="hint"></div>
-          <div id="activeLeases" class="hint" style="margin-top:8px"></div>
         </div>
 
         <div class="card">
-          <div class="sec-h">事件流</div>
+          <div class="sec-h"><span>活跃租约</span><span class="muted" id="leaseMeta"></span></div>
+          <div class="row" style="margin-bottom:8px">
+            <input id="leaseFilterConsumer" placeholder="consumer 过滤" style="width:140px">
+            <input id="leaseFilterRid" placeholder="资源 ID 过滤" style="width:150px">
+            <button class="mini" onclick="loadLeases(currentPool)">筛选</button>
+            <button class="mini" onclick="clearLeaseFilters()">重置</button>
+          </div>
+          <div class="row" style="margin-bottom:8px">
+            <select id="leaseOutcome" class="fill">
+              <option value="ok">归还 · 正常</option>
+              <option value="captcha">归还 · 验证码</option>
+              <option value="rate_limited">归还 · 限流</option>
+              <option value="banned">归还 · 被封</option>
+              <option value="timeout">归还 · 超时</option>
+              <option value="network_error">归还 · 网络错误</option>
+              <option value="quota_exhausted">归还 · 配额耗尽</option>
+              <option value="preempted">归还 · 被抢占</option>
+            </select>
+            <input id="leaseUsed" type="number" min="0" placeholder="used" style="width:76px">
+            <button onclick="releaseConsumerLeases()" title="归还该调用方的全部租约">按 consumer 归还</button>
+          </div>
+          <div class="tablewrap" style="max-height:230px">
+            <table class="small">
+              <thead><tr><th>资源</th><th>consumer</th><th>优先级</th><th>槽</th><th>用量</th><th>到期</th><th></th></tr></thead>
+              <tbody id="leaseRows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="sec-h"><span>批次</span><span class="muted" id="batchMeta"></span></div>
+          <div id="batchList"></div>
+        </div>
+
+        <div class="card">
+          <div class="sec-h"><span>事件流</span><span class="muted" id="evState">未连接</span></div>
+          <div class="evfilters">
+            <input id="evType" placeholder="type 过滤">
+            <input id="evRid" placeholder="资源 ID">
+            <button class="mini" onclick="togglePauseEvents()" id="evPauseBtn">暂停</button>
+            <button class="mini" onclick="clearEvents()">清空</button>
+          </div>
           <div class="evlist" id="evlist"></div>
+        </div>
+
+        <div class="card">
+          <div class="sec-h">
+            <span>指标</span>
+            <span class="row" style="gap:6px;align-items:center">
+              <span class="muted" id="metricMeta"></span>
+              <button class="mini" onclick="loadMetrics()">刷新</button>
+            </span>
+          </div>
+          <div id="metricBody"></div>
         </div>
       </div>
     </div>
   </div>
 </main>
 
-<script>
-const stateColors = {
-  idle:"#22c55e", active:"#22c55e", full:"#f59e0b", new:"#8b98a5",
-  validating:"#8b98a5", quarantined:"#ef4444", suspended:"#8b98a5",
-  quota_exhausted:"#06b6d4", banned:"#ef4444", lost:"#ef4444",
-  draining:"#8b98a5", archived:"#8b98a5"
-};
-let currentPool = null;
-let poolStats = {};
+<div class="modal" id="poolModal">
+  <div class="dialog wide">
+    <div class="dialog-h">
+      <strong id="poolModalTitle">新建资源池</strong>
+      <button class="icon" onclick="closeModal('poolModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-b">
+      <div class="formgrid">
+        <label class="field"><span>池名<i class="req">*</i></span><input id="poolName" placeholder="例如 prod-proxy" maxlength="64"></label>
+        <label class="field"><span>资源类型</span><select id="poolKind" onchange="updatePoolKindHint()"></select><small id="poolKindHint"></small></label>
+      </div>
+      <div class="hint" id="poolKindNote">资源池类型决定可添加的资源字段，创建后不可修改。</div>
+      <details class="adv" id="poolDeploy">
+        <summary>部署（仅创建时）</summary>
+        <div class="formgrid">
+          <label class="field"><span>storage</span>
+            <select id="cfgStorage">
+              <option value="">默认（服务级）</option>
+              <option value="memory">memory</option>
+              <option value="sqlite">sqlite</option>
+              <option value="mysql">mysql</option>
+            </select>
+          </label>
+          <label class="field"><span>coordination</span>
+            <select id="cfgCoordination">
+              <option value="">默认（服务级）</option>
+              <option value="memory">memory</option>
+              <option value="redis">redis</option>
+            </select>
+          </label>
+          <label class="field"><span>secret_fields（逗号分隔）</span><input id="cfgSecrets" placeholder="留空沿用类型定义"></label>
+        </div>
+        <div class="hint">storage / coordination / secret_fields 创建后不可修改；多实例部署请选择 sqlite/mysql + redis。</div>
+      </details>
+      <details class="adv" id="poolAdvanced">
+        <summary>调度与运行参数</summary>
+        <div class="formgrid">
+          <label class="field"><span>allocator</span>
+            <select id="cfgAllocator">
+              <option value="">默认</option>
+              <option value="health_weighted">health_weighted</option>
+              <option value="round_robin">round_robin</option>
+              <option value="least_loaded">least_loaded</option>
+              <option value="static_priority">static_priority</option>
+            </select>
+          </label>
+          <label class="field"><span>scheduler</span>
+            <select id="cfgScheduler">
+              <option value="">默认</option>
+              <option value="priority_quota">priority_quota</option>
+            </select>
+          </label>
+          <label class="field"><span>max_slots（每资源）</span><input id="cfgMaxSlots" type="number" min="1" placeholder="默认"></label>
+          <label class="field"><span>lease_ttl（秒）</span><input id="cfgLeaseTtl" type="number" min="0.1" step="0.5" placeholder="60"></label>
+          <label class="field"><span>usage_quota</span><input id="cfgUsageQuota" type="number" min="0" placeholder="不限"></label>
+          <label class="field"><span>expires_in（秒）</span><input id="cfgExpiresIn" type="number" min="0" placeholder="不过期"></label>
+          <label class="field"><span>cooldown_after_release（秒）</span><input id="cfgCooldown" type="number" min="0" step="0.5" placeholder="0"></label>
+          <label class="field"><span>unban_mode</span>
+            <select id="cfgUnbanMode">
+              <option value="">默认</option>
+              <option value="manual_only">manual_only</option>
+              <option value="auto_after_ttl">auto_after_ttl</option>
+              <option value="mixed">mixed</option>
+            </select>
+          </label>
+          <label class="field"><span>import_validate</span>
+            <select id="cfgImportValidate">
+              <option value="">默认</option>
+              <option value="none">none</option>
+              <option value="on_import">on_import</option>
+              <option value="batch">batch</option>
+            </select>
+          </label>
+          <label class="field"><span>affinity_weight</span><input id="cfgAffinity" type="number" min="0" step="0.1" placeholder="0"></label>
+          <label class="field"><span>top_k</span><input id="cfgTopK" type="number" min="1" placeholder="8"></label>
+          <label class="field"><span>wait_timeout（秒）</span><input id="cfgWaitTimeout" type="number" min="0" step="1" placeholder="30"></label>
+        </div>
 
+        <div class="block-h">分配权重 weights</div>
+        <div class="formgrid">
+          <label class="field"><span>health</span><input id="cfgWHealth" type="number" step="0.05" min="0" placeholder="1.0"></label>
+          <label class="field"><span>age</span><input id="cfgWAge" type="number" step="0.05" min="0" placeholder="0.15"></label>
+          <label class="field"><span>load</span><input id="cfgWLoad" type="number" step="0.05" min="0" placeholder="0.30"></label>
+          <label class="field"><span>preference</span><input id="cfgWPref" type="number" step="0.05" min="0" placeholder="0.0"></label>
+          <label class="field"><span>jitter</span><input id="cfgWJitter" type="number" step="0.01" min="0" placeholder="0.05"></label>
+        </div>
+
+        <div class="block-h">隔离与封禁</div>
+        <div class="formgrid">
+          <label class="field"><span>unban_after（秒）</span><input id="cfgUnbanAfter" type="number" min="0" step="60" placeholder="86400"></label>
+          <label class="field"><span>quarantine.base（秒）</span><input id="cfgQBase" type="number" min="0" step="1" placeholder="30"></label>
+          <label class="field"><span>quarantine.cap（秒）</span><input id="cfgQCap" type="number" min="0" step="1" placeholder="1800"></label>
+          <label class="field"><span>quarantine.jitter（秒）</span><input id="cfgQJitter" type="number" min="0" step="1" placeholder="10"></label>
+          <label class="field"><span>quarantine.max_failures</span><input id="cfgQMax" type="number" min="1" placeholder="3"></label>
+          <label class="field"><span>quarantine.trial_hours</span><input id="cfgQTrial" type="number" min="0" step="1" placeholder="24"></label>
+        </div>
+
+        <div class="block-h">租约与心跳</div>
+        <div class="formgrid">
+          <label class="field"><span>heartbeat_interval（秒）</span><input id="cfgHeartbeat" type="number" min="0.1" step="0.5" placeholder="ttl/3"></label>
+          <label class="field"><span>max_lease_duration（秒）</span><input id="cfgMaxLease" type="number" min="0.1" step="1" placeholder="不限"></label>
+          <label class="check" style="align-self:end"><input id="cfgCooldownConsumer" type="checkbox"> 冷却仅限制该 consumer</label>
+        </div>
+
+        <div class="block-h">验活与后台任务</div>
+        <div class="formgrid">
+          <label class="field"><span>stale_after（秒）</span><input id="cfgStaleAfter" type="number" min="0" step="1" placeholder="30"></label>
+          <label class="field"><span>background_interval（秒）</span><input id="cfgBgInterval" type="number" min="1" step="1" placeholder="30"></label>
+          <label class="field"><span>background_validate_sample</span><input id="cfgBgSample" type="number" min="0.01" max="1" step="0.05" placeholder="1.0"></label>
+          <label class="field"><span>validate_timeout（秒）</span><input id="cfgValidateTimeout" type="number" min="0" step="1" placeholder="20"></label>
+          <label class="field"><span>validate_concurrency</span><input id="cfgValidateConc" type="number" min="1" placeholder="8"></label>
+        </div>
+
+        <div class="block-h">站点故障与保留</div>
+        <div class="formgrid">
+          <label class="field"><span>site_failure_ttl（秒）</span><input id="cfgSiteTtl" type="number" min="0" step="1" placeholder="300"></label>
+          <label class="field"><span>site_failure_max</span><input id="cfgSiteMax" type="number" min="1" placeholder="16"></label>
+          <label class="field"><span>check_cache_ttl（秒）</span><input id="cfgCheckTtl" type="number" min="0" step="0.5" placeholder="2"></label>
+          <label class="field"><span>archive_retention（秒）</span><input id="cfgArchiveRet" type="number" min="0" step="3600" placeholder="2592000"></label>
+          <label class="field"><span>lost_retention（秒）</span><input id="cfgLostRet" type="number" min="0" step="600" placeholder="14400"></label>
+          <label class="field"><span>timezone</span><input id="cfgTimezone" placeholder="Asia/Shanghai"></label>
+        </div>
+
+        <div class="formgrid" style="margin-top:10px">
+          <label class="field"><span>total_quota（每资源总量）</span><input id="cfgTotalQuota" type="number" min="1" step="1" placeholder="不限"></label>
+          <label class="field"><span>meta（JSON 对象）</span><textarea id="cfgMeta" placeholder='{"team":"data"}' style="min-height:60px"></textarea></label>
+        </div>
+        <div class="hint">留空表示沿用默认值；JSON 填空字符串表示不修改，填 null 表示清空。storage / coordination 创建后不可热更新。</div>
+      </details>
+      <div id="poolMaint" style="display:none">
+        <div class="block-h">维护任务</div>
+        <div class="row">
+          <select id="maintTask" class="fill">
+            <option value="quota_reset">quota_reset · 重置配额</option>
+            <option value="periodic_unban">periodic_unban · 定时解禁</option>
+            <option value="lost_gc">lost_gc · 回收失联</option>
+            <option value="validating_gc">validating_gc · 清理校验超时</option>
+            <option value="quarantine_gc">quarantine_gc · 释放隔离</option>
+            <option value="archive_gc">archive_gc · 清理归档</option>
+          </select>
+          <button onclick="runMaintenance()">执行</button>
+        </div>
+        <div class="hint">手动触发周期性扫描；执行结果会写入审计日志。</div>
+      </div>
+    </div>
+    <div class="dialog-f">
+      <button class="danger" id="poolDeleteBtn" style="display:none;margin-right:auto" onclick="deletePool()">删除资源池</button>
+      <button onclick="closeModal('poolModal')">取消</button>
+      <button class="primary" id="poolSubmitBtn" onclick="submitPool()">创建</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="addModal">
+  <div class="dialog">
+    <div class="dialog-h">
+      <div>
+        <strong id="addTitle">添加资源</strong>
+        <div class="hint" id="addSub"></div>
+      </div>
+      <button class="icon" onclick="closeModal('addModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-b">
+      <div class="formgrid" id="addFields"></div>
+      <label class="check"><input id="addValidate" type="checkbox" checked> 添加后立即验活（proxy 会真实探测网络）</label>
+      <details class="adv" id="addAdvanced">
+        <summary>调度属性</summary>
+        <div class="formgrid">
+          <label class="field"><span>max_slots</span><input id="addMaxSlots" type="number" min="1" placeholder="继承资源池"></label>
+          <label class="field"><span>usage_quota</span><input id="addUsageQuota" type="number" min="0" placeholder="不限"></label>
+          <label class="field"><span>expires_at</span><input id="addExpiresAt" type="datetime-local"></label>
+          <label class="field"><span>mutex_group</span><input id="addMutex" placeholder="同组互斥"></label>
+          <label class="field"><span>可用时段开始</span><input id="addWindowStart" type="time"></label>
+          <label class="field"><span>可用时段结束</span><input id="addWindowEnd" type="time"></label>
+        </div>
+        <label class="field" style="margin-top:10px"><span>自定义字段 JSON</span>
+          <textarea id="addExtra" placeholder='{"isp":"CT"}' style="min-height:70px"></textarea>
+          <small>合并进资源载荷；已在类型字段中填写的键以表单为准。</small>
+        </label>
+      </details>
+    </div>
+    <div class="dialog-f">
+      <button onclick="closeModal('addModal')">取消</button>
+      <button class="primary" id="addSubmit" onclick="submitAdd()">添加</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="detailModal">
+  <div class="dialog wide">
+    <div class="dialog-h">
+      <div class="hrow"><strong id="detailTitle">-</strong><span id="detailState"></span></div>
+      <button class="icon" onclick="closeModal('detailModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-b" id="detailBody"></div>
+    <div class="dialog-f" id="detailFoot"></div>
+  </div>
+</div>
+
+<div class="modal" id="auditModal">
+  <div class="dialog wide">
+    <div class="dialog-h">
+      <div class="hrow"><strong>审计日志</strong><span class="muted" id="auditMeta"></span></div>
+      <button class="icon" onclick="closeModal('auditModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-b">
+      <div class="row filters">
+        <input id="auditPool" placeholder="池名" style="width:130px">
+        <input id="auditAction" placeholder="action" style="width:150px">
+        <input id="auditRid" placeholder="资源 ID" style="width:160px">
+        <input id="auditOperator" placeholder="operator" style="width:120px">
+        <button onclick="loadAudit()">查询</button>
+        <button onclick="verifyAudit()">校验链</button>
+        <button id="auditOlderBtn" onclick="loadOlderAudit()" disabled>加载更早</button>
+      </div>
+      <div class="auditlist" id="auditList"></div>
+    </div>
+    <div class="dialog-f">
+      <span class="muted" id="auditVerify" style="margin-right:auto"></span>
+      <button onclick="closeModal('auditModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="backupModal">
+  <div class="dialog wide">
+    <div class="dialog-h">
+      <div class="hrow"><strong>备份 / 恢复</strong><span class="muted" id="backupMeta"></span></div>
+      <button class="icon" onclick="closeModal('backupModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-b">
+      <div class="hint">备份包含全部池配置、资源与明文密钥，仅 admin 可下载。恢复不迁移在途租约，占用态资源会回到空闲。</div>
+      <div class="row" style="margin:10px 0;align-items:center">
+        <button class="primary" onclick="downloadBackup()">下载备份（JSON）</button>
+        <span class="muted" id="backupInfo"></span>
+      </div>
+      <div class="block-h">恢复</div>
+      <div class="row" style="margin:8px 0;align-items:center">
+        <input id="restoreFile" type="file" accept="application/json,.json">
+        <select id="restoreConflict" class="mini-select">
+          <option value="skip">已存在则跳过</option>
+          <option value="overwrite">已存在则覆盖</option>
+        </select>
+        <button class="primary" id="restoreBtn" onclick="restoreBackup()" disabled>恢复</button>
+      </div>
+      <div class="hint" id="restoreInfo"></div>
+    </div>
+    <div class="dialog-f"><button onclick="closeModal('backupModal')">关闭</button></div>
+  </div>
+</div>
+
+<div class="modal" id="reportModal">
+  <div class="dialog wide">
+    <div class="dialog-h">
+      <div class="hrow"><strong>用量报表</strong><span class="muted" id="reportMeta"></span></div>
+      <button class="icon" onclick="closeModal('reportModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-b">
+      <div class="row filters">
+        <select id="reportWindow" onchange="loadReport()">
+          <option value="3600">近 1 小时</option>
+          <option value="86400" selected>近 24 小时</option>
+          <option value="604800">近 7 天</option>
+          <option value="0">全部保留</option>
+        </select>
+        <select id="reportGroup" onchange="loadReport()">
+          <option value="consumer">按 consumer</option>
+          <option value="target">按目标站</option>
+          <option value="pool">按资源池</option>
+          <option value="kind">按资源类型</option>
+        </select>
+        <select id="reportPool" onchange="loadReport()"><option value="">全部池</option></select>
+        <button onclick="loadReport()">刷新</button>
+      </div>
+      <div id="reportBody" style="max-height:460px;overflow:auto"></div>
+    </div>
+    <div class="dialog-f">
+      <span class="muted" style="margin-right:auto">数据来自内存用量账本（有界，重启清空）</span>
+      <button onclick="closeModal('reportModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="jobModal">
+  <div class="dialog">
+    <div class="dialog-h">
+      <div class="hrow"><strong>批量验活任务</strong><span class="muted" id="jobMeta"></span></div>
+      <button class="icon" onclick="closeModal('jobModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-b" id="jobBody"></div>
+    <div class="dialog-f">
+      <button class="danger" id="jobCancelBtn" style="margin-right:auto;display:none" onclick="cancelValidateJob()">取消任务</button>
+      <button onclick="closeModal('jobModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="leaseModal">
+  <div class="dialog">
+    <div class="dialog-h">
+      <div class="hrow"><strong>租约详情</strong><span class="muted" id="leaseModalMeta"></span></div>
+      <button class="icon" onclick="closeModal('leaseModal')" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-b" id="leaseModalBody"></div>
+    <div class="dialog-f"><button onclick="closeModal('leaseModal')">关闭</button></div>
+  </div>
+</div>
+
+<script>
+const STATE_LABEL = {
+  new:"新建", validating:"校验中", idle:"空闲", active:"使用中", full:"已满",
+  quarantined:"隔离", suspended:"暂停", quota_exhausted:"配额耗尽", banned:"封禁",
+  lost:"失联", draining:"排空中", archived:"已归档"
+};
+const STATE_COLOR = {
+  idle:"#22c55e", active:"#22c55e", full:"#f59e0b", new:"#8b98a5",
+  validating:"#06b6d4", quarantined:"#ef4444", suspended:"#8b98a5",
+  quota_exhausted:"#06b6d4", banned:"#ef4444", lost:"#ef4444",
+  draining:"#f59e0b", archived:"#8b98a5"
+};
+const OUTCOME_LABEL = {
+  ok:"正常", captcha:"验证码", rate_limited:"限流", banned:"被封",
+  timeout:"超时", network_error:"网络错误", quota_exhausted:"配额耗尽", preempted:"被抢占"
+};
+const ADMIN_TARGETS = ["idle", "suspended", "quota_exhausted", "validating", "archived"];
+const ADD_RESERVED = ["max_slots", "usage_quota", "expires_at", "mutex_group", "schedule_window", "source"];
+const POOL_RELOAD_MS = 15000;
+
+let currentPool = null;
+let currentKind = null;
+let poolStats = {};
+let POOLS = [];
+let TYPES = [];
+let ev = null;
+let evPollTimer = null;
+let evCursor = 0;
+let evPaused = false;
+let reloadTimer = null;
+let detailRid = null;
+let detailData = null;
+let detailPlain = false;
+let detailEditing = false;
+let resOffset = 0;
+let resLimit = 50;
+let resTotal = 0;
+let restoreDoc = null;
+let poolCfgEditing = false;
+
+function enc(v){ return encodeURIComponent(v); }
 function token(){ return localStorage.getItem("purser_key") || ""; }
-function saveKey(){ localStorage.setItem("purser_key", document.getElementById("apiKey").value); flash("密钥已保存","okk"); }
-function logout(){ localStorage.removeItem("purser_key"); document.getElementById("apiKey").value=""; flash("已清除密钥","okk"); }
+function esc(v){
+  return String(v === null || v === undefined ? "" : v).replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
+  })[c]);
+}
+function numOrNull(v){
+  if(v === null || v === undefined || String(v).trim() === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function fmtTime(sec){
+  if(sec === null || sec === undefined) return "-";
+  const d = new Date(Number(sec) * 1000);
+  if(Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleTimeString("zh-CN", {hour12:false});
+}
+function fmtDate(sec){
+  if(sec === null || sec === undefined) return "-";
+  const d = new Date(Number(sec) * 1000);
+  if(Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("zh-CN", {hour12:false});
+}
+function epochToLocalInput(sec){
+  if(!sec) return "";
+  const d = new Date(Number(sec) * 1000);
+  if(Number.isNaN(d.getTime())) return "";
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function localInputToEpoch(value){
+  if(!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+function statePill(state){
+  const s = String(state || "unknown");
+  const color = STATE_COLOR[s] || "#8b98a5";
+  return `<span class="pill"><i class="dot" style="background:${color}"></i>${esc(STATE_LABEL[s] || s)}</span>`;
+}
+function splitTags(raw){
+  return String(raw || "").split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+}
 
 async function api(path, opts={}){
-  const headers = Object.assign({"Content-Type":"application/json"}, opts.headers||{});
+  const headers = Object.assign({"Content-Type":"application/json"}, opts.headers || {});
   const key = token();
   if(key) headers["Authorization"] = "Bearer " + key;
+  headers["X-Operator"] = "ui";
   const res = await fetch(path, Object.assign({}, opts, {headers}));
-  if(!res.ok){ let d={}; try{ d = await res.json(); }catch(e){} throw new Error((d.detail||res.statusText)); }
-  if(res.status===204) return null;
+  if(!res.ok){
+    let data = {};
+    try{ data = await res.json(); }catch(e){}
+    const err = new Error(data.detail || res.statusText || ("HTTP " + res.status));
+    err.status = res.status;
+    throw err;
+  }
+  if(res.status === 204) return null;
   return res.json();
 }
-function flash(msg, kind){ const n=document.getElementById("notice"); n.textContent=msg; n.className="notice "+(kind||"err"); setTimeout(()=>n.className="notice",4000); }
+
+function flash(msg, kind){
+  const n = document.getElementById("notice");
+  n.textContent = msg;
+  n.className = "notice " + (kind || "err");
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { n.className = "notice"; }, 4500);
+}
+
+function saveKey(){
+  localStorage.setItem("purser_key", document.getElementById("apiKey").value.trim());
+  flash("密钥已保存", "okk");
+  loadTypes().then(loadPools).then(loadService).catch(e => flash(e.message));
+}
+function logout(){
+  localStorage.removeItem("purser_key");
+  document.getElementById("apiKey").value = "";
+  flash("已清除密钥", "okk");
+  loadTypes().then(loadPools).then(loadService).catch(e => flash(e.message));
+}
+
+function showModal(id){
+  document.getElementById(id).classList.add("open");
+  const first = document.querySelector("#" + id + " input, #" + id + " select");
+  if(first) setTimeout(() => first.focus(), 30);
+}
+function closeModal(id){
+  document.getElementById(id).classList.remove("open");
+  if(id === "detailModal"){
+    detailRid = null;
+    detailData = null;
+    detailPlain = false;
+    detailEditing = false;
+  }
+}
+function closeAllModals(){
+  document.querySelectorAll(".modal.open").forEach(m => m.classList.remove("open"));
+}
+
+function typeOf(kind){
+  return TYPES.find(t => t.kind === kind) || null;
+}
+function renderPoolKindOptions(){
+  const sel = document.getElementById("poolKind");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  const list = TYPES.length ? TYPES : [
+    {kind:"proxy", resource_class:"ProxyType", default_concurrency:1, fields:[]},
+    {kind:"account", resource_class:"AccountType", default_concurrency:4, fields:[]}
+  ];
+  for(const t of list){
+    const opt = document.createElement("option");
+    opt.value = t.kind;
+    opt.textContent = t.kind + " (" + t.resource_class + ")";
+    sel.appendChild(opt);
+  }
+  if(prev && list.some(t => t.kind === prev)) sel.value = prev;
+  updatePoolKindHint();
+}
+function updatePoolKindHint(){
+  const sel = document.getElementById("poolKind");
+  const t = typeOf(sel.value);
+  document.getElementById("poolKindHint").textContent = t
+    ? `默认并发 ${t.default_concurrency} · ${t.fields.length} 个配置字段`
+    : "";
+}
+async function loadTypes(){
+  try{
+    const data = await api("/types");
+    TYPES = data.types || [];
+  }catch(e){
+    TYPES = [];
+    throw e;
+  }
+  renderPoolKindOptions();
+}
 
 async function loadPools(){
   const data = await api("/pools");
+  POOLS = data.pools || [];
+  renderPools();
+  if(currentPool && !POOLS.some(p => p.name === currentPool)){
+    currentPool = null;
+    currentKind = null;
+  }
+  if(!POOLS.length){
+    resetView();
+    return;
+  }
+  if(!currentPool){
+    await selectPool(POOLS[0].name);
+  }else{
+    updateActivePoolButton();
+  }
+}
+async function loadService(){
+  try{
+    const s = await api("/service");
+    document.getElementById("svcLine").innerHTML =
+      `v${esc(s.version)} · ${esc(s.storage)} / ${esc(s.coordination)} · ` +
+      `<a href="/metrics" target="_blank" rel="noopener" style="color:var(--accent2)">metrics</a>`;
+  }catch(e){ /* status line is optional */ }
+}
+async function loadMetrics(){
+  try{
+    const snap = await api("/metrics/snapshot");
+    renderMetrics(snap);
+  }catch(e){ /* the metrics card is best-effort */ }
+}
+function renderMetrics(snap){
+  const body = document.getElementById("metricBody");
+  const meta = document.getElementById("metricMeta");
+  if(!currentPool){
+    body.innerHTML = "";
+    meta.textContent = "";
+    return;
+  }
+  const prefix = `pool.${currentPool}.`;
+  const pick = obj => Object.entries(obj || {})
+    .filter(([k]) => k.startsWith(prefix))
+    .map(([k, v]) => [k.slice(prefix.length), v])
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  const counters = pick(snap.counters);
+  const histograms = pick(snap.histograms);
+  if(!counters.length && !histograms.length){
+    body.innerHTML = '<div class="empty">暂无指标 · 获取租约后产生</div>';
+    meta.textContent = "";
+    return;
+  }
+  const visible = counters.slice(0, 8);
+  const counterRows = visible.map(([k, v]) =>
+    `<tr><td class="k">${esc(k)}</td><td class="mono" style="text-align:right">${esc(v)}</td></tr>`
+  ).join("");
+  const histRows = histograms.slice(0, 6).map(([k, h]) =>
+    `<tr><td class="k">${esc(k)}</td><td class="mono" style="text-align:right">${esc(h.count)} 次 · 均 ${esc(h.avg)} · 最大 ${esc(h.max)}</td></tr>`
+  ).join("");
+  body.innerHTML =
+    (counterRows ? `<table class="kvtable"><tbody>${counterRows}</tbody></table>` : "") +
+    (histRows ? `<div class="block-h" style="margin-top:10px">时延 / 分布</div><table class="kvtable"><tbody>${histRows}</tbody></table>` : "");
+  const total = counters.length + histograms.length;
+  const tail = counters.length > visible.length ? ` · 仅显示前 ${visible.length}` : "";
+  meta.textContent = `${total} 项${tail} · ${fmtTime(Date.now() / 1000)}`;
+}
+function openBackup(){
+  restoreDoc = null;
+  document.getElementById("restoreFile").value = "";
+  document.getElementById("restoreInfo").textContent = "";
+  document.getElementById("restoreBtn").disabled = true;
+  document.getElementById("backupInfo").textContent = "";
+  document.getElementById("backupMeta").textContent = "";
+  showModal("backupModal");
+}
+async function downloadBackup(){
+  try{
+    const doc = await api("/backup");
+    const blob = new Blob([JSON.stringify(doc, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.href = url;
+    a.download = `purser-backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const pools = doc.pools || [];
+    const resources = pools.reduce((n, p) => n + (p.resources || []).length, 0);
+    document.getElementById("backupInfo").textContent = `${pools.length} 个池 · ${resources} 个资源`;
+    flash("备份已下载", "okk");
+  }catch(e){ flash(e.message); }
+}
+async function readRestoreFile(input){
+  restoreDoc = null;
+  document.getElementById("restoreBtn").disabled = true;
+  const info = document.getElementById("restoreInfo");
+  const file = input.files && input.files[0];
+  if(!file){ info.textContent = ""; return; }
+  try{
+    const doc = JSON.parse(await file.text());
+    if(!doc || doc.format !== "purser-backup" || !Array.isArray(doc.pools)){
+      throw new Error("不是有效的 purser 备份文件");
+    }
+    restoreDoc = doc;
+    document.getElementById("restoreBtn").disabled = false;
+    const resources = doc.pools.reduce((n, p) => n + ((p.resources || []).length), 0);
+    info.textContent =
+      `${doc.pools.length} 个池 · ${resources} 个资源 · 创建于 ${fmtDate(doc.created_at)}`;
+  }catch(err){
+    info.textContent = err.message;
+  }
+}
+async function restoreBackup(){
+  if(!restoreDoc) return flash("请先选择备份文件");
+  const conflict = document.getElementById("restoreConflict").value;
+  const scope = conflict === "skip" ? "已存在的资源将跳过。" : "已存在的资源将被备份覆盖。";
+  if(!confirm(`恢复 ${restoreDoc.pools.length} 个池？${scope}`)) return;
+  try{
+    const data = await api(`/restore?conflict=${enc(conflict)}`, {
+      method:"POST", body: JSON.stringify(restoreDoc)
+    });
+    const errs = data.errors || [];
+    const summary =
+      `新建池 ${data.created_pools.length} · 导入 ${data.imported} · 更新 ${data.updated} · ` +
+      `跳过 ${data.skipped} · 归位 ${data.normalized} · 忽略租约 ${data.leases_ignored}`;
+    flash(`恢复完成：${summary}${errs.length ? ` · 错误 ${errs.length}` : ""}`, errs.length ? "" : "okk");
+    document.getElementById("restoreInfo").textContent = JSON.stringify(data, null, 2);
+    await loadPools();
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+function openReport(){
+  const sel = document.getElementById("reportPool");
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">全部池</option>' +
+    POOLS.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+  sel.value = POOLS.some(p => p.name === keep) ? keep : "";
+  document.getElementById("reportMeta").textContent = "";
+  document.getElementById("reportBody").innerHTML = '<div class="muted">加载中…</div>';
+  showModal("reportModal");
+  loadReport();
+}
+function outcomeLine(outcomes){
+  const items = Object.entries(outcomes || {});
+  return items.length
+    ? items.map(([k, n]) => `${esc(OUTCOME_LABEL[k] || k)} ${esc(n)}`).join(" · ")
+    : "-";
+}
+async function loadReport(){
+  const groupBy = document.getElementById("reportGroup").value;
+  const pool = document.getElementById("reportPool").value;
+  const seconds = Number(document.getElementById("reportWindow").value || 0);
+  const qs = new URLSearchParams({group_by:groupBy, limit:"20"});
+  if(seconds > 0) qs.set("since", String(Date.now() / 1000 - seconds));
+  if(pool) qs.set("pool", pool);
+  const body = document.getElementById("reportBody");
+  try{
+    const d = await api(`/reports/usage?${qs}`);
+    const t = d.totals || {};
+    const win = d.window || {};
+    const activeMap = {};
+    for(const g of (d.active && d.active.groups) || []) activeMap[g.key] = g;
+    const groupRows = (d.groups || []).map(g => {
+      const active = (activeMap[g.key] || {}).slots || 0;
+      return `<tr><td class="k">${esc(g.key)}</td>` +
+        `<td>释放 ${esc(g.releases)} · 用量 ${esc(g.used)} · 槽位 ${esc(g.slots)} · 活跃 ${esc(active)}</td>` +
+        `<td>${outcomeLine(g.outcomes)}</td></tr>`;
+    }).join("");
+    const poolRows = (d.pools || []).map(p => {
+      const c = p.counts || {};
+      const abnormal = (c.banned || 0) + (c.quarantined || 0) + (c.quota_exhausted || 0);
+      return `<tr><td class="k">${esc(p.name)}</td>` +
+        `<td>${esc(p.kind)} · 总量 ${esc(p.total || 0)} · 可分配 ${esc(p.allocatable || 0)} · ` +
+        `活跃租约 ${esc(p.active_leases || 0)} · 等待 ${esc(p.waiting || 0)} · ` +
+        `异常 ${esc(abnormal)} · 平均健康 ${p.avg_health === null || p.avg_health === undefined ? "-" : esc(p.avg_health)}</td></tr>`;
+    }).join("");
+    document.getElementById("reportMeta").textContent =
+      `最新 ${win.newest ? esc(fmtTime(win.newest)) : "-"} · 保留 ${esc(win.retained || 0)}/${esc(win.capacity || 0)}`;
+    body.innerHTML =
+      `<table class="kvtable"><tbody>` +
+      `<tr><td class="k">释放次数</td><td>${esc(t.releases || 0)}</td></tr>` +
+      `<tr><td class="k">消耗用量</td><td>${esc(t.used || 0)}</td></tr>` +
+      `<tr><td class="k">占用槽位</td><td>${esc(t.slots || 0)}</td></tr>` +
+      `<tr><td class="k">结果分布</td><td>${outcomeLine(t.outcomes)}</td></tr>` +
+      `</tbody></table>` +
+      `<div class="block-h" style="margin-top:10px">分组 · ${esc(d.group_by)}</div>` +
+      (groupRows
+        ? `<table class="kvtable"><tbody>${groupRows}</tbody></table>`
+        : '<div class="muted">窗口内没有已归还的租约</div>') +
+      `<div class="block-h" style="margin-top:10px">池负载</div>` +
+      (poolRows
+        ? `<table class="kvtable"><tbody>${poolRows}</tbody></table>`
+        : '<div class="muted">暂无资源池</div>');
+  }catch(e){ body.innerHTML = `<div class="muted">${esc(e.message)}</div>`; }
+}
+
+let currentJobId = null;
+let jobTimer = null;
+const JOB_STATUS = {running:"运行中", cancelling:"取消中", cancelled:"已取消", completed:"已完成"};
+async function openValidateJob(jobId){
+  currentJobId = jobId;
+  document.getElementById("jobMeta").textContent = jobId;
+  document.getElementById("jobBody").innerHTML = '<div class="muted">加载中…</div>';
+  document.getElementById("jobCancelBtn").style.display = "none";
+  showModal("jobModal");
+  await loadValidateJob();
+  clearInterval(jobTimer);
+  jobTimer = setInterval(() => {
+    if(!document.getElementById("jobModal").classList.contains("open")){
+      clearInterval(jobTimer); jobTimer = null; return;
+    }
+    loadValidateJob();
+  }, 2000);
+}
+async function loadValidateJob(){
+  if(!currentPool || !currentJobId) return;
+  try{
+    const job = await api(`/pools/${enc(currentPool)}/validate-jobs/${enc(currentJobId)}`);
+    const status = JOB_STATUS[job.status] || job.status;
+    const errors = (job.errors || []).slice(-5).map(e =>
+      `<div class="muted">${esc(e.rid)}: ${esc(e.error)}</div>`).join("");
+    document.getElementById("jobMeta").textContent = `${currentJobId} · ${status}`;
+    document.getElementById("jobBody").innerHTML =
+      `<table class="kvtable"><tbody>` +
+      `<tr><td class="k">进度</td><td>${esc(job.done)} / ${esc(job.total)}（待处理 ${esc(job.pending)}）</td></tr>` +
+      `<tr><td class="k">结果</td><td>健康 ${esc(job.alive)} · 失败 ${esc(job.failed)} · 取消跳过 ${esc(job.skipped)}</td></tr>` +
+      `<tr><td class="k">操作者</td><td>${esc(job.operator || "-")}</td></tr>` +
+      `<tr><td class="k">创建 / 更新</td><td>${esc(fmtTime(job.created_at))} / ${esc(fmtTime(job.updated_at))}</td></tr>` +
+      `</tbody></table>` +
+      (errors ? `<div class="block-h" style="margin-top:8px">最近错误</div>${errors}` : "");
+    const canCancel = job.status === "running" || job.status === "cancelling";
+    document.getElementById("jobCancelBtn").style.display = canCancel ? "" : "none";
+  }catch(e){
+    document.getElementById("jobBody").innerHTML = `<div class="muted">${esc(e.message)}</div>`;
+    document.getElementById("jobCancelBtn").style.display = "none";
+  }
+}
+async function cancelValidateJob(){
+  if(!currentJobId || !confirm("取消该验活任务？进行中的探测会完成，未处理的资源将跳过。")) return;
+  try{
+    await api(`/pools/${enc(currentPool)}/validate-jobs/${enc(currentJobId)}/cancel`, {method:"POST"});
+    flash("验活任务已取消", "okk");
+    await loadValidateJob();
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+
+function poolMetaLine(p){
+  const counts = p.counts || {};
+  return `${p.kind} · 空闲 ${counts.idle || 0}/${p.total || 0} · 租约 ${p.active_leases || 0}`;
+}
+function renderPools(){
   const box = document.getElementById("pools");
   box.innerHTML = "";
-  for(const p of (data.pools||[])){
+  for(const p of POOLS){
     const b = document.createElement("button");
-    b.textContent = `${p.name} (${p.counts.idle+"/"+p.total})`;
-    b.className = p.name===currentPool ? "active" : "";
-    b.onclick = ()=>selectPool(p.name);
+    b.dataset.pool = p.name;
+    b.className = p.name === currentPool ? "active" : "";
+    b.innerHTML =
+      `<span class="name">${esc(p.name)}</span>` +
+      `<span class="meta">${esc(poolMetaLine(p))}</span>`;
+    b.onclick = () => selectPool(p.name);
     box.appendChild(b);
   }
-  if(!currentPool && data.pools && data.pools.length) selectPool(data.pools[0].name);
+  document.getElementById("poolsEmpty").style.display = POOLS.length ? "none" : "";
+}
+function updateActivePoolButton(){
+  document.querySelectorAll("#pools button[data-pool]").forEach(b => {
+    b.classList.toggle("active", b.dataset.pool === currentPool);
+  });
 }
 async function selectPool(name){
+  stopEventStream();
   currentPool = name;
-  if(poolStats._ev) poolStats._ev.close();
+  resOffset = 0;
+  evCursor = 0;
+  updateActivePoolButton();
   document.getElementById("poolTitle").textContent = name;
+  document.getElementById("poolKindPill").style.display = "none";
+  document.getElementById("evlist").innerHTML = "";
+  document.getElementById("evState").textContent = "连接中…";
+  document.getElementById("leaseResult").innerHTML = "";
   await loadAll();
-  const ev = new EventSource(`/pools/${encodeURIComponent(name)}/events`+(token()?``:``));
-  ev.onmessage = (m)=>{ try{ addEvent(JSON.parse(m.data)); }catch(e){} };
-  ev.onerror = ()=>{};
-  poolStats._ev = ev;
+  connectEvents(name);
 }
-async function loadAll(){
+const POOL_CFG_SELECTS = {
+  cfgAllocator:"allocator",
+  cfgScheduler:"scheduler",
+  cfgUnbanMode:"unban_mode",
+  cfgImportValidate:"import_validate"
+};
+const POOL_CFG_NUMBERS = {
+  cfgMaxSlots:"max_slots",
+  cfgLeaseTtl:"lease_ttl",
+  cfgUsageQuota:"usage_quota",
+  cfgExpiresIn:"expires_in",
+  cfgCooldown:"cooldown_after_release",
+  cfgAffinity:"affinity_weight",
+  cfgTopK:"top_k",
+  cfgWaitTimeout:"wait_timeout",
+  cfgUnbanAfter:"unban_after",
+  cfgHeartbeat:"heartbeat_interval",
+  cfgMaxLease:"max_lease_duration",
+  cfgStaleAfter:"stale_after",
+  cfgBgInterval:"background_interval",
+  cfgBgSample:"background_validate_sample",
+  cfgValidateTimeout:"validate_timeout",
+  cfgValidateConc:"validate_concurrency",
+  cfgSiteTtl:"site_failure_ttl",
+  cfgSiteMax:"site_failure_max",
+  cfgCheckTtl:"check_cache_ttl",
+  cfgTotalQuota:"total_quota",
+  cfgArchiveRet:"archive_retention",
+  cfgLostRet:"lost_retention"
+};
+const POOL_WEIGHT_NUMBERS = {
+  cfgWHealth:"health",
+  cfgWAge:"age",
+  cfgWLoad:"load",
+  cfgWPref:"preference",
+  cfgWJitter:"jitter"
+};
+const POOL_QUARANTINE_NUMBERS = {
+  cfgQBase:"base",
+  cfgQCap:"cap",
+  cfgQJitter:"jitter",
+  cfgQMax:"max_failures",
+  cfgQTrial:"trial_hours"
+};
+const POOL_INT_KEYS = new Set([
+  "max_slots","usage_quota","total_quota","top_k","validate_concurrency",
+  "site_failure_max","quarantine.max_failures"
+]);
+function readPoolNumber(id, key, out, intKey){
+  const raw = document.getElementById(id).value.trim();
+  if(raw === "") return false;
+  const n = Number(raw);
+  if(!Number.isFinite(n)) throw new Error(`${intKey || key} 必须是数字`);
+  out[key] = POOL_INT_KEYS.has(intKey || key) ? Math.trunc(n) : n;
+  return true;
+}
+function readPoolJson(id, key, out){
+  const raw = document.getElementById(id).value.trim();
+  if(raw === "") return;
+  let value;
+  try{ value = JSON.parse(raw); }catch(e){ throw new Error(`${key} 不是合法 JSON`); }
+  if(value !== null && (typeof value !== "object" || Array.isArray(value))){
+    throw new Error(`${key} 必须是 JSON 对象或 null`);
+  }
+  out[key] = value;
+}
+function collectPoolConfig(){
+  const cfg = {};
+  for(const [id, key] of Object.entries(POOL_CFG_SELECTS)){
+    const value = document.getElementById(id).value;
+    if(value) cfg[key] = value;
+  }
+  for(const [id, key] of Object.entries(POOL_CFG_NUMBERS)){
+    readPoolNumber(id, key, cfg);
+  }
+  const weights = {};
+  for(const [id, key] of Object.entries(POOL_WEIGHT_NUMBERS)){
+    readPoolNumber(id, key, weights, `weights.${key}`);
+  }
+  if(Object.keys(weights).length) cfg.weights = weights;
+  const quarantine = {};
+  for(const [id, key] of Object.entries(POOL_QUARANTINE_NUMBERS)){
+    readPoolNumber(id, key, quarantine, `quarantine.${key}`);
+  }
+  if(Object.keys(quarantine).length) cfg.quarantine = quarantine;
+  readPoolJson("cfgMeta", "meta", cfg);
+  if(cfg.meta === null) cfg.meta = {};
+  const timezone = document.getElementById("cfgTimezone").value.trim();
+  if(timezone) cfg.timezone = timezone;
+  cfg.cooldown_consumer_only = document.getElementById("cfgCooldownConsumer").checked;
+  if(!poolCfgEditing){
+    const storage = document.getElementById("cfgStorage").value;
+    if(storage) cfg.storage = storage;
+    const coordination = document.getElementById("cfgCoordination").value;
+    if(coordination) cfg.coordination = coordination;
+    const secrets = document.getElementById("cfgSecrets").value
+      .split(",").map(s => s.trim()).filter(Boolean);
+    if(secrets.length) cfg.secret_fields = secrets;
+  }
+  return cfg;
+}
+function fillPoolConfig(cfg){
+  for(const [id, key] of Object.entries(POOL_CFG_SELECTS)){
+    document.getElementById(id).value = cfg[key] === undefined ? "" : String(cfg[key]);
+  }
+  for(const [id, key] of Object.entries(POOL_CFG_NUMBERS)){
+    const v = cfg[key];
+    document.getElementById(id).value = v === null || v === undefined ? "" : String(v);
+  }
+  const weights = cfg.weights || {};
+  for(const [id, key] of Object.entries(POOL_WEIGHT_NUMBERS)){
+    const v = weights[key];
+    document.getElementById(id).value = v === null || v === undefined ? "" : String(v);
+  }
+  const quarantine = cfg.quarantine || {};
+  for(const [id, key] of Object.entries(POOL_QUARANTINE_NUMBERS)){
+    const v = quarantine[key];
+    document.getElementById(id).value = v === null || v === undefined ? "" : String(v);
+  }
+  document.getElementById("cfgStorage").value = cfg.storage || "";
+  document.getElementById("cfgCoordination").value = cfg.coordination || "";
+  document.getElementById("cfgSecrets").value = (cfg.secret_fields || []).join(", ");
+  document.getElementById("cfgCooldownConsumer").checked = !!cfg.cooldown_consumer_only;
+  document.getElementById("cfgTimezone").value = cfg.timezone || "";
+  document.getElementById("cfgMeta").value = cfg.meta
+    ? JSON.stringify(cfg.meta, null, 2) : "";
+}
+function openPoolModal(){
+  poolCfgEditing = false;
+  document.getElementById("poolModalTitle").textContent = "新建资源池";
+  document.getElementById("poolName").value = "";
+  document.getElementById("poolName").disabled = false;
+  document.getElementById("poolKind").disabled = false;
+  document.getElementById("poolKindNote").textContent = "资源池类型决定可添加的资源字段，创建后不可修改。";
+  document.getElementById("poolDeleteBtn").style.display = "none";
+  document.getElementById("poolMaint").style.display = "none";
+  document.getElementById("poolSubmitBtn").textContent = "创建";
+  document.getElementById("poolAdvanced").open = false;
+  document.getElementById("poolDeploy").open = false;
+  for(const id of ["cfgStorage", "cfgCoordination", "cfgSecrets"]){
+    document.getElementById(id).disabled = false;
+  }
+  renderPoolKindOptions();
+  fillPoolConfig({});
+  showModal("poolModal");
+}
+function openPoolSettings(){
+  if(!currentPool) return;
+  const stat = poolStats[currentPool];
+  if(!stat) return flash("资源池状态尚未加载");
+  poolCfgEditing = true;
+  document.getElementById("poolModalTitle").textContent = "资源池设置";
+  document.getElementById("poolName").value = currentPool;
+  document.getElementById("poolName").disabled = true;
+  renderPoolKindOptions();
+  document.getElementById("poolKind").value = stat.kind || currentKind || "";
+  document.getElementById("poolKind").disabled = true;
+  document.getElementById("poolKindNote").textContent = "类型创建后不可修改；storage / coordination 不支持热更新。";
+  document.getElementById("poolDeleteBtn").style.display = "";
+  document.getElementById("poolMaint").style.display = "";
+  document.getElementById("poolSubmitBtn").textContent = "保存配置";
+  fillPoolConfig(stat.config || {});
+  for(const id of ["cfgStorage", "cfgCoordination", "cfgSecrets"]){
+    document.getElementById(id).disabled = true;
+  }
+  document.getElementById("poolDeploy").open = false;
+  document.getElementById("poolAdvanced").open = true;
+  showModal("poolModal");
+}
+async function submitPool(){
+  const name = document.getElementById("poolName").value.trim();
+  const kind = document.getElementById("poolKind").value;
+  if(!name) return flash("请输入池名");
+  let config;
+  try{
+    config = collectPoolConfig();
+  }catch(e){ return flash(e.message); }
+  try{
+    if(poolCfgEditing){
+      await api(`/pools/${enc(currentPool)}`, {
+        method:"PATCH", body: JSON.stringify({config})
+      });
+      flash("资源池配置已更新", "okk");
+      closeModal("poolModal");
+      await loadAll();
+    }else{
+      const body = {name, kind};
+      if(Object.keys(config).length) body.config = config;
+      await api("/pools", {method:"POST", body: JSON.stringify(body)});
+      flash(`资源池 ${name} 已创建`, "okk");
+      closeModal("poolModal");
+      currentPool = null;
+      await loadPools();
+      if(POOLS.some(p => p.name === name)) await selectPool(name);
+    }
+  }catch(e){ flash(e.message); }
+}
+async function deletePool(){
   if(!currentPool) return;
   const name = currentPool;
-  const stat = await api(`/pools/${encodeURIComponent(name)}`);
-  poolStats[name] = stat;
-  document.getElementById("poolMeta").textContent = `${stat.kind} · 健康 ${stat.avg_health ?? "-"}`;
-  const counts = stat.counts||{};
-  const k = document.getElementById("kpis");
+  const typed = prompt(`删除资源池 ${name}？此操作不可恢复。\n输入池名以确认：`);
+  if(typed !== name) return flash("已取消删除");
+  try{
+    await api(`/pools/${enc(name)}`, {method:"DELETE"});
+  }catch(e){
+    if(e.status !== 409) return flash(e.message);
+    if(!confirm("资源池仍含有资源。强制删除会移除池内全部资源，继续？")) return;
+    try{
+      await api(`/pools/${enc(name)}?force=true`, {method:"DELETE"});
+    }catch(e2){ return flash(e2.message); }
+  }
+  flash("资源池已删除", "okk");
+  closeModal("poolModal");
+  poolCfgEditing = false;
+  currentPool = null;
+  currentKind = null;
+  await loadPools();
+}
+async function drainPool(){
+  if(!currentPool) return;
+  if(!confirm(`排空 ${currentPool} 中所有可调度资源（idle / active / full）？排空后不再分配新租约。`)) return;
+  try{
+    const data = await api(`/pools/${enc(currentPool)}/drain`, {
+      method:"POST", body: JSON.stringify({reason:"ui drain"})
+    });
+    flash(`已排空 ${data.drained || 0} 个资源`, "okk");
+    if(data.errors && data.errors.length){
+      flash(`排空完成，${data.errors.length} 个失败：${data.errors[0].error}`);
+    }
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+async function runMaintenance(){
+  if(!currentPool) return;
+  const task = document.getElementById("maintTask").value;
+  if(!confirm(`在 ${currentPool} 执行维护任务 ${task}？`)) return;
+  try{
+    const data = await api(`/pools/${enc(currentPool)}/maintenance/${enc(task)}`, {method:"POST"});
+    flash(`${task} 完成：${JSON.stringify(data.result)}`, "okk");
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+
+function resetView(){
+  currentPool = null;
+  currentKind = null;
+  POOLS = [];
+  document.getElementById("poolTitle").textContent = "未选择资源池";
+  document.getElementById("poolKindPill").style.display = "none";
+  document.getElementById("addResourceBtn").disabled = true;
+  document.getElementById("addResourceBtn").textContent = "+ 添加资源";
+  document.getElementById("poolCfgBtn").disabled = true;
+  document.getElementById("drainBtn").disabled = true;
+  document.getElementById("kpis").innerHTML = "";
+  document.getElementById("distCard").style.display = "none";
+  document.getElementById("resMeta").textContent = "";
+  document.getElementById("resRows").innerHTML = '<tr><td colspan="8" class="empty">请选择或创建资源池</td></tr>';
+  document.getElementById("resPager").innerHTML = "";
+  document.getElementById("leaseRows").innerHTML = "";
+  document.getElementById("leaseMeta").textContent = "";
+  document.getElementById("batchList").innerHTML = "";
+  document.getElementById("batchMeta").textContent = "";
+  document.getElementById("evlist").innerHTML = "";
+  document.getElementById("evState").textContent = "未连接";
+  document.getElementById("metricBody").innerHTML = "";
+  document.getElementById("metricMeta").textContent = "";
+  document.getElementById("emptyHero").style.display = "";
+  stopEventStream();
+}
+
+async function loadAll(){
+  if(!currentPool){ resetView(); return; }
+  const name = currentPool;
+  try{
+    const stat = await api(`/pools/${enc(name)}`);
+    if(currentPool !== name) return;
+    poolStats[name] = stat;
+    currentKind = stat.kind;
+    POOLS = POOLS.map(p => p.name === name ? Object.assign({}, p, {
+      counts: stat.counts,
+      total: stat.total,
+      active_leases: stat.active_leases
+    }) : p);
+    document.querySelectorAll("#pools button[data-pool]").forEach(b => {
+      if(b.dataset.pool !== name) return;
+      const meta = b.querySelector(".meta");
+      const known = POOLS.find(p => p.name === name);
+      if(meta && known) meta.textContent = poolMetaLine(known);
+    });
+    document.getElementById("poolTitle").textContent = name;
+    const kp = document.getElementById("poolKindPill");
+    kp.textContent = stat.kind;
+    kp.style.display = "";
+    const add = document.getElementById("addResourceBtn");
+    add.disabled = false;
+    add.textContent = `+ 添加 ${stat.kind} 资源`;
+    document.getElementById("poolCfgBtn").disabled = false;
+    document.getElementById("drainBtn").disabled = false;
+    document.getElementById("emptyHero").style.display = "none";
+    renderKpis(stat);
+    renderDist(stat);
+    await loadResources();
+    await loadLeases();
+    await loadBatches();
+    await loadMetrics();
+  }catch(e){ flash(e.message); }
+}
+function renderKpis(stat){
+  const counts = stat.counts || {};
+  const bad = (counts.quarantined || 0) + (counts.banned || 0) + (counts.lost || 0);
+  const health = stat.avg_health === null || stat.avg_health === undefined
+    ? "-" : Math.round(Number(stat.avg_health) * 100) + "%";
   const cards = [
-    ["总量", stat.total], ["可分配", stat.allocatable], ["在租约", stat.active_leases],
-    ["等待", stat.waiting], ["隔离", counts.quarantined||0], ["封禁", counts.banned||0],
-    ["暂停", counts.suspended||0], ["配额耗尽", counts.quota_exhausted||0]
+    ["总量", stat.total || 0, ""],
+    ["可分配", stat.allocatable || 0, "ok"],
+    ["活跃租约", stat.active_leases || 0, ""],
+    ["等待中", stat.waiting || 0, stat.waiting ? "warn" : ""],
+    ["平均健康", health, ""],
+    ["异常资源", bad, bad ? "bad" : ""]
   ];
-  k.innerHTML = cards.map(([l,n])=>`<div class="kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
-  const entries = Object.entries(counts).filter(([,n])=>n>0);
-  document.getElementById("distCard").style.display = entries.length?"block":"none";
-  document.getElementById("distBar").innerHTML = entries.map(([s,n])=>`<span style="width:${(n/stat.total*100).toFixed(2)}%;background:${stateColors[s]||"#8b98a5"}" title="${s}: ${n}"></span>`).join("");
-  await loadResources();
-  await loadLeases();
+  document.getElementById("kpis").innerHTML = cards.map(([label, value, cls]) =>
+    `<div class="kpi ${cls}"><div class="n">${esc(value)}</div><div class="l">${label}</div></div>`
+  ).join("");
+}
+function renderDist(stat){
+  const counts = stat.counts || {};
+  const total = Number(stat.total) || 0;
+  const entries = Object.entries(counts).filter(([, n]) => n > 0);
+  const card = document.getElementById("distCard");
+  if(!entries.length){
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "";
+  document.getElementById("distMeta").textContent = `${total} 个资源 · ${entries.length} 种状态`;
+  document.getElementById("distBar").innerHTML = entries.map(([s, n]) =>
+    `<span style="width:${(n / total * 100).toFixed(2)}%;background:${STATE_COLOR[s] || "#8b98a5"}" title="${esc(s)}: ${n}"></span>`
+  ).join("");
+  document.getElementById("distLegend").innerHTML = entries.map(([s, n]) =>
+    `<span class="lg"><i style="background:${STATE_COLOR[s] || "#8b98a5"}"></i>${esc(STATE_LABEL[s] || s)} ${n}</span>`
+  ).join("");
+}
+
+function resetResourcePaging(){
+  resOffset = 0;
+  loadResources();
+}
+function goResourcePage(delta){
+  const next = resOffset + delta * resLimit;
+  if(next < 0) return;
+  resOffset = next;
+  loadResources();
+}
+function renderPager(){
+  const pages = Math.max(1, Math.ceil(resTotal / resLimit));
+  const page = Math.floor(resOffset / resLimit) + 1;
+  const from = resTotal ? resOffset + 1 : 0;
+  const to = Math.min(resOffset + resLimit, resTotal);
+  document.getElementById("resPager").innerHTML =
+    `<span>${from}-${to} / ${resTotal}</span>` +
+    `<button onclick="goResourcePage(-1)" ${page <= 1 ? "disabled" : ""}>上一页</button>` +
+    `<span>${page} / ${pages}</span>` +
+    `<button onclick="goResourcePage(1)" ${page >= pages ? "disabled" : ""}>下一页</button>`;
 }
 async function loadResources(){
   if(!currentPool) return;
   const name = currentPool;
-  const state = document.getElementById("fState").value.trim();
+  const qs = new URLSearchParams();
+  const state = document.getElementById("fState").value;
   const tag = document.getElementById("fTag").value.trim();
   const q = document.getElementById("fQ").value.trim();
-  const qs = new URLSearchParams();
+  const sortValue = document.getElementById("fSort").value;
+  resLimit = parseInt(document.getElementById("fLimit").value || "50", 10) || 50;
   if(state) qs.set("state", state);
   if(tag) qs.set("tag", tag);
   if(q) qs.set("q", q);
-  const data = await api(`/pools/${encodeURIComponent(name)}/resources?${qs}`);
-  const rows = document.getElementById("resRows");
-  rows.innerHTML = "";
-  for(const r of (data.resources||[])){
-    const tr = document.createElement("tr");
-    const tags = (r.tags||[]).map(t=>`<span class="tag">${t}</span>`).join("");
-    tr.innerHTML = `
-      <td class="id" title="${r.id}">${r.id}</td>
-      <td><span class="pill st-${r.state}"><i class="d"></i>${r.state}</span></td>
-      <td>${(r.health.score*100).toFixed(0)}%</td>
-      <td>${r.used_slots}/${r.max_slots}</td>
-      <td>${tags}</td>
-      <td></td>`;
-    tr.querySelectorAll("td").forEach(t=>{ t.style.verticalAlign="middle"; });
-    const td = tr.lastElementChild;
-    const btns = [
-      ["validate","validate"], ["ban","ban","danger"], ["unban","unban"],
-      ["suspend","suspend"], ["resume","resume"], ["top-up","top-up"],
-      ["revoke","revoke","danger"]
-    ];
-    for(const [label,act,cls] of btns){
-      const b=document.createElement("button"); b.textContent=label; if(cls)b.className=cls;
-      b.onclick=async ()=>{ if(act==="ban"&&!confirm(`封禁 ${r.id}?`))return; if(act==="revoke"&&!confirm(`强踢 ${r.id} 的租约?`))return; await doAction(act, r.id); };
-      td.appendChild(b);
+  if(sortValue){
+    const [sort, order] = sortValue.split(":");
+    qs.set("sort", sort);
+    qs.set("order", order);
+  }
+  qs.set("limit", resLimit);
+  qs.set("offset", resOffset);
+  try{
+    const data = await api(`/pools/${enc(name)}/resources?${qs}`);
+    if(currentPool !== name) return;
+    const resources = data.resources || [];
+    const counts = data.counts || {};
+    resTotal = Number(data.total) || 0;
+    if(resOffset >= resTotal && resTotal > 0){
+      resOffset = Math.max(0, (Math.ceil(resTotal / resLimit) - 1) * resLimit);
+      return loadResources();
     }
-    rows.appendChild(tr);
-  }
-  if(!(data.resources||[]).length) rows.innerHTML = '<tr><td colspan="6" class="empty">暂无资源</td></tr>';
-}
-async function doAction(action, rid){
-  try{
-    await api(`/pools/${encodeURIComponent(currentPool)}/resources/${encodeURIComponent(rid)}/${action}`, {method:"POST", body: JSON.stringify({reason:"ui"})});
-    flash(`${action} ${rid} 完成`, "okk"); await loadAll();
+    document.getElementById("resMeta").textContent =
+      `${resTotal} 条 · 可分配 ${(counts.idle || 0) + (counts.active || 0) + (counts.full || 0)}`;
+    const rows = document.getElementById("resRows");
+    if(!resources.length){
+      rows.innerHTML = '<tr><td colspan="8" class="empty">没有匹配的资源</td></tr>';
+      renderPager();
+      return;
+    }
+    rows.innerHTML = resources.map(r => {
+      const health = r.health && typeof r.health.score === "number"
+        ? Math.round(r.health.score * 100) + "%" : "-";
+      const quota = r.usage_quota === null || r.usage_quota === undefined
+        ? "-" : `${r.used_count || 0}/${r.usage_quota}`;
+      const expiry = r.expires_at ? fmtDate(r.expires_at) : "-";
+      const tags = (r.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join("") || '<span class="muted">-</span>';
+      const banned = r.state === "banned";
+      return `<tr>
+        <td class="id" title="${esc(r.id)}">${esc(r.id)}</td>
+        <td>${statePill(r.state)}</td>
+        <td>${health}</td>
+        <td>${r.used_slots}/${r.max_slots}</td>
+        <td>${esc(quota)}</td>
+        <td title="${esc(r.next_available_at ? "下次可用 " + fmtDate(r.next_available_at) : "")}">${esc(expiry)}</td>
+        <td>${tags}</td>
+        <td><div class="actions">
+          <button data-act="detail" data-rid="${esc(r.id)}">详情</button>
+          <button data-act="validate" data-rid="${esc(r.id)}">验活</button>
+          <button data-act="${banned ? "unban" : "ban"}" data-rid="${esc(r.id)}" class="${banned ? "" : "danger"}">${banned ? "解禁" : "封禁"}</button>
+          ${r.state === "archived"
+            ? `<button data-act="restore" data-rid="${esc(r.id)}">恢复</button>`
+            : r.state === "draining"
+              ? `<button data-act="cancel-drain" data-rid="${esc(r.id)}">撤销排空</button>`
+              : (r.state !== "lost"
+                ? `<button data-act="drain" data-rid="${esc(r.id)}" class="danger">排空</button>`
+                : "")}
+          ${r.used_slots > 0 ? `<button data-act="revoke" data-rid="${esc(r.id)}" class="danger">强制撤销</button>` : ""}
+        </div></td>
+      </tr>`;
+    }).join("");
+    renderPager();
   }catch(e){ flash(e.message); }
 }
-async function createPool(){
-  const name = document.getElementById("newPoolName").value.trim();
-  const kind = document.getElementById("newPoolKind").value;
-  if(!name) return flash("请输入池名");
+function resetFilters(){
+  document.getElementById("fState").value = "";
+  document.getElementById("fTag").value = "";
+  document.getElementById("fQ").value = "";
+  document.getElementById("fSort").value = "";
+  resOffset = 0;
+  loadResources();
+}
+
+async function quickAction(act, rid){
+  if(act === "ban" && !confirm(`封禁 ${rid}？`)) return;
+  if(act === "revoke" && !confirm(`强制回收 ${rid} 的租约？`)) return;
+  if(act === "drain" && !confirm(`排空 ${rid}？已有租约归还后自动归档。`)) return;
+  if(act === "cancel-drain" && !confirm(`撤销 ${rid} 的排空？资源将重新参与调度。`)) return;
+  if(act === "restore" && !confirm(`恢复归档资源 ${rid}？恢复后会立即验活。`)) return;
+  const path = act === "revoke"
+    ? `/pools/${enc(currentPool)}/resources/${enc(rid)}/revoke`
+    : `/pools/${enc(currentPool)}/resources/${enc(rid)}/${enc(act)}`;
   try{
-    await api("/pools", {method:"POST", body: JSON.stringify({name, kind})});
-    flash(`池 ${name} 已创建`, "okk");
-    document.getElementById("newPoolName").value="";
-    await loadPools();
+    const data = await api(path, {method:"POST", body: JSON.stringify({reason:"ui"})});
+    if(act === "validate" && data.validation){
+      const v = data.validation;
+      flash(v.alive
+        ? `${rid} 存活 · ${Math.round(v.latency_ms || 0)} ms`
+        : `${rid} 验活失败：${v.error || "unknown"}`,
+        v.alive ? "okk" : "err");
+    }else{
+      flash(`${rid} · ${act} 完成`, "okk");
+    }
+    await loadAll();
+    if(detailRid === rid) await refreshDetail();
   }catch(e){ flash(e.message); }
 }
-async function importResources(){
-  const raw = document.getElementById("importText").value.trim();
-  if(!raw) return flash("请输入要导入的内容");
-  let records;
-  if(raw.startsWith("[")){
-    try{ records = JSON.parse(raw); }catch(e){ return flash("JSON 解析失败"); }
-  }else{
-    records = raw.split("\n").map(line=>{
-      const parts = line.trim().split(/\s+/);
-      const [id, protocol, host, port, ...rest] = parts;
-      return {id, protocol: protocol||"http", host, port: port?Number(port):80, tags: (rest.join(",")||"").split(",").filter(Boolean)};
-    });
-  }
-  const mode = document.getElementById("importMode").value;
+
+async function loadLeases(){
+  if(!currentPool) return;
+  const name = currentPool;
+  const qs = new URLSearchParams();
+  const consumer = document.getElementById("leaseFilterConsumer").value.trim();
+  const rid = document.getElementById("leaseFilterRid").value.trim();
+  if(consumer) qs.set("consumer", consumer);
+  if(rid) qs.set("resource_id", rid);
+  const suffix = qs.toString() ? `?${qs}` : "";
   try{
-    const rep = await api(`/pools/${encodeURIComponent(currentPool)}/resources`, {
-      method:"POST", body: JSON.stringify({records, import_validate: mode}),
-      headers: {"Idempotency-Key": "imp-"+Date.now()}
-    });
-    flash(`导入完成 新增${rep.imported} 更新${rep.updated} 跳过${rep.skipped} 错误${rep.errors.length}`, "okk");
+    const data = await api(`/pools/${enc(name)}/leases${suffix}`);
+    if(currentPool !== name) return;
+    const leases = data.leases || [];
+    document.getElementById("leaseMeta").textContent =
+      leases.length ? `${leases.length} 个${suffix ? "（已筛选）" : ""}` : "";
+    const rows = document.getElementById("leaseRows");
+    if(!leases.length){
+      rows.innerHTML = '<tr><td colspan="7" class="empty">没有活跃租约</td></tr>';
+      return;
+    }
+    rows.innerHTML = leases.map(l => {
+      const used = l.use_limit === null || l.use_limit === undefined
+        ? String(l.used || 0) : `${l.used || 0}/${l.use_limit}`;
+      const overdue = l.expires_at && l.expires_at < Date.now() / 1000;
+      return `<tr title="${esc(l.trace_id || "")}">
+        <td class="id" title="${esc(l.resource_id)}">${esc(l.resource_id)}</td>
+        <td>${esc(l.consumer || "-")}</td>
+        <td>${l.priority || 0}</td>
+        <td>${l.slots}</td>
+        <td>${esc(used)}</td>
+        <td style="${overdue ? "color:var(--warn)" : ""}">${fmtTime(l.expires_at)}</td>
+        <td><div class="actions">
+          <button data-leaseview="${esc(l.token)}">详情</button>
+          <button data-renew="${esc(l.token)}">续租</button>
+          <button data-release="${esc(l.token)}" class="danger">归还</button>
+        </div></td>
+      </tr>`;
+    }).join("");
+  }catch(e){ flash(e.message); }
+}
+function clearLeaseFilters(){
+  document.getElementById("leaseFilterConsumer").value = "";
+  document.getElementById("leaseFilterRid").value = "";
+  loadLeases();
+}
+
+async function openLeaseDetail(token){
+  if(!currentPool) return;
+  const name = currentPool;
+  try{
+    const data = await api(`/pools/${enc(name)}/leases/${enc(token)}`);
+    if(currentPool !== name) return;
+    renderLeaseDetail(data.lease || {});
+    showModal("leaseModal");
+  }catch(e){
+    if(e.status === 404){
+      flash("租约已失效（可能已归还或过期）");
+      if(currentPool === name) loadLeases();
+    }else flash(e.message);
+  }
+}
+function renderLeaseDetail(l){
+  const payload = l.payload || {};
+  const masked = Object.keys(payload).length > 0 && Object.values(payload).every(v => v === "***");
+  const overdue = l.expires_at && l.expires_at < Date.now() / 1000;
+  const useLimit = l.use_limit === null || l.use_limit === undefined ? "不限" : String(l.use_limit);
+  const rows = [
+    ["token", l.token || "-"],
+    ["resource_id", l.resource_id || "-"],
+    ["consumer", l.consumer || "-"],
+    ["target", l.target || "-"],
+    ["slots", String(l.slots === undefined ? 0 : l.slots)],
+    ["priority", String(l.priority === undefined ? 0 : l.priority)],
+    ["use_limit", useLimit],
+    ["used", String(l.used || 0)],
+    ["started_at", fmtDate(l.started_at)],
+    ["expires_at", fmtDate(l.expires_at) + (overdue ? "（已过期）" : "")],
+    ["outcome", OUTCOME_LABEL[l.outcome] || l.outcome || "-"],
+    ["trace_id", l.trace_id || "-"]
+  ].map(([k, v]) => `<tr><td class="k">${esc(k)}</td><td class="mono">${esc(v)}</td></tr>`).join("");
+  const payloadRows = Object.keys(payload).length
+    ? Object.keys(payload).map(k => `<tr><td class="k">${esc(k)}</td><td>${esc(typeof payload[k] === "object" ? JSON.stringify(payload[k]) : payload[k])}</td></tr>`).join("")
+    : '<tr><td colspan="2" class="empty">无载荷</td></tr>';
+  document.getElementById("leaseModalMeta").textContent = overdue ? "已过期" : (l.resource_id || "");
+  document.getElementById("leaseModalBody").innerHTML =
+    `<table class="kvtable"><tbody>${rows}</tbody></table>` +
+    `<div class="block-h" style="margin-top:14px">载荷${masked ? "（已脱敏）" : ""}</div>` +
+    `<table class="kvtable"><tbody>${payloadRows}</tbody></table>`;
+}
+
+async function acquireLease(){
+  if(!currentPool) return flash("请先选择资源池");
+  const target = document.getElementById("leaseTarget").value.trim();
+  const tags = splitTags(document.getElementById("leaseTags").value);
+  const count = Math.max(1, parseInt(document.getElementById("leaseCount").value || "1", 10));
+  const nMin = numOrNull(document.getElementById("leaseNMin").value);
+  const useLimit = numOrNull(document.getElementById("leaseUseLimit").value);
+  const priority = numOrNull(document.getElementById("leasePriority").value);
+  const body = {
+    consumer: document.getElementById("leaseConsumer").value.trim() || null,
+    target: document.getElementById("leaseSite").value.trim() || null,
+    resource_id: target || null,
+    tags,
+    required_tag: document.getElementById("leaseRequiredTag").value.trim() || null,
+    affinity: document.getElementById("leaseAffinity").value.trim() || null,
+    probe: document.getElementById("leaseProbe").value.trim() || null,
+    trace_id: document.getElementById("leaseTrace").value.trim() || null,
+    slots: Math.max(1, parseInt(document.getElementById("leaseSlots").value || "1", 10)),
+    timeout: numOrNull(document.getElementById("leaseTimeout").value),
+    priority: priority === null ? 0 : Math.trunc(priority),
+    use_limit: useLimit === null ? null : Math.trunc(useLimit),
+    allow_duplicate: document.getElementById("leaseDup").checked,
+    ignore_cooldown: document.getElementById("leaseCooldown").checked
+  };
+  if(count > 1){
+    body.count = count;
+    body.mode = document.getElementById("leaseMode").value;
+    if(nMin !== null) body.n_min = Math.trunc(nMin);
+  }
+  try{
+    const idem = document.getElementById("leaseIdem").value.trim();
+    const opts = {method:"POST", body: JSON.stringify(body)};
+    if(idem) opts.headers = {"Idempotency-Key": idem};
+    const data = await api(`/pools/${enc(currentPool)}/leases`, opts);
+    const leases = data.leases || [];
+    document.getElementById("leaseResult").innerHTML = leases.map(l => `
+      <div class="lease-hit">
+        <div class="row"><b>${esc(l.resource_id)}</b><span class="muted">${esc(l.consumer || "-")} · ${l.slots} 槽 · 优先级 ${l.priority || 0} · 到期 ${fmtTime(l.expires_at)}</span></div>
+        <div class="row"><code>${esc(String(l.token || "").slice(0, 12))}…</code>
+          <button class="mini" data-release="${esc(l.token)}" data-outcome="ok">归还</button></div>
+      </div>`).join("");
+    flash(data.replayed
+      ? `幂等重放：${leases.length} 个租约（未重复扣减）`
+      : data.count > 1
+        ? `已获取 ${data.count}/${data.requested} 个租约（${data.mode}）`
+        : `已获取 ${leases.length} 个租约`, "okk");
     await loadAll();
   }catch(e){ flash(e.message); }
 }
-async function acquireLease(){
-  const body = {
-    consumer: document.getElementById("leaseConsumer").value || null,
-    target: document.getElementById("leaseTarget").value || null,
-    timeout: Number(document.getElementById("leaseTimeout").value) || 10
-  };
+function releaseOutcome(){
+  const sel = document.getElementById("leaseOutcome");
+  return sel && sel.value ? sel.value : "ok";
+}
+function releaseUsed(){
+  const raw = document.getElementById("leaseUsed").value.trim();
+  if(raw === "") return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+async function releaseConsumerLeases(){
+  if(!currentPool) return flash("请先选择资源池");
+  const fallback = document.getElementById("leaseFilterConsumer").value.trim()
+    || document.getElementById("leaseConsumer").value.trim() || "console";
+  const name = (prompt("归还哪个 consumer 的全部租约？", fallback) || "").trim();
+  if(!name) return;
+  const outcome = releaseOutcome();
+  if(!confirm(`确定归还「${name}」的全部租约（outcome=${OUTCOME_LABEL[outcome] || outcome}）？`)) return;
   try{
-    const data = await api(`/pools/${encodeURIComponent(currentPool)}/leases`, {method:"POST", body: JSON.stringify(body)});
-    const l = data.leases[0];
-    document.getElementById("leaseResult").innerHTML =
-      `已获取 <b>${l.resource_id}</b> · token <code>${l.token.slice(0,8)}…</code> · 载荷 ${JSON.stringify(l.payload)}` +
-      ` <button onclick="releaseLease('${l.token}')">归还</button>`;
+    const data = await api(
+      `/pools/${enc(currentPool)}/leases?consumer=${enc(name)}&outcome=${enc(outcome)}`,
+      {method:"DELETE"}
+    );
+    flash(data.count ? `已归还 ${data.count} 个租约` : `「${name}」没有活跃租约`,
+      data.count ? "okk" : "err");
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+async function releaseLease(tokenValue, outcome){
+  if(!currentPool) return;
+  const body = {outcome: outcome || releaseOutcome()};
+  const used = releaseUsed();
+  if(used !== null) body.used = used;
+  try{
+    await api(`/pools/${enc(currentPool)}/leases/${enc(tokenValue)}`, {
+      method:"DELETE", body: JSON.stringify(body)
+    });
+    flash(`租约已归还（${OUTCOME_LABEL[body.outcome] || body.outcome}）`, "okk");
+    document.querySelectorAll("#leaseResult [data-release]").forEach(b => {
+      if(b.dataset.release === tokenValue){
+        const hit = b.closest(".lease-hit");
+        if(hit) hit.remove();
+      }
+    });
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+async function renewLease(tokenValue){
+  if(!currentPool) return;
+  try{
+    const data = await api(`/pools/${enc(currentPool)}/leases/${enc(tokenValue)}/renew`, {method:"POST"});
+    flash(`租约已续期至 ${fmtTime(data.expires_at)}`, "okk");
     await loadLeases();
   }catch(e){ flash(e.message); }
 }
-async function releaseLease(token, outcome="ok"){
+
+async function loadBatches(){
+  if(!currentPool) return;
+  const name = currentPool;
   try{
-    await api(`/pools/${encodeURIComponent(currentPool)}/leases/${token}`, {method:"DELETE", body: JSON.stringify({outcome})});
-    document.getElementById("leaseResult").innerHTML = `已归还 ${token.slice(0,8)}…`;
-    await loadLeases(); await loadResources();
+    const data = await api(`/pools/${enc(name)}/batches`);
+    if(currentPool !== name) return;
+    const batches = data.batches || [];
+    document.getElementById("batchMeta").textContent =
+      batches.length ? `${batches.length} 个批次` : "";
+    const box = document.getElementById("batchList");
+    if(!batches.length){
+      box.innerHTML = '<div class="side-empty">暂无带批次标记的资源</div>';
+      return;
+    }
+    box.innerHTML = batches.map(b => {
+      const states = Object.entries(b.states || {}).map(([s, n]) =>
+        `<span class="lg"><i style="background:${STATE_COLOR[s] || "#8b98a5"}"></i>${esc(STATE_LABEL[s] || s)} ${n}</span>`
+      ).join("") || '<span class="muted">-</span>';
+      const id = String(b.batch_id || "");
+      return `<div class="batchrow">
+        <div class="row">
+          <code title="${esc(id)}">${esc(id.length > 16 ? id.slice(0, 16) + "…" : id)}</code>
+          <span class="muted">${b.total} 个 · ${esc(b.source || "-")}${b.created_at ? " · " + esc(fmtDate(b.created_at)) : ""}</span>
+        </div>
+        <div class="row">
+          <div class="fill" style="display:flex;gap:4px;flex-wrap:wrap">${states}</div>
+          <select class="mini-select" data-batch-action="${esc(id)}">
+            <option value="requalify">重新验活</option>
+            <option value="isolate">隔离</option>
+            <option value="retire">退休</option>
+          </select>
+          <button class="mini" data-job="${esc(id)}">验活进度</button>
+          <button class="mini danger" data-batch="${esc(id)}">批次召回</button>
+        </div>
+      </div>`;
+    }).join("");
   }catch(e){ flash(e.message); }
 }
-async function loadLeases(){
+async function recallBatch(batchId, action){
+  if(!currentPool || !batchId) return;
+  if(!confirm(`对批次 ${batchId} 执行 ${action}？`)) return;
+  try{
+    const data = await api(`/pools/${enc(currentPool)}/recall`, {
+      method:"POST",
+      body: JSON.stringify({batch_id: batchId, action, reason:"ui recall"})
+    });
+    const failed = (data.errors || []).length;
+    flash(`批次召回完成：处理 ${data.processed || 0} 个${failed ? `，${failed} 个失败` : ""}`,
+      failed ? "err" : "okk");
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+
+let auditRows = [];
+let auditHasOlder = false;
+function openAudit(){
+  document.getElementById("auditPool").value = currentPool || "";
+  document.getElementById("auditMeta").textContent = "";
+  document.getElementById("auditVerify").textContent = "";
+  document.getElementById("auditList").innerHTML = "";
+  auditRows = [];
+  auditHasOlder = false;
+  renderAudit();
+  showModal("auditModal");
+  loadAudit();
+}
+function auditQuery(){
+  const qs = new URLSearchParams();
+  const pool = document.getElementById("auditPool").value.trim();
+  const action = document.getElementById("auditAction").value.trim();
+  const rid = document.getElementById("auditRid").value.trim();
+  const operator = document.getElementById("auditOperator").value.trim();
+  if(pool) qs.set("pool", pool);
+  if(action) qs.set("action", action);
+  if(rid) qs.set("rid", rid);
+  if(operator) qs.set("operator", operator);
+  return qs;
+}
+function renderAudit(){
+  const btn = document.getElementById("auditOlderBtn");
+  if(btn) btn.disabled = !auditHasOlder;
+  const list = document.getElementById("auditList");
+  if(!auditRows.length){
+    list.innerHTML = '<div class="empty">没有匹配的审计记录</div>';
+    return;
+  }
+  list.innerHTML = auditRows.map(e => `<div class="ev" title="${esc(JSON.stringify(e.detail || {}))}">
+      <b>${esc(e.action)}</b><span>${esc(e.pool || "")}</span><span>${esc(e.rid || "")}</span>
+      <span>${esc(e.operator || "")}</span><span class="muted">${esc(e.reason || "")}</span>
+      <span class="t">#${esc(e.seq)} · ${esc(fmtDate(e.ts))}</span>
+    </div>`).join("");
+}
+function auditMeta(){
+  const oldest = auditRows.length ? auditRows[auditRows.length - 1].seq : null;
+  document.getElementById("auditMeta").textContent =
+    `${auditRows.length} 条${oldest !== null ? ` · 最早 #${oldest}` : ""}`;
+}
+async function loadAudit(){
+  const qs = auditQuery();
+  qs.set("tail", "true");
+  qs.set("limit", "300");
+  try{
+    const data = await api(`/audit?${qs}`);
+    auditRows = (data.entries || []).slice().reverse();
+    auditHasOlder = !!data.has_older;
+    auditMeta();
+    renderAudit();
+  }catch(e){ flash(e.message); }
+}
+async function loadOlderAudit(){
+  const oldest = auditRows.length ? auditRows[auditRows.length - 1].seq : null;
+  if(!auditHasOlder || oldest === null) return;
+  const qs = auditQuery();
+  qs.set("before_seq", String(oldest));
+  qs.set("limit", "300");
+  try{
+    const data = await api(`/audit?${qs}`);
+    const older = (data.entries || []).slice().reverse();
+    auditRows = auditRows.concat(older);
+    auditHasOlder = !!data.has_older;
+    auditMeta();
+    renderAudit();
+    if(!older.length) flash("没有更早的审计记录");
+  }catch(e){ flash(e.message); }
+}
+async function verifyAudit(){
+  try{
+    const data = await api("/audit/verify");
+    const el = document.getElementById("auditVerify");
+    el.textContent = data.ok
+      ? `哈希链完整 · ${data.entries} 条`
+      : `哈希链校验失败 · ${data.entries} 条`;
+    el.style.color = data.ok ? "var(--ok)" : "var(--bad)";
+  }catch(e){ flash(e.message); }
+}
+
+function addField(wrap, field, label, placeholder){
+  const el = document.createElement("label");
+  el.className = "field";
+  el.dataset.name = field.name;
+  el.dataset.type = field.type || "string";
+  if(field.required) el.dataset.required = "1";
+  const req = field.required ? '<i class="req">*</i>' : "";
+  el.innerHTML = `<span>${esc(label || field.name)}${req}</span>`;
+
+  let input;
+  if(field.type === "bool"){
+    const box = document.createElement("div");
+    box.className = "check";
+    box.style.marginTop = "0";
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(field.default);
+    box.appendChild(input);
+    const txt = document.createElement("span");
+    txt.textContent = "启用";
+    box.appendChild(txt);
+    el.appendChild(box);
+  }else{
+    const holder = document.createElement("div");
+    holder.className = field.secret ? "withpeek" : "";
+    input = document.createElement("input");
+    input.type = field.secret ? "password" : (field.type === "int" || field.type === "float" ? "number" : "text");
+    if(field.type === "float") input.step = "any";
+    if(field.type === "int") input.step = "1";
+    if(placeholder) input.placeholder = placeholder;
+    if(field.secret) input.autocomplete = "new-password";
+    if(field.default !== null && field.default !== undefined && field.default !== "") input.value = field.default;
+    holder.appendChild(input);
+    if(field.secret){
+      const peek = document.createElement("button");
+      peek.type = "button";
+      peek.textContent = "显示";
+      peek.onclick = () => {
+        const hidden = input.type === "password";
+        input.type = hidden ? "text" : "password";
+        peek.textContent = hidden ? "隐藏" : "显示";
+      };
+      holder.appendChild(peek);
+    }
+    el.appendChild(holder);
+  }
+  if(field.doc){
+    const small = document.createElement("small");
+    small.textContent = field.doc;
+    el.appendChild(small);
+  }
+  wrap.appendChild(el);
+  return input;
+}
+
+function openAddModal(){
+  if(!currentPool) return flash("请先选择资源池");
+  const t = typeOf(currentKind);
+  document.getElementById("addTitle").textContent = `添加 ${currentKind} 资源`;
+  document.getElementById("addSub").textContent = t
+    ? `${t.resource_class} · 默认并发 ${t.default_concurrency} · 字段来自服务端类型 schema`
+    : "该类型未公开字段 schema，请填写 JSON 载荷";
+  const wrap = document.getElementById("addFields");
+  wrap.innerHTML = "";
+  addField(wrap, {name:"id", type:"string", required:false, doc:"留空则由资源类型自动生成。"}, "资源 ID", "例如 us-001");
+  addField(wrap, {name:"tags", type:"tags", required:false, doc:"逗号或空格分隔，用于调度过滤。"}, "标签", "us,http");
+
+  if(t && t.fields.length){
+    for(const f of t.fields){
+      addField(wrap, {
+        name: f.name,
+        type: f.type,
+        required: f.required,
+        secret: f.secret,
+        default: f.default,
+        doc: f.doc
+      });
+    }
+  }else{
+    const el = document.createElement("label");
+    el.className = "field";
+    el.style.gridColumn = "1 / -1";
+    el.dataset.name = "__raw";
+    el.dataset.type = "raw";
+    el.innerHTML = '<span>载荷 JSON</span><textarea id="addRaw" placeholder=\'{"key":"value"}\'></textarea>';
+    wrap.appendChild(el);
+  }
+  document.getElementById("addValidate").checked = true;
+  document.getElementById("addAdvanced").open = false;
+  for(const id of ["addMaxSlots", "addUsageQuota", "addExpiresAt", "addMutex", "addWindowStart", "addWindowEnd", "addExtra"]){
+    document.getElementById(id).value = "";
+  }
+  showModal("addModal");
+}
+
+function collectAddRecord(){
+  const wrap = document.getElementById("addFields");
+  const rec = {};
+  let raw = null;
+  wrap.querySelectorAll("[data-name]").forEach(el => {
+    const name = el.dataset.name;
+    const type = el.dataset.type || "string";
+    const input = el.querySelector("input, textarea");
+    if(!input) return;
+    if(type === "raw"){
+      raw = input.value.trim();
+      return;
+    }
+    if(el.dataset.required && type !== "bool" && String(input.value).trim() === ""){
+      throw new Error(`请填写 ${name}`);
+    }
+    if(type === "tags"){
+      const tags = splitTags(input.value);
+      if(tags.length) rec.tags = tags;
+    }else if(type === "bool"){
+      rec[name] = input.checked;
+    }else{
+      const value = String(input.value).trim();
+      if(value === "") return;
+      if(type === "int"){
+        const n = parseInt(value, 10);
+        if(Number.isNaN(n)) throw new Error(`${name} 必须是整数`);
+        rec[name] = n;
+      }else if(type === "float"){
+        const n = Number(value);
+        if(Number.isNaN(n)) throw new Error(`${name} 必须是数字`);
+        rec[name] = n;
+      }else{
+        rec[name] = value;
+      }
+    }
+  });
+  if(raw){
+    let extra;
+    try{ extra = JSON.parse(raw); }catch(e){ throw new Error("载荷 JSON 解析失败"); }
+    if(extra && typeof extra === "object" && !Array.isArray(extra)) Object.assign(rec, extra);
+    else throw new Error("载荷 JSON 必须是对象");
+  }
+  Object.assign(rec, collectAddScheduling(rec));
+  return rec;
+}
+
+function collectAddScheduling(rec){
+  const sched = {};
+  const slots = numOrNull(document.getElementById("addMaxSlots").value);
+  if(slots !== null){
+    const n = Math.trunc(slots);
+    if(n < 1) throw new Error("max_slots 必须 >= 1");
+    sched.max_slots = n;
+  }
+  const quota = numOrNull(document.getElementById("addUsageQuota").value);
+  if(quota !== null){
+    const n = Math.trunc(quota);
+    if(n < 0) throw new Error("usage_quota 必须 >= 0");
+    sched.usage_quota = n;
+  }
+  const expires = localInputToEpoch(document.getElementById("addExpiresAt").value);
+  if(expires !== null) sched.expires_at = expires;
+  const mutex = document.getElementById("addMutex").value.trim();
+  if(mutex) sched.mutex_group = mutex;
+  const start = document.getElementById("addWindowStart").value.trim();
+  const end = document.getElementById("addWindowEnd").value.trim();
+  if(start || end){
+    if(!start || !end) throw new Error("可用时段需要同时填写开始与结束");
+    sched.schedule_window = [start, end];
+  }
+  const rawExtra = document.getElementById("addExtra").value.trim();
+  if(rawExtra){
+    let extra;
+    try{ extra = JSON.parse(rawExtra); }catch(e){ throw new Error("自定义字段 JSON 解析失败"); }
+    if(!extra || typeof extra !== "object" || Array.isArray(extra)){
+      throw new Error("自定义字段 JSON 必须是对象");
+    }
+    for(const [k, v] of Object.entries(extra)){
+      if(ADD_RESERVED.includes(k)){
+        if(!(k in sched)) sched[k] = v;
+      }else if(!(k in rec)){
+        rec[k] = v;
+      }
+    }
+  }
+  return sched;
+}
+
+async function submitAdd(){
+  const btn = document.getElementById("addSubmit");
+  let record;
+  try{
+    record = collectAddRecord();
+  }catch(e){ return flash(e.message); }
+  const validate = document.getElementById("addValidate").checked;
+  btn.disabled = true;
+  try{
+    const report = await api(`/pools/${enc(currentPool)}/resources`, {
+      method:"POST",
+      body: JSON.stringify({
+        records: [record],
+        import_validate: validate ? "on_import" : "none",
+        source: "ui"
+      })
+    });
+    if(report.errors && report.errors.length){
+      const first = report.errors[0];
+      flash(`添加失败：${first.error || JSON.stringify(first)}`);
+      return;
+    }
+    flash(report.updated ? "资源已更新" : (validate ? "资源已添加，校验结果见状态" : "资源已添加"), "okk");
+    closeModal("addModal");
+    await loadAll();
+  }catch(e){ flash(e.message); }
+  finally{ btn.disabled = false; }
+}
+
+async function fetchResource(rid, secrets){
+  return api(`/pools/${enc(currentPool)}/resources/${enc(rid)}` + (secrets ? "?include_secrets=true" : ""));
+}
+
+async function openDetail(rid){
   if(!currentPool) return;
   try{
-    const data = await api(`/pools/${encodeURIComponent(currentPool)}/leases`);
-    document.getElementById("activeLeases").innerHTML =
-      "活跃租约: " + (data.leases||[]).map(l=>`<b>${l.resource_id}</b>@${l.consumer||"-"}(${l.slots})`).join(", ") || "无";
-  }catch(e){}
+    detailRid = rid;
+    detailPlain = false;
+    detailEditing = false;
+    detailData = await fetchResource(rid, false);
+    renderDetail();
+    showModal("detailModal");
+  }catch(e){ flash(e.message); }
 }
-function addEvent(ev){
+
+async function refreshDetail(){
+  if(!detailRid || !currentPool) return;
+  const rid = detailRid;
+  const plain = detailPlain;
+  try{
+    detailData = await fetchResource(rid, plain);
+    detailPlain = plain && !looksMasked(detailData.payload);
+    renderDetail();
+  }catch(e){
+    if(e.status === 404) closeModal("detailModal");
+    else flash(e.message);
+  }
+}
+
+function looksMasked(payload){
+  const values = Object.values(payload || {});
+  return values.length > 0 && values.every(v => v === "***");
+}
+
+function renderDetail(){
+  const d = detailData;
+  if(!d) return;
+  document.getElementById("detailTitle").textContent = d.id;
+  document.getElementById("detailState").innerHTML = statePill(d.state) +
+    ` <span class="muted" style="font-size:12px">${esc(d.kind)}</span>`;
+  const masked = !detailPlain && looksMasked(d.payload);
+  const health = d.health || {};
+  const score = typeof health.score === "number" ? Math.round(health.score * 100) + "%" : "-";
+  const latency = health.last_latency_ms === null || health.last_latency_ms === undefined
+    ? "-" : Math.round(health.last_latency_ms) + " ms";
+  const quota = d.usage_quota === null || d.usage_quota === undefined
+    ? "-" : `${d.used_count || 0}/${d.usage_quota}`;
+  const payload = d.payload || {};
+  const payloadRows = Object.keys(payload).length
+    ? Object.keys(payload).map(k => `<tr><td class="k">${esc(k)}</td><td>${esc(typeof payload[k] === "object" ? JSON.stringify(payload[k]) : payload[k])}</td></tr>`).join("")
+    : '<tr><td colspan="2" class="empty">无载荷</td></tr>';
+  const tags = (d.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join("") || '<span class="muted">无标签</span>';
+  const leases = Object.entries(d.leases || {});
+  const leaseRows = leases.length
+    ? leases.map(([tok, l]) => `<tr><td class="mono" title="${esc(tok)}">${esc(tok.slice(0, 12))}…</td><td>${esc(l.consumer || "-")}</td><td>${l.slots}</td><td>${fmtTime(l.expires_at)}</td></tr>`).join("")
+    : '<tr><td colspan="4" class="empty">无租约</td></tr>';
+  const siteFailures = Object.entries(d.site_failures || {});
+  const quotaPlan = d.quota || {};
+  const window = Array.isArray(d.schedule_window) && d.schedule_window.length === 2
+    ? `${d.schedule_window[0]} – ${d.schedule_window[1]}` : "-";
+  const schedRows = [
+    ["expires_at", d.expires_at === null || d.expires_at === undefined ? "-" : fmtDate(d.expires_at)],
+    ["next_available_at", d.next_available_at === null || d.next_available_at === undefined ? "-" : fmtDate(d.next_available_at)],
+    ["mutex_group", d.mutex_group || "-"],
+    ["schedule_window", window],
+    ["usage_quota", d.usage_quota === null || d.usage_quota === undefined ? "不限" : String(d.usage_quota)],
+    ["used_count", String(d.used_count || 0)],
+    ["quota.plan", d.quota ? `${quotaPlan.used || 0}/${quotaPlan.limit || 0}${quotaPlan.reset_at ? " · 重置 " + fmtDate(quotaPlan.reset_at) : ""}` : "-"]
+  ].map(([k, v]) => `<tr><td class="k">${esc(k)}</td><td>${esc(v)}</td></tr>`).join("");
+  const healthRows = [
+    ["score", score],
+    ["samples", String(health.samples || 0)],
+    ["last_checked_at", health.last_checked_at ? fmtDate(health.last_checked_at) : "-"],
+    ["consecutive_failures", String(health.consecutive_failures || 0)],
+    ["last_error", health.last_error || "-"]
+  ].map(([k, v]) => `<tr><td class="k">${esc(k)}</td><td>${esc(v)}</td></tr>`).join("");
+
+  const acts = [["validate", "验活"]];
+  if(d.state === "banned") acts.push(["unban", "解禁"]);
+  else acts.push(["ban", "封禁"]);
+  if(d.state === "suspended") acts.push(["resume", "恢复"]);
+  else acts.push(["suspend", "暂停"]);
+  if(d.state !== "archived" && d.state !== "draining" && d.state !== "lost"){
+    acts.push(["drain", "排空"]);
+  }
+  if(d.state === "draining") acts.push(["cancel-drain", "撤销排空"]);
+  if(d.state === "archived") acts.push(["restore", "恢复归档"]);
+  acts.push(["admin-state", "强制状态"]);
+  acts.push(["move", "迁移池"]);
+  acts.push(["top-up", "补充配额"]);
+  if(Number(d.used_slots) > 0) acts.push(["revoke", "强制回收"]);
+
+  const body = document.getElementById("detailBody");
+  body.innerHTML = `
+    <div class="kv">
+      <div class="box"><div class="l">健康分</div><div class="v">${score}</div></div>
+      <div class="box"><div class="l">最近延迟</div><div class="v">${latency}</div></div>
+      <div class="box"><div class="l">槽位</div><div class="v">${d.used_slots}/${d.max_slots}</div></div>
+      <div class="box"><div class="l">使用 / 配额</div><div class="v">${esc(quota)}</div></div>
+      <div class="box"><div class="l">到期</div><div class="v" style="font-size:12px">${esc(d.expires_at ? fmtDate(d.expires_at) : "不过期")}</div></div>
+      <div class="box"><div class="l">版本</div><div class="v">v${esc(d.version)}</div></div>
+    </div>
+
+    <div class="block-h">操作</div>
+    <div class="actions detail-actions">
+      ${acts.map(([act, label]) => `<button data-dact="${act}" class="${act === "ban" || act === "revoke" || act === "drain" ? "danger" : ""}">${label}</button>`).join("")}
+    </div>
+
+    ${masked ? `<div class="lock"><span>载荷已脱敏，仅显示键名。</span><button class="mini" data-reveal="1">查看明文</button></div>` : ""}
+
+    <div class="block-h">调度属性</div>
+    <table class="kvtable"><tbody>${schedRows}</tbody></table>
+
+    <div class="block-h">健康</div>
+    <table class="kvtable"><tbody>${healthRows}</tbody></table>
+
+    <div class="block-h">载荷</div>
+    <table class="kvtable"><tbody>${payloadRows}</tbody></table>
+
+    <div class="block-h">标签</div>
+    <div>${tags}</div>
+
+    ${siteFailures.length ? `<div class="block-h">站点故障</div><div>${siteFailures.map(([site, f]) => `<span class="tag">${esc(site)} ×${esc(f.count)}${f.until ? " 至 " + esc(fmtDate(f.until)) : ""}</span>`).join("")}</div>` : ""}
+
+    <div class="block-h">租约</div>
+    <table class="small"><thead><tr><th>token</th><th>consumer</th><th>槽</th><th>到期</th></tr></thead><tbody>${leaseRows}</tbody></table>
+
+    <div class="block-h">元数据</div>
+    <pre class="mono muted" style="white-space:pre-wrap;word-break:break-all;font-size:11px">${esc(JSON.stringify(d.meta || {}, null, 2))}</pre>
+  `;
+
+  if(detailEditing){
+    const edit = document.createElement("div");
+    edit.id = "editBox";
+    edit.innerHTML = `
+      <div class="block-h">编辑资源</div>
+      <div class="formgrid">
+        <label class="field"><span>标签</span><input id="editTags" value="${esc((d.tags || []).join(","))}" placeholder="us,http"></label>
+        <label class="field"><span>最大槽位</span><input id="editSlots" type="number" min="1" value="${esc(d.max_slots)}"></label>
+        <label class="field"><span>usage_quota</span><input id="editQuota" type="number" min="0" placeholder="留空不变" value="${d.usage_quota === null || d.usage_quota === undefined ? "" : esc(d.usage_quota)}"></label>
+        <label class="field"><span>expires_at</span><input id="editExpires" type="datetime-local" value="${esc(epochToLocalInput(d.expires_at))}"></label>
+        <label class="field"><span>mutex_group</span><input id="editMutex" value="${esc(d.mutex_group || "")}" placeholder="留空不变"></label>
+        <label class="field"><span>可用时段开始</span><input id="editWinStart" type="time" value="${esc(Array.isArray(d.schedule_window) ? d.schedule_window[0] : "")}"></label>
+        <label class="field"><span>可用时段结束</span><input id="editWinEnd" type="time" value="${esc(Array.isArray(d.schedule_window) ? d.schedule_window[1] : "")}"></label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label class="check" style="margin-top:0"><input id="editClearQuota" type="checkbox"> 清除配额</label>
+        <label class="check" style="margin-top:0"><input id="editClearExpires" type="checkbox"> 清除过期时间</label>
+        <label class="check" style="margin-top:0"><input id="editClearMutex" type="checkbox"> 清除互斥组</label>
+        <label class="check" style="margin-top:0"><input id="editClearWindow" type="checkbox"> 清除时段</label>
+      </div>
+      <label class="field" style="margin-top:10px"><span>载荷 JSON（整体替换）</span><textarea id="editPayload">${esc(JSON.stringify(payload, null, 2))}</textarea><small>更新会整体替换 payload；留空的调度字段保持不变，勾选“清除”才会置空。</small></label>
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        <button onclick="cancelEdit()">取消编辑</button>
+        <button class="primary" onclick="saveEdit()">保存</button>
+      </div>
+    `;
+    body.appendChild(edit);
+  }
+
+  document.getElementById("detailFoot").innerHTML = `
+    <button onclick="closeModal('detailModal')">关闭</button>
+    <button onclick="beginEdit()">编辑</button>
+    <button class="danger" onclick="archiveDetail()">归档</button>
+  `;
+
+  body.querySelectorAll("[data-dact]").forEach(b => {
+    b.onclick = () => performDetailAction(b.dataset.dact);
+  });
+  const reveal = body.querySelector("[data-reveal]");
+  if(reveal) reveal.onclick = revealPayload;
+  if(detailEditing){
+    const payloadBox = document.getElementById("editPayload");
+    if(payloadBox) payloadBox.style.minHeight = "200px";
+  }
+}
+
+async function revealPayload(){
+  if(!detailRid) return;
+  try{
+    detailData = await fetchResource(detailRid, true);
+    detailPlain = !looksMasked(detailData.payload);
+    renderDetail();
+    if(!detailPlain) flash("当前密钥无权查看明文载荷");
+  }catch(e){ flash(e.message); }
+}
+
+async function performDetailAction(act){
+  if(!detailRid || !currentPool) return;
+  const rid = detailRid;
+  if(act === "ban" && !confirm(`封禁 ${rid}？`)) return;
+  if(act === "revoke" && !confirm(`强制回收 ${rid} 的租约？`)) return;
+  if(act === "drain" && !confirm(`排空 ${rid}？已有租约归还后自动归档。`)) return;
+  if(act === "cancel-drain" && !confirm(`撤销 ${rid} 的排空？资源将重新参与调度。`)) return;
+  if(act === "restore" && !confirm(`恢复归档资源 ${rid}？恢复后会立即验活。`)) return;
+  let body = {reason:"ui"};
+  if(act === "top-up"){
+    const raw = prompt("补充多少个使用配额？", "1");
+    if(raw === null) return;
+    const amount = parseInt(raw, 10);
+    if(!Number.isFinite(amount) || amount < 1) return flash("配额数量必须是正整数");
+    body = {amount, reason:"ui"};
+  }
+  if(act === "admin-state"){
+    const target = prompt(`强制状态：${ADMIN_TARGETS.join(" / ")}`, "idle");
+    if(target === null) return;
+    if(!ADMIN_TARGETS.includes(target)) return flash("不支持的强制状态");
+    body = {target, reason:"ui admin"};
+  }
+  let path;
+  if(act === "move"){
+    const others = POOLS.filter(p => p.name !== currentPool);
+    if(!others.length) return flash("没有其他资源池可迁移");
+    const target = prompt(`迁移到哪个资源池？可选：${others.map(p => p.name).join(", ")}`, others[0].name);
+    if(target === null) return;
+    if(!others.some(p => p.name === target)) return flash("目标资源池不存在");
+    try{
+      await api(`/pools/${enc(currentPool)}/resources/${enc(rid)}/move`, {
+        method:"POST", body: JSON.stringify({target_pool: target, reason:"ui move"})
+      });
+      flash(`${rid} 已迁移到 ${target}`, "okk");
+      closeModal("detailModal");
+      await loadPools();
+      await selectPool(target);
+    }catch(e){ flash(e.message); }
+    return;
+  }
+  if(act === "revoke"){
+    path = `/pools/${enc(currentPool)}/resources/${enc(rid)}/revoke`;
+  }else if(act === "admin-state"){
+    path = `/pools/${enc(currentPool)}/resources/${enc(rid)}/admin-state`;
+  }else{
+    path = `/pools/${enc(currentPool)}/resources/${enc(rid)}/${enc(act)}`;
+  }
+  try{
+    const data = await api(path, {method:"POST", body: JSON.stringify(body)});
+    if(act === "validate" && data.validation){
+      const v = data.validation;
+      flash(v.alive
+        ? `${rid} 存活 · ${Math.round(v.latency_ms || 0)} ms`
+        : `${rid} 验活失败：${v.error || "unknown"}`,
+        v.alive ? "okk" : "err");
+    }else{
+      flash(`${rid} · ${act} 完成`, "okk");
+    }
+    await refreshDetail();
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+
+async function archiveDetail(){
+  if(!detailRid || !currentPool) return;
+  if(!confirm(`归档 ${detailRid}？归档后不再参与调度。`)) return;
+  try{
+    const data = await api(`/pools/${enc(currentPool)}/resources/${enc(detailRid)}`, {
+      method:"DELETE", body: JSON.stringify({reason:"ui"})
+    });
+    flash(data && data.state === "draining" ? "资源有活跃租约，已进入排空" : "资源已归档", "okk");
+    closeModal("detailModal");
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+
+async function beginEdit(){
+  if(!detailRid || !currentPool) return;
+  if(!detailPlain){
+    try{
+      detailData = await fetchResource(detailRid, true);
+      detailPlain = !looksMasked(detailData.payload);
+    }catch(e){ return flash("无法读取明文载荷：" + e.message); }
+  }
+  if(!detailPlain) return flash("当前密钥无权编辑该资源的载荷");
+  detailEditing = true;
+  renderDetail();
+  const box = document.getElementById("editBox");
+  if(box) box.scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+function cancelEdit(){
+  detailEditing = false;
+  renderDetail();
+}
+async function saveEdit(){
+  if(!detailRid || !currentPool) return;
+  const tags = splitTags(document.getElementById("editTags").value);
+  const slots = numOrNull(document.getElementById("editSlots").value);
+  let payload;
+  try{
+    payload = JSON.parse(document.getElementById("editPayload").value || "{}");
+  }catch(e){ return flash("载荷 JSON 解析失败"); }
+  if(!payload || typeof payload !== "object" || Array.isArray(payload)){
+    return flash("载荷 JSON 必须是对象");
+  }
+  const body = {payload, tags, reason:"ui"};
+  if(slots !== null) body.max_slots = Math.trunc(slots);
+
+  const quotaRaw = document.getElementById("editQuota").value.trim();
+  if(document.getElementById("editClearQuota").checked){
+    body.usage_quota = null;
+  }else if(quotaRaw !== ""){
+    const quota = parseInt(quotaRaw, 10);
+    if(!Number.isFinite(quota) || quota < 0) return flash("usage_quota 必须是非负整数");
+    body.usage_quota = quota;
+  }
+
+  if(document.getElementById("editClearExpires").checked){
+    body.expires_at = null;
+  }else{
+    const expires = localInputToEpoch(document.getElementById("editExpires").value);
+    if(expires !== null) body.expires_at = expires;
+  }
+
+  const mutexRaw = document.getElementById("editMutex").value.trim();
+  if(document.getElementById("editClearMutex").checked){
+    body.mutex_group = null;
+  }else if(mutexRaw){
+    body.mutex_group = mutexRaw;
+  }
+
+  if(document.getElementById("editClearWindow").checked){
+    body.schedule_window = null;
+  }else{
+    const start = document.getElementById("editWinStart").value.trim();
+    const end = document.getElementById("editWinEnd").value.trim();
+    if(start || end){
+      if(!start || !end) return flash("可用时段需要同时填写开始与结束");
+      body.schedule_window = [start, end];
+    }
+  }
+
+  try{
+    await api(`/pools/${enc(currentPool)}/resources/${enc(detailRid)}`, {
+      method:"PUT",
+      body: JSON.stringify(body)
+    });
+    flash("资源已更新", "okk");
+    detailEditing = false;
+    await refreshDetail();
+    await loadAll();
+  }catch(e){ flash(e.message); }
+}
+
+function connectEvents(name){
+  stopEventStream();
+  const status = document.getElementById("evState");
+  evPaused = false;
+  document.getElementById("evPauseBtn").textContent = "暂停";
+  status.textContent = token() ? "轮询中…" : "连接中…";
+  if(token()){
+    // EventSource cannot attach an Authorization header, so fall back to the
+    // replayable history endpoint whenever an API key is configured.
+    startEventPolling(name);
+    return;
+  }
+  const es = new EventSource(`/pools/${enc(name)}/events?after_seq=${evCursor}`);
+  es.onopen = () => { if(ev === es) status.textContent = "实时"; };
+  es.onmessage = (m) => {
+    if(ev !== es) return;
+    try{
+      const item = JSON.parse(m.data);
+      if(evPaused) return;
+      if(item.seq && item.seq <= evCursor) return;
+      if(item.seq) evCursor = item.seq;
+      addEvent(item);
+      scheduleReload();
+    }catch(e){}
+  };
+  es.onerror = () => {
+    if(ev !== es) return;
+    es.close();
+    ev = null;
+    status.textContent = "轮询回退…";
+    startEventPolling(name);
+  };
+  ev = es;
+}
+function stopEventStream(){
+  if(ev){ ev.close(); ev = null; }
+  if(evPollTimer){ clearInterval(evPollTimer); evPollTimer = null; }
+}
+function startEventPolling(name){
+  if(evPollTimer) clearInterval(evPollTimer);
+  evPollTimer = setInterval(() => { pollEvents(name); }, 1500);
+  pollEvents(name);
+}
+let evLoading = false;
+async function pollEvents(name, force){
+  if(evLoading || !currentPool || currentPool !== name) return;
+  if(evPaused && !force) return;
+  evLoading = true;
+  try{
+    let sawEvent = false;
+    for(let page = 0; page < 5; page++){
+      const data = await api(
+        `/pools/${enc(name)}/events/history?after_seq=${evCursor}&limit=200`
+      );
+      const items = data.events || [];
+      if(!items.length) break;
+      for(const item of items){
+        if(item.seq && item.seq <= evCursor) continue;
+        if(item.seq) evCursor = item.seq;
+        addEvent(item);
+        sawEvent = true;
+      }
+      if(items.length < 200) break;
+    }
+    if(sawEvent) scheduleReload();
+    const status = document.getElementById("evState");
+    if(currentPool === name) status.textContent = evPaused ? "已暂停" : "轮询";
+  }catch(e){
+    const status = document.getElementById("evState");
+    if(currentPool === name) status.textContent = "轮询失败：" + e.message;
+  }finally{
+    evLoading = false;
+  }
+}
+function togglePauseEvents(){
+  evPaused = !evPaused;
+  document.getElementById("evPauseBtn").textContent = evPaused ? "继续" : "暂停";
+  const status = document.getElementById("evState");
+  if(evPaused){
+    status.textContent = "已暂停";
+  }else{
+    status.textContent = "轮询中…";
+    if(currentPool) pollEvents(currentPool, true);
+  }
+}
+function clearEvents(){
+  document.getElementById("evlist").innerHTML = "";
+}
+function replayEvents(){
+  clearEvents();
+  evCursor = 0;
+  if(currentPool) pollEvents(currentPool, true);
+}
+function scheduleReload(){
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => { loadAll(); }, 600);
+}
+function eventMatches(item){
+  const type = document.getElementById("evType").value.trim().toLowerCase();
+  const rid = document.getElementById("evRid").value.trim().toLowerCase();
+  if(type && !String(item.type || "").toLowerCase().includes(type)) return false;
+  if(rid && !String(item.rid || "").toLowerCase().includes(rid)) return false;
+  return true;
+}
+function addEvent(item){
+  if(evPaused || !eventMatches(item)) return;
   const list = document.getElementById("evlist");
+  const type = item.type || "event";
+  const color = /fail|ban|lost|error/.test(type) ? "#ef4444"
+    : /lease|acquire|release/.test(type) ? "#22c55e"
+    : /created|import|validate/.test(type) ? "#3b82f6" : "#8b98a5";
   const div = document.createElement("div");
-  div.innerHTML = `<b>${ev.type}</b> ${ev.rid||""} <span class="muted">${new Date(ev.ts*1000).toLocaleTimeString()}</span>`;
+  div.className = "ev";
+  div.title = JSON.stringify(item.data || {});
+  div.innerHTML =
+    `<i class="dot" style="width:7px;height:7px;border-radius:50%;background:${color};display:inline-block;flex:0 0 auto"></i>` +
+    `<b>${esc(type)}</b><span>${esc(item.rid || "")}</span>` +
+    `<span class="t">${esc(fmtTime(item.ts))}</span>`;
   list.prepend(div);
-  while(list.children.length>200) list.lastElementChild.remove();
+  while(list.children.length > 200) list.lastElementChild.remove();
 }
+
+document.getElementById("resRows").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]");
+  if(!b) return;
+  if(b.dataset.act === "detail") openDetail(b.dataset.rid);
+  else quickAction(b.dataset.act, b.dataset.rid);
+});
+document.getElementById("leaseRows").addEventListener("click", (e) => {
+  const view = e.target.closest("button[data-leaseview]");
+  if(view){ openLeaseDetail(view.dataset.leaseview); return; }
+  const renew = e.target.closest("button[data-renew]");
+  if(renew){ renewLease(renew.dataset.renew); return; }
+  const b = e.target.closest("button[data-release]");
+  if(b) releaseLease(b.dataset.release, b.dataset.outcome);
+});
+document.getElementById("leaseResult").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-release]");
+  if(b) releaseLease(b.dataset.release, b.dataset.outcome || "ok");
+});
+document.getElementById("batchList").addEventListener("click", (e) => {
+  const jobBtn = e.target.closest("button[data-job]");
+  if(jobBtn){ openValidateJob(jobBtn.dataset.job); return; }
+  const b = e.target.closest("button[data-batch]");
+  if(!b) return;
+  const batchId = b.dataset.batch;
+  const sel = Array.from(document.querySelectorAll("#batchList select[data-batch-action]"))
+    .find(s => s.dataset.batchAction === batchId);
+  recallBatch(batchId, sel ? sel.value : "requalify");
+});
+document.getElementById("poolName").addEventListener("keydown", (e) => {
+  if(e.key === "Enter") submitPool();
+});
+document.getElementById("addFields").addEventListener("keydown", (e) => {
+  if(e.key === "Enter" && e.target.tagName === "INPUT"){ e.preventDefault(); submitAdd(); }
+});
+document.getElementById("fTag").addEventListener("keydown", (e) => { if(e.key === "Enter") loadResources(); });
+document.getElementById("fQ").addEventListener("keydown", (e) => { if(e.key === "Enter") loadResources(); });
+for(const id of ["evType", "evRid"]){
+  document.getElementById(id).addEventListener("change", replayEvents);
+  document.getElementById(id).addEventListener("keydown", (e) => {
+    if(e.key === "Enter") replayEvents();
+  });
+}
+for(const id of ["auditPool", "auditAction", "auditRid", "auditOperator"]){
+  document.getElementById(id).addEventListener("keydown", (e) => {
+    if(e.key === "Enter") loadAudit();
+  });
+}
+document.getElementById("restoreFile").addEventListener("change", (e) => {
+  readRestoreFile(e.target);
+});
+document.querySelectorAll(".modal").forEach(m => {
+  m.addEventListener("mousedown", (e) => { if(e.target === m) closeModal(m.id); });
+});
+document.addEventListener("keydown", (e) => { if(e.key === "Escape") closeAllModals(); });
+
 (async function init(){
   document.getElementById("apiKey").value = token();
-  try{ await loadPools(); setInterval(loadAll, 10000); }catch(e){ flash(e.message); }
+  try{
+    await loadTypes();
+    await loadPools();
+  }catch(e){ flash(e.message); }
+  loadService();
+  setInterval(() => { if(currentPool) loadAll(); }, POOL_RELOAD_MS);
 })();
 </script>
 </body>

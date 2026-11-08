@@ -50,6 +50,7 @@ class Event(str, enum.Enum):
     PROBE_OK = "probe_ok"
     DISCARD = "discard"
     DRAIN = "drain"
+    UNDRAIN = "undrain"
     REAPED = "reaped"
     RESTORE = "restore"
     ADMIN_SET_STATE = "admin_set_state"
@@ -97,6 +98,14 @@ def _release_target(_: ResourceState, ctx: StateContext) -> ResourceState:
     return ResourceState.ACTIVE
 
 
+def _undrain_target(_: ResourceState, ctx: StateContext) -> ResourceState:
+    if ctx.used_slots <= 0:
+        return ResourceState.IDLE
+    if ctx.used_slots >= ctx.max_slots:
+        return ResourceState.FULL
+    return ResourceState.ACTIVE
+
+
 def _validate_fail_target(_: ResourceState, ctx: StateContext) -> ResourceState:
     if ctx.fail_count >= ctx.ban_threshold:
         return ResourceState.BANNED
@@ -120,6 +129,7 @@ ADMIN_ALLOWED: frozenset[ResourceState] = frozenset(
         ResourceState.SUSPENDED,
         ResourceState.QUOTA_EXHAUSTED,
         ResourceState.VALIDATING,
+        ResourceState.ARCHIVED,
     }
 )
 
@@ -211,6 +221,7 @@ TRANSITIONS: dict[ResourceState, dict[Event, _TransitionSpec]] = {
     ResourceState.DRAINING: {
         Event.RELEASE: _TransitionSpec(Event.RELEASE, ResourceState.ARCHIVED),
         Event.REAPED: _TransitionSpec(Event.REAPED, ResourceState.ARCHIVED),
+        Event.UNDRAIN: _TransitionSpec(Event.UNDRAIN, _undrain_target),
         Event.ADMIN_SET_STATE: _TransitionSpec(Event.ADMIN_SET_STATE, _admin_target),
     },
     ResourceState.ARCHIVED: {

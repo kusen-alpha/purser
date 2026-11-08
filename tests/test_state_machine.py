@@ -15,6 +15,7 @@ from purser.core.state import (
     StateMachine,
     _acquire_target,
     _release_target,
+    _undrain_target,
     _validate_fail_target,
 )
 from purser.errors import InvalidTransition
@@ -77,6 +78,23 @@ def test_acquire_target_slot_math(state, used, slots, max_slots, expected):
 def test_release_target_slot_math(state, used, slots, max_slots, expected):
     ctx = StateContext(used_slots=used, slots=slots, max_slots=max_slots)
     assert _release_target(state, ctx) is expected
+
+
+@pytest.mark.parametrize(
+    ("used", "max_slots", "expected"),
+    [
+        (0, 1, ResourceState.IDLE),
+        (1, 1, ResourceState.FULL),
+        (1, 4, ResourceState.ACTIVE),
+        (4, 4, ResourceState.FULL),
+    ],
+)
+def test_undrain_target_keeps_current_load(used, max_slots, expected):
+    ctx = StateContext(used_slots=used, slots=0, max_slots=max_slots)
+    assert _undrain_target(ResourceState.DRAINING, ctx) is expected
+    assert (
+        StateMachine.trigger(ResourceState.DRAINING, Event.UNDRAIN, ctx=ctx) is expected
+    )
 
 
 def test_validate_fail_escalation():
