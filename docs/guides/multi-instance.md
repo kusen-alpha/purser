@@ -59,7 +59,7 @@ ps = Purser(
 
 ## 隔离约束
 
-- **同一进程内**的两个 `Purser` 实例不能共享 SQLite 文件、MySQL 库、Redis DB 或类型实例；半共享会产生无法对账的租约/槽位视图，库会在装配时抛 `IsolationConflict`。
+- **同一进程内**的两个 `Purser` 实例不能共享 SQLite 文件、MySQL 库、Redis DB 或适配器实例；半共享会产生无法对账的租约/槽位视图，库会在装配时抛 `IsolationConflict`。
 - **一个实例不能跨进程共享**：不可 pickle；`fork` 继承的实例在子进程首次调用时报错。
 - 需要跨进程共享同一资源集合时，使用 `LocalScheduler`，而不是传递 `Purser` 对象。
 - `PURSER_ALLOW_SHARED_BACKENDS=1` 只对“一个进程内模拟多主机”的测试脚手架放宽后端身份校验，不会允许跨进程共享实例。

@@ -32,7 +32,7 @@
 | `allocator` | `health_weighted` | `round_robin` / `least_loaded` / `static_priority` |
 | `scheduler` | `priority_quota` | 目前唯一实现；`fifo` / `token_bucket` 为预留值，传入会报错 |
 | `top_k` | `8` | 随机候选数 |
-| `max_slots` | `None` | 单资源槽位上限；`None` 由类型决定 |
+| `max_slots` | `None` | 单资源槽位上限；`None` 由适配器决定 |
 | `weights` | 见下 | 打分权重 |
 | `affinity_weight` | `0.0` | 亲和性权重 |
 
@@ -61,9 +61,9 @@
 | `site_failure_max` | `16` | 站点失败条目上限 |
 | `check_cache_ttl` | `2.0` | 请求级校验缓存 |
 
-!!! note "探测目标写在资源类型上"
+!!! note "探测目标写在资源适配器上"
 
-    代理探测目标不在池配置上设置：请使用 `ProxyType(probe_targets=[...])`。`PoolConfig.probe_targets` 与 `fail_open` 为预留字段，传入非默认值会抛 `ConfigError`（校验失败时始终 fail-closed）。
+    代理探测目标不在池配置上设置：请使用 `ProxyAdapter(probe_targets=[...])`。`PoolConfig.probe_targets` 与 `fail_open` 为预留字段，传入非默认值会抛 `ConfigError`（校验失败时始终 fail-closed）。
 
 ### 隔离与封禁
 
@@ -81,12 +81,15 @@
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `usage_quota` | `None` | 单资源累计用量上限 |
-| `total_quota` | `None` | 周期配额 |
-| `target_quota` | `None` | 弃用兼容项：仅把各 target 限额之和折算成 `total_quota`，**从不按 target 分别生效**；不能与 `total_quota` 同时设置 |
-| `expires_in` | `None` | 绝对过期时长；到期默认转 `SUSPENDED`，`meta.expire_policy="quota"` 时转 `QUOTA_EXHAUSTED` |
+| `usage_quota` | `None` | 单资源累计用量上限；配合 `quota_cooldown` 得到“用完 N 次 → 冷却 → 自动恢复” |
+| `quota_limit` | `None` | 每资源周期配额默认值，导入时应用到未显式设置配额的资源 |
+| `expires_in` | `None` | 绝对过期时长；到期默认转 `SUSPENDED`，`expire_policy="quota"` 时转 `QUOTA_EXHAUSTED` |
+| `expire_policy` | `suspended` | `suspended` / `quota`：到期后的处置策略 |
+| `requalify_on_release` | `False` | 隔离到期时先进 `VALIDATING` 重新校验，而非直接 `IDLE` |
+| `expired_retention` | `None` | 过期资源保留时长（秒）；`None` 关闭 `expire_gc`，设置后过期超过该时长的资源由 `expire_gc` 自动归档 |
 | `cooldown_after_release` | `0.0` | 归还后冷却 |
 | `cooldown_consumer_only` | `False` | 只冷却原消费者 |
+| `quota_cooldown` | `0.0` | `usage_quota` 用尽后的冷却秒数；到期由 `quota_reset` 维护任务自动复位为 `IDLE`（`used_count` 清零）。`0` 保持原“扫批即复位”行为 |
 
 ### 生命周期
 
@@ -105,6 +108,7 @@
 | `schema_version` | `1` | 配置模式版本 |
 | `event_queue_size` | `10000` | 事件队列容量 |
 | `timezone` | `Asia/Shanghai` | 周期任务时区 |
+| `scheduler_intervals` | `None` | 维护任务执行间隔覆盖，key 需来自 `MAINTENANCE_NAMES` |
 | `meta` | `{}` | 业务自定义元数据 |
 
 ### 预留字段（未实现）
@@ -119,7 +123,7 @@
 | `preempt_threshold` | `10` | 同上 |
 | `drain_timeout` | `30.0` | 仅用于抢占式退役，未实现 |
 | `fail_open` | `False` | 校验失败始终 fail-closed |
-| `probe_targets` | `None` | 池级探测目标未实现，改用 `ProxyType` |
+| `probe_targets` | `None` | 池级探测目标未实现，改用 `ProxyAdapter` |
 
 ## 不可热更新项
 
@@ -139,4 +143,4 @@
 }
 ```
 
-启动时按文件恢复缺失的池；不会注册新的资源类型。
+启动时按文件恢复缺失的池；不会注册新的资源适配器。

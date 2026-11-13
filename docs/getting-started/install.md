@@ -35,7 +35,7 @@ python -m pytest tests -q          # 可选：运行完整测试集
 
 ```bash
 pip install -e ".[docs]"
-mkdocs serve                        # http://127.0.0.1:8000
+mkdocs serve -a 127.0.0.1:8001      # http://127.0.0.1:8001，避免与 purser serve 的 8000 端口冲突
 mkdocs build                        # 输出到 site/
 ```
 

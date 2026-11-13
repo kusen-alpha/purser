@@ -50,11 +50,11 @@ class LocalScheduler:
         start_method: str | None = "spawn",
         startup_timeout: float = 30.0,
         close_timeout: float = 30.0,
-        types: Iterable[Any] = (),
+        adapters: Iterable[Any] = (),
         maintenance_enabled: bool | None = None,
     ) -> None:
         self.address = default_address(authkey)
-        self._types = tuple(types)
+        self._adapters = tuple(adapters)
         self._config: dict[str, Any] = {
             "storage": storage,
             "coordination": coordination,
@@ -92,7 +92,7 @@ class LocalScheduler:
             return self
         process = cast(Any, self._ctx).Process(
             target=_scheduler_main,
-            args=(self.address, self._config, self._ready, self._errors, self._types),
+            args=(self.address, self._config, self._ready, self._errors, self._adapters),
             name="purser-local-scheduler",
             daemon=True,
         )

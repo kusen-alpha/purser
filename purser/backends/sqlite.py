@@ -20,8 +20,8 @@ import asyncio
 import random
 import sqlite3
 import time
-from collections.abc import AsyncIterator, Callable, Mapping
-from typing import Any, TypeVar, cast
+from collections.abc import AsyncIterator, Callable
+from typing import Any, Mapping, TypeVar, cast
 
 from purser.backends.base import (
     ResourcePatch,

@@ -58,6 +58,9 @@ theme:
 extra_css:
   - assets/stylesheets/extra.css
 
+extra_javascript:
+  - assets/javascripts/extra.js
+
 plugins:
   - search:
       lang: [zh]
@@ -103,11 +106,15 @@ nav:
       - 概览: guides/index.md
       - 资源可用性判定: guides/availability.md
       - 租约生命周期: guides/lease-lifecycle.md
+      - 组合租约: guides/bundle-leases.md
       - 导入与验活: guides/import-and-validate.md
       - 公平性与健康度: guides/fairness-and-health.md
       - 多实例部署: guides/multi-instance.md
+      - 多线程使用: guides/threading.md
+      - 多进程使用: guides/multiprocessing.md
+      - 后端配置示例: guides/backend-configuration.md
       - 同步 Purser: guides/sync-facade.md
-      - 自定义资源类型: guides/custom-resource-type.md
+      - 自定义资源适配器: guides/custom-resource-adapter.md
       - Web 控制台: guides/web-console.md
       - 运维操作: guides/operations.md
   - 参考:
@@ -117,7 +124,7 @@ nav:
           - Purser: reference/python-api/purser.md
           - ResourcePool: reference/python-api/pools.md
           - AcquireRequest / Lease / BatchLease: reference/python-api/acquisition.md
-          - Resource / ResourceType: reference/python-api/resources.md
+          - Resource / ResourceAdapter: reference/python-api/resources.md
           - StorageBackend / Coordination: reference/python-api/backends.md
       - REST API:
           - 概览: reference/rest-api/index.md
@@ -129,7 +136,7 @@ nav:
           - 管理: reference/rest-api/admin.md
       - CLI: reference/cli.md
       - 配置: reference/configuration.md
-      - 内置资源类型: reference/resource-types.md
+      - 内置资源适配器: reference/resource-adapters.md
       - LocalScheduler: reference/local-scheduler.md
       - 错误处理: reference/errors.md
       - 状态机: reference/state-machine.md

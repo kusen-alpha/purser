@@ -39,4 +39,4 @@
 | 租约 | [leases](leases.md) | `/pools/{pool}/leases`、`/pools/{pool}/leases/{token}`、`/renew` |
 | 事件 | [events](events.md) | `/pools/{pool}/events`、`/pools/{pool}/events/history` |
 | 报表 | [reports](reports.md) | `/reports/usage`、`/pools/{pool}/validate-jobs` |
-| 管理 | [admin](admin.md) | `/healthz`、`/readyz`、`/metrics`、`/audit`、`/types`、`/backup`、`/restore` |
+| 管理 | [admin](admin.md) | `/healthz`、`/readyz`、`/metrics`、`/audit`、`/adapters`、`/backup`、`/restore` |

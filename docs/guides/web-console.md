@@ -44,7 +44,7 @@ purser serve --host 0.0.0.0 --port 8000
 
 ## 建池与改配置
 
-新建资源池时选择池名与**资源类型**。类型决定资源表单字段，创建后不可修改。
+新建资源池时选择池名与**资源类型**。适配器决定资源表单字段，创建后不可修改。
 
 「部署（仅创建时）」中的 `storage`、`coordination`、`secret_fields` 只能在建池时指定；多实例部署应选 `sqlite`/`mysql` + `redis`。其余调度、隔离、验活、保留参数可在 **池设置** 中热更新。
 
@@ -55,10 +55,10 @@ purser serve --host 0.0.0.0 --port 8000
 ## 添加资源
 
 <div class="screenshot">
-  <img src="../../assets/screenshots/console-add-resource.png" alt="添加资源弹窗：字段由资源类型 schema 生成">
+  <img src="../../assets/screenshots/console-add-resource.png" alt="添加资源弹窗：字段由资源适配器 schema 生成">
 </div>
 
-资源表单由服务端类型 `schema` 生成：`required` 字段标红星，`secret` 字段默认掩码并可点「显示」；自定义类型注册了什么字段，这里就出现什么字段。
+资源表单由服务端适配器 `schema` 生成：`required` 字段标红星，`secret` 字段默认掩码并可点「显示」；自定义适配器注册了什么字段，这里就出现什么字段。
 
 「调度属性」可覆盖单条资源的 `max_slots`、`usage_quota`、`expires_at`、`mutex_group` 与可用时段；「自定义字段 JSON」合并进资源载荷，已由表单填写的键以表单为准。
 

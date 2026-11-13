@@ -2,15 +2,15 @@
 
 嵌入式模式适合单进程采集任务：`Purser` 直接管理池、租约与后台维护任务，不启动 HTTP 服务。
 
-## 1. 定义资源类型
+## 1. 定义资源适配器
 
-内置 `proxy` / `account` 需要真实网络或登录态才能验活。离线演示可以注册一个 `validate()` 恒为 OK 的类型：
+内置 `proxy` / `account` 需要真实网络或登录态才能验活。离线演示可以注册一个 `validate()` 恒为 OK 的适配器：
 
 ```python
-from purser import HealthReport, Purser, Resource, ResourceType
+from purser import HealthReport, Purser, Resource, ResourceAdapter
 
 
-class LocalType(ResourceType):
+class LocalAdapter(ResourceAdapter):
     kind = "local"
     default_concurrency = 2
 
@@ -30,7 +30,7 @@ class LocalType(ResourceType):
 
 ```python
 ps = Purser(maintenance_enabled=False)
-ps.register_type(LocalType())
+ps.register_adapter(LocalAdapter())
 pool = ps.create_pool("demo", "local")
 
 await pool.import_resources(
@@ -74,7 +74,7 @@ finally:
 print(await pool.counts(by_name=True))
 print(await pool.stats())
 
-report = ps.report_usage(group_by="consumer")
+report = await ps.report_usage(group_by="consumer")
 print(report["totals"])
 ```
 

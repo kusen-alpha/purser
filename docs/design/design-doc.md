@@ -14,7 +14,7 @@
 > **把每种可复用资源当作“钱包里的钱”，按状态、健康度、配额与公平性规则安全地借出（lease）、验真（validate）、冻结（ban）与归还（release）。**
 
 设计三原则：
-- **通用内核 + 类型插件**：内核只关心状态机、调度、租约与后端一致性；代理/账号等差异全部收敛到 `ResourceType` 插件。
+- **通用内核 + 适配器插件**：内核只关心状态机、调度、租约与后端一致性；代理/账号等差异全部收敛到 `ResourceAdapter` 插件。
 - **异步优先**：全链路 `asyncio`，与采集任务天然配套，单事件循环内零锁竞争。
 - **后端可插拔**：默认内存后端开箱即用，Redis 后端提供多实例共享与跨进程原子性，业务代码无感切换。
 
@@ -51,7 +51,7 @@
 
 | 需求 | 可落地性 | 说明 |
 | --- | --- | --- |
-| 资源类型可扩展（代理/账号/自定义） | 高 | Python ABC + 注册表即可，插件式声明式模型 |
+| 资源适配器可扩展（代理/账号/自定义） | 高 | Python ABC + 注册表即可，插件式声明式模型 |
 | 生命周期与多状态 | 高 | 经典有限状态机，状态转移表驱动，天然可测 |
 | 独占/并发/封禁/解封 | 高 | 租约 + 容量计数 + 隔离退避，算法成熟 |
 | 内存/Redis 双后端 | 高 | redis-py + Lua 脚本保证跨进程原子性 |
@@ -87,7 +87,7 @@
 | 概念 | 说明 |
 | --- | --- |
 | `Resource` | 一条资源：代理、账号或自定义对象，携带状态与元数据 |
-| `ResourceType` | 资源类型插件：定义如何生成、验活、序列化、默认并发度 |
+| `ResourceAdapter` | 资源适配器插件：定义如何生成、验活、序列化、默认并发度 |
 | `Pool` | 一个类型 + 一组选参（tags/region 等）对应的资源集合 |
 | `Lease` | 一次租约：拿到了才能用，带 token、TTL、槽位数 |
 | `LeaseMode` | `EXCLUSIVE`（独占 1 槽）/ `SHARED(n)`（并发 n 槽） |
@@ -102,7 +102,7 @@
 @dataclass(slots=True)
 class Resource:
     id: str                       # 业务可读 ID（如 proxy://1.2.3.4:8080）
-    kind: str                     # resource type 名："proxy" / "account" / 自定义
+    kind: str                     # resource adapter 名："proxy" / "account" / 自定义
     payload: dict                 # 具体内容（host/port、账号密码/cookie 等）
     state: ResourceState
     version: int                  # 乐观锁版本号（Redis CAS 用）
@@ -122,12 +122,14 @@ class Resource:
     meta: dict                    # source、batch_id（B1）、created_at、updated_at、banned_reason...
 ```
 
+> **类型化 payload 字段**：子类用 `Annotated[type, PayloadField(...)]` 在字段注解上声明 schema（`coerce` / `required` / `secret` / `default` / `doc`），类创建时推导出 `typed_payload_fields`，驱动读写边界的规范化、落库加密、序列化回折与默认 `generate` 映射；未声明的键以 `extra` 原样往返。示例：`phone: Annotated[str | None, PayloadField(required=True)] = None`。
+
 > 池级配置（`PoolConfig`）：`backend` / `scheduler` / `unban_mode` / `probe_targets` /
 > `max_slots` / `preemptible` / `preempt_threshold` / `expires_in` / `usage_quota` /
 > `cooldown_after_release` / `target_quota` / `fail_open` / `import_validate` / `backfill` /
 > `timezone`（默认 `Asia/Shanghai`，T1）等均可按池覆盖；`PoolConfig.schema_version`
 >（Y4）支持迁移链自动升级，未知字段忽略并告警；
-> `ResourceType` 只提供默认值；配置来源按 文件 → env → Redis 三级合并加载（X6）。
+> `ResourceAdapter` 只提供默认值；配置来源按 文件 → env → Redis 三级合并加载（X6）。
 
 ### 3.3 状态机
 
@@ -266,9 +268,9 @@ flowchart TB
         E["事件总线 EventBus / 指标"]
     end
 
-    subgraph Plugin["资源类型插件层"]
-        P1["ProxyType"]
-        P2["AccountType"]
+    subgraph Plugin["资源适配器插件层"]
+        P1["ProxyAdapter"]
+        P2["AccountAdapter"]
         P3["自定义 CustomType"]
     end
 
@@ -307,9 +309,9 @@ purser/
     memory.py
     redis.py             # Redis + Lua 脚本
   types/
-    base.py              # ResourceType 基类/协议 + 注册表
-    proxy.py             # 代理类型（TCP/HTTP CONNECT 验活）
-    account.py           # 账号类型（登录态探测/刷新）
+    base.py              # ResourceAdapter 基类/协议 + 注册表
+    proxy.py             # 代理适配器（TCP/HTTP CONNECT 验活）
+    account.py           # 账号适配器（登录态探测/刷新）
   ui/
     server.py            # FastAPI 应用
     static/              # 单页 UI（无构建链）
@@ -345,15 +347,17 @@ class ResourceBackend(Protocol):
 ```
 
 ```python
-class ResourceType(ABC):
+class ResourceAdapter(ABC):
     kind: str
     default_concurrency: int = 1      # 1=独占，>1=并发
 
-    @abstractmethod
-    async def generate(self, spec: dict) -> Resource: ...
+    async def generate(self, spec: dict) -> Resource:
+        # 默认按类型化字段把 spec 映射成 Resource；特殊构造时覆写
+        ...
 
-    @abstractmethod
-    async def validate(self, r: Resource) -> HealthReport: ...
+    async def validate(self, r: Resource) -> HealthReport:
+        # 默认存活：HealthReport.ok(latency_ms=1.0)；真实验活时覆写
+        ...
 
     def describe(self, r: Resource) -> str:            # UI/日志脱敏展示
         ...
@@ -381,7 +385,7 @@ finally:
     await pool.release(lease)
 ```
 
-> **编码契约（A2）**：M0 编码前补齐完整接口签名表（`Purser` / `Pool` / `ResourceType` / `ResourceBackend` / `Allocator` / 钩子的参数、返回值、异常与并发语义），本节的示意代码仅作手感说明。
+> **编码契约（A2）**：M0 编码前补齐完整接口签名表（`Purser` / `Pool` / `ResourceAdapter` / `ResourceBackend` / `Allocator` / 钩子的参数、返回值、异常与并发语义），本节的示意代码仅作手感说明。
 
 ### 4.5 受控钩子与请求级校验（扩展点设计）
 
@@ -391,9 +395,11 @@ finally:
 
 | 类别 | 钩子 | 默认行为 | 语义 |
 | --- | --- | --- | --- |
-| 生命周期主扩展 | `generate` / `validate` | 必实现 | 生成、生命周期验活 |
+| 生命周期主扩展 | `generate` / `validate` | 均有默认实现：字段映射 / 存活（`ok(latency_ms=1.0)`） | 生成、生命周期验活 |
 | 请求级钩子 | `on_request_check` | 直通 `PASS` | 申请时按上下文校验，返回决策 |
 | 请求级钩子 | `on_release` | 无操作 | 归还时上报使用成败/副作用 |
+| 租约级观察 | `on_acquire` / `on_renew` / `before_release` / `on_revoke` / `on_lease_lost` | 均无操作 | 分别挂在租约签发、续租、归还前、强制撤销、失联回收 |
+| 切换/轮换 | `switch` | 无操作（`None`） | 返回改过的旧对象原地更新，或返回新对象替换并归档旧行 |
 | 状态事件钩子 | `on_state_changed` | 无操作 | 迁移完成后通知，只读 |
 | 异常兜底 | `on_error` | 记录日志 | 钩子内异常不炸穿内核 |
 
@@ -414,7 +420,7 @@ class AcquireRequest:
 ```
 
 ```python
-class ResourceType(ABC):
+class ResourceAdapter(ABC):
     # ... generate / validate ...
 
     async def on_request_check(self, r: Resource,
@@ -666,7 +672,7 @@ return redis.call('HGET', rk, 'version')
 
 ### 5.15 使用后冷却与租约级限额（S20 / X4）
 
-- **使用后冷却**：`cooldown_after_release`（按池/类型配置 TTL），归还后资源写入 `next_available_at`，分配器筛选时排除未到期项（不新增状态）；可配“仅对同一消费者冷却”，与 O14 亲和性叠加（同一消费者不可复用，其他消费者不受影响）；
+- **使用后冷却**：`cooldown_after_release`（按池/适配器配置 TTL），归还后资源写入 `next_available_at`，分配器筛选时排除未到期项（不新增状态）；可配“仅对同一消费者冷却”，与 O14 亲和性叠加（同一消费者不可复用，其他消费者不受影响）；
 - **租约级限额**：租约携带 `use_limit`（次数）与 `max_duration`（时长），`UsageOutcome`/`on_release` 上报次数，达上限触发 `LeaseLimitReached` → 正常到期归还；与资源级 `usage_quota`（跨租约累计）维度不同，二者叠加使用。
 
 ### 5.16 使用反馈分类（U1）
@@ -749,17 +755,17 @@ class UsageOutcome(Enum):
 
 ---
 
-## 7. 资源类型插件
+## 7. 资源适配器插件
 
-内核零知识，全部资源差异下沉到 `ResourceType`：
+内核零知识，全部资源差异下沉到 `ResourceAdapter`：
 
 ```python
-registry = ResourceTypeRegistry()
-registry.register(ProxyType())      # kind="proxy"
-registry.register(AccountType())    # kind="account"
+registry = ResourceAdapterRegistry()
+registry.register(ProxyAdapter())      # kind="proxy"
+registry.register(AccountAdapter())    # kind="account"
 ```
 
-| 类型 | generate（生成） | validate（验活） | 默认并发 |
+| 适配器 | generate（生成） | validate（验活） | 默认并发 |
 | --- | --- | --- | --- |
 | `proxy` | 人工导入 / 上游 API 拉取 / 内置生成器（`source` 区分） | http/socks4/socks5 探测，多探针目标站交叉验证（默认 2/3 通过），分目标测延迟；`on_request_check` 按采集目标站校验 | 1（独占，池可覆盖） |
 | `account` | 人工导入（账号/密码/cookie/refresh_token）或上游 API | 默认人工标记为主；`validate` / `on_request_check` 钩子可挂任意校验（如登录态探测、站点风控识别） | n（并发会话，池可覆盖） |
@@ -768,7 +774,7 @@ registry.register(AccountType())    # kind="account"
 自定义资源的最小区块链（用户只需写 2 个方法）：
 
 ```python
-class SmsPoolType(ResourceType):
+class SmsPoolAdapter(ResourceAdapter):
     kind = "sms"
     default_concurrency = 3
 
@@ -859,7 +865,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | S10 | 多实例一致性 | 单实例就够 | 全局互斥 + Lua CAS | 分区自管理 | **B + 内存版**：Redis Lua CAS + 版本乐观锁；内存后端实现同语义 |
 | S11 | 资源生成 | 人工导入（文件/粘贴） | 上游 API 拉取 | 库内内置生成器 | **A+B+C**：全部支持，统一 generate(spec)，source 字段区分 |
 | S12 | 配额公平 | 简单 FIFO | 优先级队列 + 每消费者配额 | 令牌桶限流 | **A+B+C（策略可配置）**：scheduler 按池选择，默认优先级+配额 |
-| S13 | 自定义资源 | 仅代码插件（写类） | 仅 JSON schema 配置化 | 代码插件 + 配置化并存 | **C**：插件为主，schema 描述为辅，编译为同一 ResourceType |
+| S13 | 自定义资源 | 仅代码插件（写类） | 仅 JSON schema 配置化 | 代码插件 + 配置化并存 | **C**：插件为主，schema 描述为辅，编译为同一 ResourceAdapter |
 | S14 | 可观测性 | 仅日志 | logger + 结构化指标 | Prometheus 指标 + UI 图表 | **A+B+C**：日志 + 结构化指标 + Prometheus 导出 + UI 图表（M3） |
 
 ### 9.1 第二轮审查补充（已确认）
@@ -934,7 +940,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | K1 | 密钥轮换 | A：密钥版本化 + 后台重加密，旧版本兼容回退 |
 | V1 | 容量趋势补货 | A：按消费速率预测缺口，分级 `backfill`，受每日上限与节奏控制 |
 | W1 | 池级灰度迁移 | A：blue-green 双池并行构建、按比例切流量、异常一键回切 |
-| X7 | 插件热注册 | A：运行时动态注册 `ResourceType`，schema 型 API 提交即建池 |
+| X7 | 插件热注册 | A：运行时动态注册 `ResourceAdapter`，schema 型 API 提交即建池 |
 | R1 | 使用统计报表 | A：`/reports/usage` 按消费者/类型/目标站聚合，复用 metering 与审计 |
 
 ### 9.5 第六轮审查补充（已确认）
@@ -967,9 +973,9 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 
 **S2**：`probe_targets` 配置多个固定探针站（支持 http/socks4/socks5），默认 2/3 通过即健康，分目标记录延迟；请求级校验见 5.8。
 
-**S3**：账号等类型默认 `validate` 不自动联网，人工在 UI/CLI 标记；需要自动化时覆写 `validate` / `on_request_check` 钩子。
+**S3**：账号等适配器默认 `validate` 不自动联网，人工在 UI/CLI 标记；需要自动化时覆写 `validate` / `on_request_check` 钩子。
 
-**S4**：`ResourceType.default_concurrency` 提供默认（代理 1、账号 n），`PoolConfig.max_slots` 按池覆盖。
+**S4**：`ResourceAdapter.default_concurrency` 提供默认（代理 1、账号 n），`PoolConfig.max_slots` 按池覆盖。
 
 **S5**：`acquire/release` 为底层原语，`lease()` 上下文管理器为主推路径，REST `POST /leases`、`DELETE /leases/{token}` 提供远程获取/归还。
 
@@ -987,7 +993,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 
 **S12**：`scheduler = fifo | priority_quota | token_bucket`，按池配置，默认 `priority_quota`。
 
-**S13**：代码插件（覆写钩子）与 schema 配置并存，schema 编译为同一 `ResourceType` 实例，内核不感知差异。
+**S13**：代码插件（覆写钩子）与 schema 配置并存，schema 编译为同一 `ResourceAdapter` 实例，内核不感知差异。
 
 **S14**：结构化事件（状态迁移/租约/验活/封禁）+ 计数器/直方图接口；`/metrics` 暴露 Prometheus 格式；UI 图表在 M3。
 
@@ -1189,7 +1195,7 @@ reaper 继续回收其它过期租约、并发重复执行 `quarantine_gc` 幂�
 迁移（新增 `_notify_state_changed` 统一分发；`_apply_state` 复用）。修复
 `memory` 后端因 `get` 返回活对象、`transition_acquire` 原地变更导致 old/new state
 被别名成同一值而产生的假观察/缺失观察——迁移前先快照旧状态。钩子抛错由
-`on_error` 承接且不破坏主流程；新增类型注册表、`Metrics` 快照/渲染、
+`on_error` 承接且不破坏主流程；新增适配器注册表、`Metrics` 快照/渲染、
 `IdempotencyStore` TTL、`SecretCodec` 环境密钥/key 文件复用、`PeriodicScheduler`
 run/stop/remove/失败隔离等直接单测。流式补充：并发导入同批去重后仅剩一行、
 `force_revoke` 清消费者持有且被踢者进入 `F5` 冷却、迁移后可从目标池直接获取。
@@ -1208,7 +1214,7 @@ cooldown:{consumer}` 取最大合并且消费者级冷却互不影响；serde �
 `stats.active_leases` 虚高且无人回收——修复）；`force_revoke` 对 `DRAINING` 资源
 直接归档且槽位归零；`query(tags=frozenset())` 与全量等价；`EventBus` 在
 stop 后 publish 再 start 会排空积压并恢复投递；`Metrics` 直方图按 1 万条封顶；
-`SecretCodec` 支持 16/24/32 字节密钥往返；`ProxyType.validate` 的 2/3 多数派
+`SecretCodec` 支持 16/24/32 字节密钥往返；`ProxyAdapter.validate` 的 2/3 多数派
 与存活探针最低延迟；内存态同一 `Purser` 可完成 close→start 整周期重启。
 
 确定性混沌风暴（`tests/test_chaos_storm.py`）：固定种子复现的故障雨云——

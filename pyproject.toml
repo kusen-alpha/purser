@@ -63,13 +63,14 @@ filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py38"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
 # E501: long lines are kept where a full expression is easier to read than a
 # wrapped one; the codebase already documents intent at the expression level.
-# UP009: this project targets Python 3.10, where UTF-8 source is the default.
+# UP009: UTF-8 source has been the default since Python 3.0, so the encoding
+# declaration is not needed on any supported version (3.8+).
 ignore = ["E501", "UP009"]
 
 [tool.ruff.lint.per-file-ignores]

@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, cast
+from typing import Any, Dict, cast
 
 from purser.local.errors import (
     SchedulerProtocolError,
@@ -162,7 +162,7 @@ def decode_message(raw: bytes) -> dict[str, Any]:
         raise SchedulerProtocolError("scheduler sent invalid JSON") from exc
     if not isinstance(message, dict):
         raise SchedulerProtocolError("scheduler message must be a JSON object")
-    return cast(dict[str, Any], _revive(message))
+    return cast(Dict[str, Any], _revive(message))
 
 
 def recv_message(conn: Any, timeout: float | None = None) -> dict[str, Any]:

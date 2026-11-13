@@ -218,7 +218,7 @@
 
     <div class="card empty-hero" id="emptyHero">
       <h2>从这里开始管理资源</h2>
-      <div class="muted">创建资源池 → 按类型添加资源 → 获取租约。代理、账号以及自定义类型都由<strong>类型 schema</strong>驱动表单。</div>
+      <div class="muted">创建资源池 → 按类型添加资源 → 获取租约。代理、账号以及自定义适配器都由<strong>类型 schema</strong>驱动表单。</div>
       <button class="primary" onclick="openPoolModal()">+ 新建资源池</button>
     </div>
 
@@ -496,11 +496,19 @@
           <label class="field"><span>check_cache_ttl（秒）</span><input id="cfgCheckTtl" type="number" min="0" step="0.5" placeholder="2"></label>
           <label class="field"><span>archive_retention（秒）</span><input id="cfgArchiveRet" type="number" min="0" step="3600" placeholder="2592000"></label>
           <label class="field"><span>lost_retention（秒）</span><input id="cfgLostRet" type="number" min="0" step="600" placeholder="14400"></label>
+          <label class="field"><span>expired_retention（秒）</span><input id="cfgExpireRetention" type="number" min="0" step="3600" placeholder="不启用"></label>
           <label class="field"><span>timezone</span><input id="cfgTimezone" placeholder="Asia/Shanghai"></label>
         </div>
 
         <div class="formgrid" style="margin-top:10px">
-          <label class="field"><span>total_quota（每资源总量）</span><input id="cfgTotalQuota" type="number" min="1" step="1" placeholder="不限"></label>
+          <label class="field"><span>quota_limit（每资源周期配额）</span><input id="cfgQuotaLimit" type="number" min="1" step="1" placeholder="不限"></label>
+          <label class="field"><span>expire_policy</span>
+            <select id="cfgExpirePolicy">
+              <option value="">默认（suspended）</option>
+              <option value="suspended">suspended</option>
+              <option value="quota">quota（按配额耗尽处理）</option>
+            </select>
+          </label>
           <label class="field"><span>meta（JSON 对象）</span><textarea id="cfgMeta" placeholder='{"team":"data"}' style="min-height:60px"></textarea></label>
         </div>
         <div class="hint">留空表示沿用默认值；JSON 填空字符串表示不修改，填 null 表示清空。storage / coordination 创建后不可热更新。</div>
@@ -515,6 +523,7 @@
             <option value="validating_gc">validating_gc · 清理校验超时</option>
             <option value="quarantine_gc">quarantine_gc · 释放隔离</option>
             <option value="archive_gc">archive_gc · 清理归档</option>
+            <option value="expire_gc">expire_gc · 清理过期资源</option>
           </select>
           <button onclick="runMaintenance()">执行</button>
         </div>
@@ -708,7 +717,7 @@ let currentPool = null;
 let currentKind = null;
 let poolStats = {};
 let POOLS = [];
-let TYPES = [];
+let ADAPTERS = [];
 let ev = null;
 let evPollTimer = null;
 let evCursor = 0;
@@ -797,13 +806,13 @@ function flash(msg, kind){
 function saveKey(){
   localStorage.setItem("purser_key", document.getElementById("apiKey").value.trim());
   flash("密钥已保存", "okk");
-  loadTypes().then(loadPools).then(loadService).catch(e => flash(e.message));
+  loadAdapters().then(loadPools).then(loadService).catch(e => flash(e.message));
 }
 function logout(){
   localStorage.removeItem("purser_key");
   document.getElementById("apiKey").value = "";
   flash("已清除密钥", "okk");
-  loadTypes().then(loadPools).then(loadService).catch(e => flash(e.message));
+  loadAdapters().then(loadPools).then(loadService).catch(e => flash(e.message));
 }
 
 function showModal(id){
@@ -824,16 +833,16 @@ function closeAllModals(){
   document.querySelectorAll(".modal.open").forEach(m => m.classList.remove("open"));
 }
 
-function typeOf(kind){
-  return TYPES.find(t => t.kind === kind) || null;
+function adapterOf(kind){
+  return ADAPTERS.find(t => t.kind === kind) || null;
 }
 function renderPoolKindOptions(){
   const sel = document.getElementById("poolKind");
   const prev = sel.value;
   sel.innerHTML = "";
-  const list = TYPES.length ? TYPES : [
-    {kind:"proxy", resource_class:"ProxyType", default_concurrency:1, fields:[]},
-    {kind:"account", resource_class:"AccountType", default_concurrency:4, fields:[]}
+  const list = ADAPTERS.length ? ADAPTERS : [
+    {kind:"proxy", resource_class:"ProxyAdapter", default_concurrency:1, fields:[]},
+    {kind:"account", resource_class:"AccountAdapter", default_concurrency:4, fields:[]}
   ];
   for(const t of list){
     const opt = document.createElement("option");
@@ -846,17 +855,17 @@ function renderPoolKindOptions(){
 }
 function updatePoolKindHint(){
   const sel = document.getElementById("poolKind");
-  const t = typeOf(sel.value);
+  const t = adapterOf(sel.value);
   document.getElementById("poolKindHint").textContent = t
     ? `默认并发 ${t.default_concurrency} · ${t.fields.length} 个配置字段`
     : "";
 }
-async function loadTypes(){
+async function loadAdapters(){
   try{
-    const data = await api("/types");
-    TYPES = data.types || [];
+    const data = await api("/adapters");
+    ADAPTERS = data.adapters || [];
   }catch(e){
-    TYPES = [];
+    ADAPTERS = [];
     throw e;
   }
   renderPoolKindOptions();
@@ -1153,7 +1162,8 @@ const POOL_CFG_SELECTS = {
   cfgAllocator:"allocator",
   cfgScheduler:"scheduler",
   cfgUnbanMode:"unban_mode",
-  cfgImportValidate:"import_validate"
+  cfgImportValidate:"import_validate",
+  cfgExpirePolicy:"expire_policy"
 };
 const POOL_CFG_NUMBERS = {
   cfgMaxSlots:"max_slots",
@@ -1175,9 +1185,10 @@ const POOL_CFG_NUMBERS = {
   cfgSiteTtl:"site_failure_ttl",
   cfgSiteMax:"site_failure_max",
   cfgCheckTtl:"check_cache_ttl",
-  cfgTotalQuota:"total_quota",
+  cfgQuotaLimit:"quota_limit",
   cfgArchiveRet:"archive_retention",
-  cfgLostRet:"lost_retention"
+  cfgLostRet:"lost_retention",
+  cfgExpireRetention:"expired_retention"
 };
 const POOL_WEIGHT_NUMBERS = {
   cfgWHealth:"health",
@@ -1194,7 +1205,7 @@ const POOL_QUARANTINE_NUMBERS = {
   cfgQTrial:"trial_hours"
 };
 const POOL_INT_KEYS = new Set([
-  "max_slots","usage_quota","total_quota","top_k","validate_concurrency",
+  "max_slots","usage_quota","quota_limit","top_k","validate_concurrency",
   "site_failure_max","quarantine.max_failures"
 ]);
 function readPoolNumber(id, key, out, intKey){
@@ -2006,10 +2017,10 @@ function addField(wrap, field, label, placeholder){
 
 function openAddModal(){
   if(!currentPool) return flash("请先选择资源池");
-  const t = typeOf(currentKind);
+  const t = adapterOf(currentKind);
   document.getElementById("addTitle").textContent = `添加 ${currentKind} 资源`;
   document.getElementById("addSub").textContent = t
-    ? `${t.resource_class} · 默认并发 ${t.default_concurrency} · 字段来自服务端类型 schema`
+    ? `${t.resource_class} · 默认并发 ${t.default_concurrency} · 字段来自服务端适配器 schema`
     : "该类型未公开字段 schema，请填写 JSON 载荷";
   const wrap = document.getElementById("addFields");
   wrap.innerHTML = "";
@@ -2303,14 +2314,18 @@ function renderDetail(){
         <label class="field"><span>标签</span><input id="editTags" value="${esc((d.tags || []).join(","))}" placeholder="us,http"></label>
         <label class="field"><span>最大槽位</span><input id="editSlots" type="number" min="1" value="${esc(d.max_slots)}"></label>
         <label class="field"><span>usage_quota</span><input id="editQuota" type="number" min="0" placeholder="留空不变" value="${d.usage_quota === null || d.usage_quota === undefined ? "" : esc(d.usage_quota)}"></label>
+        <label class="field"><span>quota_limit</span><input id="editQuotaLimit" type="number" min="1" placeholder="留空不变" value="${d.quota && d.quota.limit !== null && d.quota.limit !== undefined ? esc(d.quota.limit) : ""}"></label>
         <label class="field"><span>expires_at</span><input id="editExpires" type="datetime-local" value="${esc(epochToLocalInput(d.expires_at))}"></label>
+        <label class="field"><span>下次可用时间</span><input id="editNextAvailable" type="datetime-local" value="${esc(epochToLocalInput(d.next_available_at))}"></label>
         <label class="field"><span>mutex_group</span><input id="editMutex" value="${esc(d.mutex_group || "")}" placeholder="留空不变"></label>
         <label class="field"><span>可用时段开始</span><input id="editWinStart" type="time" value="${esc(Array.isArray(d.schedule_window) ? d.schedule_window[0] : "")}"></label>
         <label class="field"><span>可用时段结束</span><input id="editWinEnd" type="time" value="${esc(Array.isArray(d.schedule_window) ? d.schedule_window[1] : "")}"></label>
       </div>
       <div class="row" style="margin-top:8px">
-        <label class="check" style="margin-top:0"><input id="editClearQuota" type="checkbox"> 清除配额</label>
+        <label class="check" style="margin-top:0"><input id="editClearQuota" type="checkbox"> 清除 usage_quota</label>
+        <label class="check" style="margin-top:0"><input id="editClearQuotaLimit" type="checkbox"> 清除 quota_limit</label>
         <label class="check" style="margin-top:0"><input id="editClearExpires" type="checkbox"> 清除过期时间</label>
+        <label class="check" style="margin-top:0"><input id="editClearNextAvailable" type="checkbox"> 清除下次可用</label>
         <label class="check" style="margin-top:0"><input id="editClearMutex" type="checkbox"> 清除互斥组</label>
         <label class="check" style="margin-top:0"><input id="editClearWindow" type="checkbox"> 清除时段</label>
       </div>
@@ -2467,11 +2482,27 @@ async function saveEdit(){
     body.usage_quota = quota;
   }
 
+  const quotaLimitRaw = document.getElementById("editQuotaLimit").value.trim();
+  if(document.getElementById("editClearQuotaLimit").checked){
+    body.quota_limit = null;
+  }else if(quotaLimitRaw !== ""){
+    const quotaLimit = parseInt(quotaLimitRaw, 10);
+    if(!Number.isFinite(quotaLimit) || quotaLimit < 1) return flash("quota_limit 必须是正整数");
+    body.quota_limit = quotaLimit;
+  }
+
   if(document.getElementById("editClearExpires").checked){
     body.expires_at = null;
   }else{
     const expires = localInputToEpoch(document.getElementById("editExpires").value);
     if(expires !== null) body.expires_at = expires;
+  }
+
+  if(document.getElementById("editClearNextAvailable").checked){
+    body.next_available_at = null;
+  }else{
+    const nextAvailable = localInputToEpoch(document.getElementById("editNextAvailable").value);
+    if(nextAvailable !== null) body.next_available_at = nextAvailable;
   }
 
   const mutexRaw = document.getElementById("editMutex").value.trim();
@@ -2684,7 +2715,7 @@ document.addEventListener("keydown", (e) => { if(e.key === "Escape") closeAllMod
 (async function init(){
   document.getElementById("apiKey").value = token();
   try{
-    await loadTypes();
+    await loadAdapters();
     await loadPools();
   }catch(e){ flash(e.message); }
   loadService();

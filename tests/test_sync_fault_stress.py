@@ -84,7 +84,7 @@ def _sync_ps(tmp_path, *, redis_client=None):
     else:
         kwargs["redis_client"] = redis_client
     ps = SyncPurser(**kwargs)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     ps.start()
     ps._test_client = redis_client  # type: ignore[attr-defined]
     return ps

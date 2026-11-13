@@ -56,7 +56,7 @@ def _start_child(
             redis_url=redis_url,
             mysql_url=mysql_url,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         ps.create_pool(pool_name, "fakecheck")
         try:
             await ps.start()
@@ -132,7 +132,7 @@ def _build(storage: str, coordination: str, *, sqlite_path=None, redis_url=None,
         redis_url=redis_url,
         mysql_url=mysql_url,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     return ps
 
 

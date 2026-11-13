@@ -33,15 +33,33 @@ from collections.abc import (
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast, overload
 
+from purser.adapters.base import (
+    ResourceAdapter,
+    ResourceAdapterRegistry,
+    default_adapter_factories,
+)
 from purser.authority import make_authority
 from purser.backends.base import Coordination, ResourcePatch, StorageBackend
 from purser.backends.coordination import MemoryCoordination, RedisCoordination
 from purser.backends.memory import MemoryStorage
 from purser.backends.sqlite import SqliteStorage
 from purser.binding import make_binding
-from purser.config import PoolConfig, Weights
+from purser.config import MAINTENANCE_NAMES, PoolConfig, Weights, apply_adapter_defaults
 from purser.core.allocator import AllocationContext, Allocator, make_allocator
 from purser.core.audit import AuditLog
+from purser.core.bundle import (
+    BundleFairness,
+    BundleLease,
+    BundleRequest,
+    BundleSlot,
+    bundle_request_from_dict,
+)
+from purser.core.bundle_store import (
+    BundleStore,
+    MemoryBundleStore,
+    RedisBundleStore,
+    ReservationMember,
+)
 from purser.core.events import EventBus
 from purser.core.health import HealthReport, ProbeGuard, ValidationGate
 from purser.core.lease import LeaseManager
@@ -79,6 +97,8 @@ from purser.core.views import (
 from purser.crypto import SecretCodec, load_or_create_key
 from purser.errors import (
     BadState,
+    BundleAcquireFailed,
+    BundleQuotaExceeded,
     ConfigError,
     IsolationConflict,
     LeaseConflict,
@@ -100,22 +120,12 @@ from purser.isolation import (
     mysql_identity,
     redis_client_identity,
     redis_identity,
-    resource_type_identity,
+    resource_adapter_identity,
     sqlite_identity,
 )
 from purser.metrics import Metrics
-from purser.types.base import ResourceType, ResourceTypeRegistry
 
 logger = logging.getLogger("purser")
-
-MAINTENANCE_NAMES = (
-    "quota_reset",
-    "periodic_unban",
-    "lost_gc",
-    "validating_gc",
-    "quarantine_gc",
-    "archive_gc",
-)
 
 # Shared coordination has no push channel; general waiters poll storage on this
 # interval so a release on another instance can wake them (V03).
@@ -162,7 +172,9 @@ def _record_value(record: dict[str, Any] | Resource, key: str) -> Any:
 _IMPORT_RESERVED = (
     "max_slots",
     "usage_quota",
+    "quota_limit",
     "expires_at",
+    "next_available_at",
     "mutex_group",
     "schedule_window",
     "source",
@@ -210,11 +222,24 @@ def _apply_import_fields(resource: Resource, data: dict[str, Any]) -> None:
         resource.concurrency = Concurrency(max_slots=value)
     if "usage_quota" in data:
         resource.usage_quota = _optional_int(data["usage_quota"], "usage_quota")
+    if "quota_limit" in data:
+        raw = data["quota_limit"]
+        if raw is None:
+            resource.quota = None
+        else:
+            limit = _optional_int(raw, "quota_limit", minimum=1)
+            if limit is not None:
+                resource.quota = Quota(limit=limit)
     if "expires_at" in data:
         raw = data["expires_at"]
         if raw is not None and (isinstance(raw, bool) or not isinstance(raw, (int, float))):
             raise ConfigError("expires_at must be an epoch number or null")
         resource.expires_at = float(raw) if raw is not None else None
+    if "next_available_at" in data:
+        raw = data["next_available_at"]
+        if raw is not None and (isinstance(raw, bool) or not isinstance(raw, (int, float))):
+            raise ConfigError("next_available_at must be an epoch number or null")
+        resource.next_available_at = float(raw) if raw is not None else None
     if "mutex_group" in data:
         raw = data["mutex_group"]
         resource.mutex_group = str(raw) if raw else None
@@ -291,21 +316,31 @@ class BatchLease:
         self.leases.clear()
 
 
+@dataclass
+class _FairWaiter:
+    """One bundle fairness admission waiter (priority heap entry payload)."""
+
+    seq: int
+    priority: int
+    event: Any = field(default=None, repr=False, compare=False)
+    cancelled: bool = False
+
+
 class ResourcePool:
-    """One named pool: a resource type, a storage plane and coordination."""
+    """One named pool: a resource adapter, a storage plane and coordination."""
 
     def __init__(
         self,
         name: str,
         purser: Purser,
-        rtype: ResourceType,
+        adapter: ResourceAdapter,
         cfg: PoolConfig,
         storage: StorageBackend,
         coordination: Coordination,
     ) -> None:
         self.name = name
         self.purser = purser
-        self.type = rtype
+        self.adapter = adapter
         self.cfg = cfg
         self.storage = storage
         self._coordination = coordination
@@ -355,7 +390,7 @@ class ResourcePool:
     # -- lifecycle ---------------------------------------------------------
 
     def _register_scheduler(self) -> None:
-        intervals = self.cfg.meta.get("scheduler_intervals", {})
+        intervals = self.cfg.scheduler_intervals or {}
         defaults = {
             "quota_reset": 300.0,
             "periodic_unban": 60.0,
@@ -363,6 +398,7 @@ class ResourcePool:
             "validating_gc": 30.0,
             "quarantine_gc": 15.0,
             "archive_gc": 3600.0,
+            "expire_gc": 3600.0,
         }
         for name in MAINTENANCE_NAMES:
             interval = float(intervals.get(name, defaults[name]))
@@ -768,13 +804,13 @@ class ResourcePool:
 
     async def get(self, rid: str) -> Resource | None:
         resource = await self.storage.get(self.name, rid)
-        return None if resource is None else self.type.hydrate(resource)
+        return None if resource is None else self.adapter.hydrate(resource)
 
     async def require(self, rid: str) -> Resource:
         resource = await self.storage.get(self.name, rid)
         if resource is None:
             raise ResourceNotFound(f"{self.name}:{rid}")
-        return self.type.hydrate(resource)
+        return self.adapter.hydrate(resource)
 
     async def query(
         self,
@@ -812,11 +848,11 @@ class ResourcePool:
                     matched.reverse()
             if limit == 0:
                 return []
-            return [self.type.hydrate(r) for r in matched[offset : offset + limit]]
+            return [self.adapter.hydrate(r) for r in matched[offset : offset + limit]]
         resources = await self.storage.query(
             self.name, states=states, tags=tags, limit=limit, offset=offset
         )
-        return [self.type.hydrate(resource) for resource in resources]
+        return [self.adapter.hydrate(resource) for resource in resources]
 
     async def iter_resources(
         self,
@@ -849,7 +885,7 @@ class ResourcePool:
                 continue
             if needle and not self._matches(resource, needle):
                 continue
-            yield self.type.hydrate(resource)
+            yield self.adapter.hydrate(resource)
 
     async def count_matching(
         self,
@@ -992,13 +1028,13 @@ class ResourcePool:
             try:
                 explicit_slots = False
                 if isinstance(record, Resource):
-                    resource = self.type.adopt(copy.deepcopy(record))
+                    resource = self.adapter.adopt(copy.deepcopy(record))
                 elif isinstance(record, dict):
                     spec = dict(record)
                     reserved = {
                         key: spec.pop(key) for key in _IMPORT_RESERVED if key in spec
                     }
-                    resource = await self.type.generate(spec)
+                    resource = await self.adapter.generate(spec)
                     _apply_import_fields(resource, reserved)
                     explicit_slots = "max_slots" in reserved
                 else:
@@ -1020,8 +1056,8 @@ class ResourcePool:
                 resource.expires_at = _now() + self.cfg.expires_in
             if self.cfg.usage_quota is not None and resource.usage_quota is None:
                 resource.usage_quota = self.cfg.usage_quota
-            if self.cfg.total_quota is not None and resource.quota is None:
-                resource.quota = Quota(limit=int(self.cfg.total_quota))
+            if self.cfg.quota_limit is not None and resource.quota is None:
+                resource.quota = Quota(limit=int(self.cfg.quota_limit))
             stored = False
             for attempt in range(3):
                 existing = await self.storage.get(self.name, resource.id)
@@ -1092,6 +1128,61 @@ class ResourcePool:
         return await self.import_resources(
             specs, source=source, operator=operator, import_validate="on_import"
         )
+
+    async def apply_defaults(
+        self,
+        *,
+        operator: str = "system",
+        reason: str = "apply pool defaults",
+    ) -> dict[str, int]:
+        """Backfill pool-level defaults onto resources that lack them.
+
+        Mirrors the import-time defaults (``expires_in``, ``usage_quota``,
+        ``quota_limit``) but only ever fills a missing value; existing
+        resource-level settings are never overwritten, so this is safe to run
+        on a live pool.  ``max_slots`` cannot be detected as "unset"
+        retroactively and is left alone.
+        """
+
+        updated = 0
+        now = _now()
+        expires_in = self.cfg.expires_in
+        usage_quota = self.cfg.usage_quota
+        quota_limit = self.cfg.quota_limit
+        if expires_in is None and usage_quota is None and quota_limit is None:
+            return {"updated": 0}
+        async for resource in self.storage.scan(self.name):
+            extra: dict[str, Any] = {}
+            clear: set[str] = set()
+            if (
+                expires_in is not None
+                and resource.expires_at is None
+            ):
+                extra["expires_at"] = now + expires_in
+            if usage_quota is not None and resource.usage_quota is None:
+                extra["usage_quota"] = int(usage_quota)
+            if quota_limit is not None and resource.quota is None:
+                extra["quota"] = Quota(limit=int(quota_limit))
+            if not extra:
+                continue
+            if await self._cas(
+                resource.id,
+                ResourcePatch(
+                    meta_patch={**resource.meta, "updated_by": operator, "update_reason": reason},
+                    clear_fields=frozenset(clear),
+                    **extra,
+                ),
+            ):
+                updated += 1
+        if updated:
+            self.purser.audit.record(
+                operator=operator,
+                action="apply_defaults",
+                pool=self.name,
+                reason=reason,
+                detail={"updated": updated},
+            )
+        return {"updated": updated}
 
     async def _restore_resources(
         self, records: Sequence[Any], *, conflict: str, operator: str
@@ -1187,7 +1278,7 @@ class ResourcePool:
         max_slots = (
             int(slots_raw)
             if slots_raw is not None
-            else (self.cfg.max_slots or self.type.default_concurrency)
+            else (self.cfg.max_slots or self.adapter.default_concurrency)
         )
         if max_slots <= 0:
             raise ValueError("max_slots must be positive")
@@ -1223,7 +1314,7 @@ class ResourcePool:
                 )
         resource = Resource(
             id=rid,
-            kind=self.type.kind,
+            kind=self.adapter.kind,
             payload=payload,
             state=state,
             tags=frozenset(str(tag) for tag in tags_raw),
@@ -1239,7 +1330,7 @@ class ResourcePool:
             schedule_window=_schedule_window(entry.get("schedule_window")),
             meta=meta,
         )
-        typed = self.type.adopt(resource)
+        typed = self.adapter.adopt(resource)
         return typed, normalized
 
     # -- acquisition -------------------------------------------------------
@@ -1608,15 +1699,17 @@ class ResourcePool:
         return current >= start or current <= end  # overnight window
 
     async def _request_check(self, resource: Resource, req: AcquireRequest) -> CheckVerdict:
-        if not req.target:
+        check_target = req.probe or req.target
+        if not check_target:
             return CheckVerdict.PASS
-        key = (req.consumer or "", req.target, resource.id)
+        key = (req.consumer or "", check_target, resource.id)
         now = _now()
         cached = self._check_cache.get(key)
         if cached and cached[1] > now:
             return cached[0]
+        check_req = req if req.probe is None else replace(req, target=req.probe)
         try:
-            verdict = await self.type.on_request_check(resource, req)
+            verdict = await self.adapter.on_request_check(resource, check_req)
         except Exception as exc:
             self._guard_error("on_request_check", exc)
             verdict = CheckVerdict.FAIL
@@ -1697,6 +1790,10 @@ class ResourcePool:
                 await self._coordination.unregister_lease(self.name, lease.token)
             await self.storage.transition_release(self.name, rid, lease.slots)
             raise
+        try:
+            await self.adapter.on_acquire(result.resource, lease)
+        except Exception as exc:
+            self._guard_error("on_acquire", exc)
         return lease
 
     async def _renew(self, lease: Lease) -> bool:
@@ -1715,6 +1812,10 @@ class ResourcePool:
         if ok:
             lease.expires_at = expires_at
             lease.heartbeat_at = _now()
+            try:
+                await self.adapter.on_renew(lease.resource, lease)
+            except Exception as exc:
+                self._guard_error("on_renew", exc)
         return ok
 
     def _record_affinity(self, consumer: str, rid: str) -> None:
@@ -1753,6 +1854,11 @@ class ResourcePool:
             raise ConfigError("outcome must be a UsageOutcome")
         before = await self.storage.get(self.name, lease.resource_id)
         before_state = before.state if before is not None else None
+        if before is not None:
+            try:
+                await self.adapter.before_release(before, lease)
+            except Exception as exc:
+                self._guard_error("before_release", exc)
         removed = await self._coordination.unregister_lease(self.name, lease.token)
         if removed is None:
             # A revoke, expiry, concurrent retry or coordination wipe already
@@ -1934,6 +2040,12 @@ class ResourcePool:
                 ):
                     if resource.state in ALLOCATABLE_STATES:
                         target_state = ResourceState.QUOTA_EXHAUSTED
+                        if (
+                            self.cfg.quota_cooldown > 0
+                            and resource.usage_quota is not None
+                            and used_count >= resource.usage_quota
+                        ):
+                            next_available_at = now + self.cfg.quota_cooldown
                         self.purser.bus.publish(
                             "quota_exhausted", self.name, rid=rid, trace_id=lease.trace_id
                         )
@@ -1956,7 +2068,7 @@ class ResourcePool:
             )
             if ok:
                 try:
-                    await self.type.on_release(resource, outcome)
+                    await self.adapter.on_release(resource, outcome)
                 except Exception as exc:
                     self._guard_error("on_release", exc)
                 if outcome is UsageOutcome.BANNED:
@@ -2046,13 +2158,19 @@ class ResourcePool:
             trace_id=lease.trace_id,
         )
         self.purser.metrics.inc(f"pool.{self.name}.lease_lost_total")
+        try:
+            resource = await self.storage.get(self.name, lease.resource_id)
+            if resource is not None:
+                await self.adapter.on_lease_lost(resource, lease)
+        except Exception as exc:
+            self._guard_error("on_lease_lost", exc)
         await self._serve_waiters()
 
     def _guard_error(self, context: str, error: Exception) -> None:
         logger.warning("%s hook failed for pool %s: %s", context, self.name, error)
         try:
             asyncio.get_running_loop().create_task(
-                self.type.on_error(context, error)
+                self.adapter.on_error(context, error)
             )
         except Exception:
             pass
@@ -2097,7 +2215,7 @@ class ResourcePool:
         report: HealthReport
         async with self._validate_sem:
             try:
-                report = await self.type.validate(resource)
+                report = await self.adapter.validate_with_checks(resource)
             except Exception as exc:
                 self._guard_error("validate", exc)
                 report = HealthReport.fail(str(exc))
@@ -2117,6 +2235,18 @@ class ResourcePool:
                 from_states={ResourceState.VALIDATING, ResourceState.ACTIVE, ResourceState.IDLE, ResourceState.NEW},
             )
         return report
+
+    async def validate_check(self, rid: str, check: str) -> HealthReport:
+        """Run one named check in isolation; never writes health or state."""
+
+        resource = await self.require(rid)
+        try:
+            return await self.adapter.run_validator(resource, check)
+        except ConfigError:
+            raise
+        except Exception as exc:
+            self._guard_error("validate_check", exc)
+            return HealthReport.fail(str(exc))
 
     async def _on_validation_ok(self, rid: str, report: HealthReport) -> None:
         for _attempt in range(2):
@@ -2215,7 +2345,7 @@ class ResourcePool:
     async def _on_expiration(self, resource: Resource) -> None:
         """S18: absolute expiry flips the resource off."""
 
-        policy = self.cfg.meta.get("expire_policy", "suspended")
+        policy = self.cfg.expire_policy
         target = (
             ResourceState.QUOTA_EXHAUSTED
             if policy == "quota"
@@ -2276,7 +2406,7 @@ class ResourcePool:
         try:
             updated = await self.storage.get(self.name, rid)
             if updated is not None:
-                await self.type.on_state_changed(updated, old, new, reason)
+                await self.adapter.on_state_changed(updated, old, new, reason)
         except Exception as exc:
             self._guard_error("on_state_changed", exc)
 
@@ -2537,6 +2667,12 @@ class ResourcePool:
         if lease.consumer:
             self._consumer_holds.get(lease.consumer, set()).discard(rid)
             await self._kick_cooldown(rid, lease.consumer)
+        try:
+            resource = await self.storage.get(self.name, rid)
+            if resource is not None:
+                await self.adapter.on_revoke(resource, lease, reason)
+        except Exception as exc:
+            self._guard_error("on_revoke", exc)
         self.purser.audit.record(
             operator=operator, action="force_revoke", pool=self.name, rid=rid, reason=reason,
             detail={"token": lease.token, "consumer": lease.consumer},
@@ -2580,7 +2716,9 @@ class ResourcePool:
         tags: frozenset[str] | None = None,
         max_slots: int | None = None,
         usage_quota: Any = _MISSING,
+        quota_limit: Any = _MISSING,
         expires_at: Any = _MISSING,
+        next_available_at: Any = _MISSING,
         mutex_group: Any = _MISSING,
         schedule_window: Any = _MISSING,
         operator: str = "system",
@@ -2588,8 +2726,9 @@ class ResourcePool:
     ) -> Resource:
         """O2: mutate metadata/payload/slots; busy resources are rejected.
 
-        ``usage_quota`` / ``expires_at`` / ``mutex_group`` / ``schedule_window``
-        accept ``None`` to clear the value and ``_MISSING`` (omitted) to keep it.
+        ``usage_quota`` / ``quota_limit`` / ``expires_at`` /
+        ``next_available_at`` / ``mutex_group`` / ``schedule_window`` accept
+        ``None`` to clear the value and ``_MISSING`` (omitted) to keep it.
         """
 
         resource = await self.require(rid)
@@ -2604,6 +2743,13 @@ class ResourcePool:
                 clear.add("usage_quota")
             else:
                 extra["usage_quota"] = _optional_int(usage_quota, "usage_quota")
+        if quota_limit is not _MISSING:
+            if quota_limit is None:
+                clear.add("quota")
+            else:
+                limit = _optional_int(quota_limit, "quota_limit", minimum=1)
+                if limit is not None:
+                    extra["quota"] = Quota(limit=limit)
         if expires_at is not _MISSING:
             if expires_at is None:
                 clear.add("expires_at")
@@ -2611,6 +2757,15 @@ class ResourcePool:
                 if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
                     raise ConfigError("expires_at must be an epoch number or null")
                 extra["expires_at"] = float(expires_at)
+        if next_available_at is not _MISSING:
+            if next_available_at is None:
+                clear.add("next_available_at")
+            else:
+                if isinstance(next_available_at, bool) or not isinstance(
+                    next_available_at, (int, float)
+                ):
+                    raise ConfigError("next_available_at must be an epoch number or null")
+                extra["next_available_at"] = float(next_available_at)
         if mutex_group is not _MISSING:
             if mutex_group in (None, ""):
                 clear.add("mutex_group")
@@ -2639,6 +2794,100 @@ class ResourcePool:
         )
         updated = await self.require(rid)
         return updated
+
+    async def switch_resource(
+        self,
+        rid: str,
+        *,
+        operator: str = "system",
+        reason: str = "manual switch",
+    ) -> Resource | None:
+        """Type-driven switch (reserved extension point).
+
+        Calls ``ResourceAdapter.switch`` and persists whatever it returns: a
+        same-id result (typically the mutated old resource) updates the row in
+        place; a new-id result is imported and the old row is archived.
+        ``None`` leaves the resource untouched and returns ``None``.
+        """
+
+        resource = await self.require(rid)
+        if resource.concurrency.used_slots > 0:
+            raise BadState("cannot switch a resource with active leases")
+        if resource.state in (
+            ResourceState.ARCHIVED,
+            ResourceState.DRAINING,
+            ResourceState.BANNED,
+            ResourceState.LOST,
+        ):
+            raise BadState(f"cannot switch {rid} in state {resource.state.value}")
+        replacement = await self.adapter.switch(resource)
+        if replacement is None:
+            return None
+        replacement = self.adapter.adopt(replacement)
+        now = _now()
+        if replacement.id == rid:
+            ok = await self._apply_state(
+                rid,
+                ResourcePatch(
+                    payload=dict(replacement.payload),
+                    tags=replacement.tags,
+                    meta_patch={
+                        **resource.meta,
+                        **replacement.meta,
+                        "switched_at": now,
+                        "updated_at": now,
+                    },
+                ),
+                expect_state=resource.state,
+                reason="switch",
+            )
+            if not ok:
+                raise VersionConflict(f"switch lost the race on {rid}")
+            new_id = rid
+        else:
+            replacement.version = 0
+            replacement.meta = {
+                **replacement.meta,
+                "switched_from": rid,
+                "switched_at": now,
+                "created_at": now,
+                "updated_at": now,
+            }
+            try:
+                await self.storage.put(self.name, replacement, expected_version=0)
+            except VersionConflict:
+                raise VersionConflict(
+                    f"switch target {replacement.id!r} already exists"
+                ) from None
+            await self._apply_state(
+                rid,
+                ResourcePatch(
+                    state=ResourceState.ARCHIVED,
+                    meta_patch={
+                        **resource.meta,
+                        "switched_to": replacement.id,
+                        "switched_at": now,
+                    },
+                ),
+                expect_state=resource.state,
+                reason="switch",
+            )
+            new_id = replacement.id
+        self.purser.audit.record(
+            operator=operator,
+            action="switch",
+            pool=self.name,
+            rid=rid,
+            reason=reason,
+            detail={"old_id": rid, "new_id": new_id},
+        )
+        self.purser.bus.publish(
+            "resource_switched",
+            self.name,
+            rid=new_id,
+            data={"old_id": rid, "new_id": new_id, "reason": reason},
+        )
+        return await self.require(new_id)
 
     async def move_resource(
         self, rid: str, target_pool: ResourcePool, *, operator: str = "system", reason: str
@@ -2705,7 +2954,7 @@ class ResourcePool:
     # -- periodic maintenance ---------------------------------------------
 
     async def run_maintenance(self, name: str) -> dict[str, int]:
-        """Execute one of the six maintenance sweeps (5.9 / O19 / X3)."""
+        """Execute one of the maintenance sweeps (5.9 / O19 / X3)."""
 
         runner = {
             "quota_reset": self._maintenance_quota_reset,
@@ -2714,6 +2963,7 @@ class ResourcePool:
             "validating_gc": self._maintenance_validating,
             "quarantine_gc": self._maintenance_quarantine,
             "archive_gc": self._maintenance_archive,
+            "expire_gc": self._maintenance_expire,
         }.get(name)
         if runner is None:
             raise ConfigError(f"unknown maintenance task {name!r}")
@@ -2721,14 +2971,22 @@ class ResourcePool:
 
     async def _maintenance_quota_reset(self) -> dict[str, int]:
         moved = 0
+        now = _now()
         async for resource in self.storage.scan(self.name, states={ResourceState.QUOTA_EXHAUSTED}):
             quota = resource.quota
             if quota is not None and not quota.reset_daily(timezone=self.cfg.timezone):
                 continue
+            if (
+                self.cfg.quota_cooldown > 0
+                and resource.next_available_at is not None
+                and now < resource.next_available_at
+            ):
+                continue  # still cooling down
             patch = ResourcePatch(
                 state=ResourceState.IDLE,
                 quota=quota,
                 used_count=0,
+                clear_fields=frozenset({"next_available_at"}),
                 meta_patch={**resource.meta, "quota_reset_at": _now()},
             )
             if await self._cas(resource.id, patch):
@@ -2781,7 +3039,7 @@ class ResourcePool:
             until = float(resource.meta.get("quarantine_until") or resource.next_available_at or 0.0)
             if until > now:
                 continue
-            policy = self.cfg.meta.get("requalify_on_release", False)
+            policy = self.cfg.requalify_on_release
             target = ResourceState.VALIDATING if policy else ResourceState.IDLE
             if await self._cas(
                 resource.id,
@@ -2808,6 +3066,52 @@ class ResourcePool:
                     pool=self.name, rid=resource.id, reason="archive retention reached",
                 )
         return {"archive_gc": deleted}
+
+    async def _maintenance_expire(self) -> dict[str, int]:
+        """Archive resources that expired long ago (opt-in via config).
+
+        Only resources flipped off by ``expires_at`` (they carry
+        ``meta["expired_at"]``) are considered, so a manually suspended
+        resource is never touched.  Disabled by default: ``cfg.expired_retention``
+        must be set to an age in seconds.
+        """
+
+        retention = self.cfg.expired_retention
+        if retention is None:
+            return {"expire_gc": 0}
+        moved = 0
+        now = _now()
+        async for resource in self.storage.scan(
+            self.name, states={ResourceState.SUSPENDED}
+        ):
+            expired_at = resource.meta.get("expired_at")
+            if expired_at is None:
+                continue
+            if resource.concurrency.used_slots > 0:
+                continue
+            if now - float(expired_at) < retention:
+                continue
+            if await self._cas(
+                resource.id,
+                ResourcePatch(
+                    state=ResourceState.ARCHIVED,
+                    meta_patch={
+                        **resource.meta,
+                        "archived_at": now,
+                        "archived_reason": "expire_gc",
+                    },
+                ),
+            ):
+                moved += 1
+                self.purser.audit.record(
+                    operator="system",
+                    action="expire_gc_archive",
+                    pool=self.name,
+                    rid=resource.id,
+                    reason="expired resource retention reached",
+                )
+        await self._serve_waiters()
+        return {"expire_gc": moved}
 
     # -- misc --------------------------------------------------------------
 
@@ -2879,7 +3183,21 @@ class Purser:
         secret_key: bytes | None = None,
         secret_key_id: str = "1",
         previous_secret_keys: dict[str, bytes | str] | None = None,
+        use_globals: bool = True,
+        bundle_mode: str = "rollback",
+        bundle_fairness: BundleFairness | None = None,
+        reservation_ttl: float = 30.0,
+        bundle_gc_interval: float = 30.0,
+        fairness_ttl: float = 300.0,
     ) -> None:
+        if bundle_mode not in ("rollback", "two_phase"):
+            raise ConfigError(
+                "bundle_mode must be 'rollback' or 'two_phase'"
+            )
+        if reservation_ttl <= 0 or bundle_gc_interval <= 0 or fairness_ttl <= 0:
+            raise ConfigError(
+                "reservation_ttl / bundle_gc_interval / fairness_ttl must be > 0"
+            )
         self._isolation = IsolationGuard(self)
         self._isolation.claim_many(
             [
@@ -2888,7 +3206,7 @@ class Purser:
                 else redis_identity(redis_url)
             ]
         )
-        self.types = ResourceTypeRegistry()
+        self.adapters = ResourceAdapterRegistry()
         self.bus = EventBus(maxsize=event_queue_size)
         self.usage = UsageLedger(capacity=usage_ledger_size)
         self.audit = AuditLog(sqlite_path=audit_path)
@@ -2900,6 +3218,11 @@ class Purser:
         )
         self.probe_guard = ProbeGuard()
         self.maintenance_enabled = maintenance_enabled
+        self.bundle_mode = bundle_mode
+        self.bundle_fairness = bundle_fairness
+        self.reservation_ttl = reservation_ttl
+        self.bundle_gc_interval = bundle_gc_interval
+        self.fairness_ttl = fairness_ttl
         self.storage_kind = storage
         self.coordination_kind = coordination
         self.mysql_url = mysql_url
@@ -2918,12 +3241,25 @@ class Purser:
             previous_keys=dict(previous_secret_keys or {}),
         )
         self._pools: dict[str, ResourcePool] = {}
+        self._bundles: dict[str, BundleLease] = {}
+        self._bundle_store: BundleStore | None = None
+        self._fair_heap: list[tuple[int, int, _FairWaiter]] = []
+        self._fair_seq = 0
+        self._bundle_gc_task: asyncio.Task[Any] | None = None
         self._running = False
 
-        from purser.types import AccountType, ProxyType
+        from purser.adapters import AccountAdapter, ProxyAdapter
 
-        self.types.register(ProxyType(probe_guard=self.probe_guard))
-        self.types.register(AccountType())
+        self.adapters.register(ProxyAdapter(probe_guard=self.probe_guard))
+        self.adapters.register(AccountAdapter())
+        builtin_kinds = {ProxyAdapter.kind, AccountAdapter.kind}
+        if use_globals:
+            for kind, build in default_adapter_factories().items():
+                if kind in builtin_kinds or kind in self.adapters.names():
+                    raise ConfigError(
+                        f"default resource adapter {kind!r} conflicts with a builtin adapter"
+                    )
+                self.adapters.register(build())
 
     def __getstate__(self) -> Any:
         raise IsolationConflict(PICKLE_MESSAGE)
@@ -2933,18 +3269,18 @@ class Purser:
 
     # -- plugins / pools ---------------------------------------------------
 
-    def register_type(self, rtype: ResourceType) -> None:
+    def register_adapter(self, adapter: ResourceAdapter) -> None:
         self._ensure_process()
-        identity = resource_type_identity(rtype)
+        identity = resource_adapter_identity(adapter)
         self._isolation.claim_many([identity])
         try:
-            self.types.register(rtype)
+            self.adapters.register(adapter)
         except BaseException:
             self._isolation.release_many([identity[0]])
             raise
 
     def _pool_isolation_entries(
-        self, cfg: PoolConfig, rtype: ResourceType
+        self, cfg: PoolConfig, adapter: ResourceAdapter
     ) -> list[Any]:
         """Scheduling-plane identities this pool would actually use."""
 
@@ -2963,7 +3299,7 @@ class Purser:
                 if self.redis_client is not None
                 else redis_identity(self.redis_url)
             )
-        entries.append(resource_type_identity(rtype))
+        entries.append(resource_adapter_identity(adapter))
         return entries
 
     def _release_pool_claims(self, pool: ResourcePool) -> None:
@@ -3024,7 +3360,7 @@ class Purser:
         self._ensure_process()
         if name in self._pools:
             raise PoolExists(f"pool {name!r} already exists")
-        rtype = self.types.get(kind)
+        adapter = self.adapters.get(kind)
         if isinstance(config, PoolConfig):
             cfg = config
         else:
@@ -3035,11 +3371,8 @@ class Purser:
             cfg = PoolConfig(kind=kind, **{**defaults, **(config or {})})
         if overrides:
             cfg = cfg.with_overrides(**overrides)
-        if cfg.max_slots is None:
-            cfg = cfg.with_overrides(max_slots=rtype.default_concurrency)
-        if not cfg.secret_fields:
-            cfg = cfg.with_overrides(secret_fields=rtype.secret_fields)
-        entries = self._pool_isolation_entries(cfg, rtype)
+        cfg = apply_adapter_defaults(cfg, adapter)
+        entries = self._pool_isolation_entries(cfg, adapter)
         self._isolation.claim_many(entries)
         keys = list(
             dict.fromkeys(entry[0] for entry in entries if entry is not None)
@@ -3047,7 +3380,7 @@ class Purser:
         try:
             storage = self._make_storage(cfg)
             coordination = self._make_coordination(cfg)
-            pool = ResourcePool(name, self, rtype, cfg, storage, coordination)
+            pool = ResourcePool(name, self, adapter, cfg, storage, coordination)
         except BaseException:
             self._isolation.release_many(keys)
             raise
@@ -3096,6 +3429,506 @@ class Purser:
 
     def pool_names(self) -> list[str]:
         return list(self._pools)
+
+    # -- cross-pool bundles (O8) -----------------------------------------
+
+    @staticmethod
+    def _coerce_bundle(request: Any) -> BundleRequest:
+        req = bundle_request_from_dict(request) if isinstance(request, dict) else request
+        if not isinstance(req, BundleRequest):
+            raise TypeError("acquire_bundle expects a BundleRequest or dict")
+        return req
+
+    def _register_bundle(
+        self, req: BundleRequest, acquired: list[tuple[str, Lease]]
+    ) -> BundleLease:
+        bundle_id = req.bundle_id or f"bundle-{uuid.uuid4().hex[:12]}"
+        bundle = BundleLease(
+            bundle_id=bundle_id,
+            consumer=req.consumer,
+            members={name: lease for name, lease in acquired},
+        )
+        self._bundles[bundle_id] = bundle
+        return bundle
+
+    async def _release_bundle_members(self, acquired: list[tuple[str, Lease]]) -> None:
+        for pool_name, lease in reversed(acquired):
+            pool = self._pools.get(pool_name)
+            if pool is None:
+                continue
+            try:
+                await pool.release(lease)
+            except Exception:
+                continue
+
+    async def _order_bundle_slots(
+        self, req: BundleRequest, *, deterministic: bool = False
+    ) -> list[BundleSlot]:
+        slots = list(req.slots)
+        if deterministic:
+            # Global deterministic order across instances: no ABBA cycle.
+            ordered_slots = sorted(
+                slots,
+                key=lambda slot: (slot.pool, slot.resource_id or ""),
+            )
+        elif req.order == "scarce_first":
+            idle: dict[str, int] = {}
+            for slot in slots:
+                pool = self.require_pool(slot.pool)
+                counts = await pool.counts()
+                idle[slot.pool] = counts.get(ResourceState.IDLE, 0)
+            ordered_slots = sorted(slots, key=lambda slot: idle[slot.pool])
+        else:
+            return slots
+        ordered: list[BundleSlot] = []
+        placed: set[str] = set()
+        for slot in ordered_slots:
+            # A match slot depends on its anchor: emit the whole anchor
+            # chain first even when the anchor pool is not the scarcer one.
+            chain: list[BundleSlot] = []
+            seen: set[str] = set()
+            cur = slot
+            while (
+                cur.match is not None
+                and cur.match.anchor_pool not in placed
+                and cur.match.anchor_pool not in seen
+            ):
+                seen.add(cur.match.anchor_pool)
+                anchor = next(
+                    (candidate for candidate in slots if candidate.pool == cur.match.anchor_pool),
+                    None,
+                )
+                if anchor is None or anchor.pool in placed:
+                    break
+                chain.append(anchor)
+                cur = anchor
+            for ancestor in reversed(chain):
+                if ancestor.pool not in placed:
+                    ordered.append(ancestor)
+                    placed.add(ancestor.pool)
+            if slot.pool not in placed:
+                ordered.append(slot)
+                placed.add(slot.pool)
+        return ordered
+
+    async def _store(self) -> BundleStore:
+        if self._bundle_store is None:
+            if self.coordination_kind == "redis":
+                self._bundle_store = RedisBundleStore(
+                    client=self.redis_client,
+                    url=self.redis_url,
+                )
+            else:
+                self._bundle_store = MemoryBundleStore()
+        return self._bundle_store
+
+    async def _fairness_counts(
+        self, store: BundleStore
+    ) -> tuple[int, dict[str, int], dict[str, int]]:
+        total = 0
+        by_consumer: dict[str, int] = {}
+        by_pool: dict[str, int] = {}
+        for res in await store.active(_now()):
+            total += 1
+            if res.consumer:
+                by_consumer[res.consumer] = by_consumer.get(res.consumer, 0) + 1
+            for pool in res.pools:
+                by_pool[pool] = by_pool.get(pool, 0) + 1
+        return total, by_consumer, by_pool
+
+    def _fairness_reject(
+        self,
+        req: BundleRequest,
+        total: int,
+        by_consumer: dict[str, int],
+        by_pool: dict[str, int],
+        idle: dict[str, int],
+    ) -> str | None:
+        fairness = self.bundle_fairness
+        if fairness is None:
+            return None
+        if fairness.max_total is not None and total + 1 > fairness.max_total:
+            return "max_total"
+        if (
+            fairness.max_per_consumer is not None
+            and req.consumer
+            and by_consumer.get(req.consumer, 0) + 1 > fairness.max_per_consumer
+        ):
+            return "max_per_consumer"
+        for slot in req.slots:
+            reservable = max(
+                0, idle.get(slot.pool, 0) - fairness.per_pool_headroom
+            )
+            if by_pool.get(slot.pool, 0) + 1 > reservable:
+                return f"per_pool_headroom:{slot.pool}"
+        return None
+
+    def _fairness_release_notify(self) -> None:
+        """Wake the highest-priority waiter; it re-checks admission."""
+
+        while self._fair_heap:
+            _neg, _seq, waiter = heapq.heappop(self._fair_heap)
+            if waiter.cancelled:
+                continue
+            waiter.event.set()
+            return
+
+    async def _fairness_gate(self, req: BundleRequest, store: BundleStore) -> None:
+        fairness = self.bundle_fairness
+        if fairness is None:
+            return
+        loop = asyncio.get_running_loop()
+        deadline = (
+            loop.time() + fairness.timeout if fairness.timeout is not None else None
+        )
+        waiter: _FairWaiter | None = None
+        try:
+            while True:
+                total, by_consumer, by_pool = await self._fairness_counts(store)
+                idle: dict[str, int] = {}
+                for slot in req.slots:
+                    if slot.pool in idle:
+                        continue
+                    counts = await self.require_pool(slot.pool).counts()
+                    idle[slot.pool] = counts.get(ResourceState.IDLE, 0)
+                reason = self._fairness_reject(
+                    req, total, by_consumer, by_pool, idle
+                )
+                if reason is None:
+                    return
+                if not fairness.wait:
+                    raise BundleQuotaExceeded(
+                        f"bundle fairness limit: {reason}"
+                    )
+                if deadline is not None and loop.time() >= deadline:
+                    raise BundleQuotaExceeded(
+                        f"bundle fairness limit {reason}: wait timed out"
+                    )
+                if waiter is None:
+                    waiter = _FairWaiter(
+                        seq=self._fair_seq,
+                        priority=req.priority,
+                        event=asyncio.Event(),
+                    )
+                    self._fair_seq += 1
+                    heapq.heappush(
+                        self._fair_heap, (-waiter.priority, waiter.seq, waiter)
+                    )
+                if store.distributed:
+                    # No push channel cross-instance: poll the shared store
+                    # like pool waiters do, so a release on another instance
+                    # wakes us within WAITER_POLL_INTERVAL.
+                    remaining = (
+                        None if deadline is None else deadline - loop.time()
+                    )
+                    window = (
+                        min(WAITER_POLL_INTERVAL, remaining)
+                        if remaining is not None and remaining > 0
+                        else WAITER_POLL_INTERVAL
+                    )
+                    try:
+                        await asyncio.wait_for(waiter.event.wait(), window)
+                    except asyncio.TimeoutError:
+                        waiter.event.clear()
+                        continue  # poll tick: re-check shared admission
+                    waiter.event.clear()
+                    waiter = None  # poke consumed; re-register before waiting
+                    continue
+                try:
+                    await asyncio.wait_for(waiter.event.wait(), fairness.timeout)
+                except (asyncio.TimeoutError, TimeoutError) as exc:
+                    raise BundleQuotaExceeded(
+                        f"bundle fairness limit {reason}: wait timed out"
+                    ) from exc
+                waiter.event.clear()
+                waiter = None
+        except asyncio.CancelledError:
+            if waiter is not None:
+                waiter.cancelled = True
+            raise
+        finally:
+            if waiter is not None:
+                waiter.cancelled = True
+
+    async def acquire_bundle(
+        self,
+        request: BundleRequest | dict[str, Any],
+        **overrides: Any,
+    ) -> BundleLease:
+        """Acquire one lease per bundle slot across pools (O8, opt-in v2).
+
+        Default ``rollback`` mode: scarce/declared order, rollback + jittered
+        retry, ``best_effort`` partials.  With ``bundle_mode="two_phase"`` (or
+        ``strict=True``) members are assembled in a deterministic global order
+        and confirmed atomically on the reservation store.  With
+        ``bundle_fairness`` configured, admission is gated by quota and
+        per-pool headroom before any member is taken.  All advanced paths are
+        off by default.
+        """
+
+        req = self._coerce_bundle(request)
+        keys = (
+            "consumer",
+            "mode",
+            "order",
+            "timeout",
+            "bundle_id",
+            "max_retries",
+            "strict",
+            "priority",
+        )
+        unknown = set(overrides) - set(keys)
+        if unknown:
+            fields = ", ".join(sorted(unknown))
+            raise TypeError(
+                f"acquire_bundle() got unexpected keyword argument(s): {fields}"
+            )
+        if overrides:
+            kwargs = {key: value for key, value in overrides.items() if value is not None}
+            req = replace(req, **kwargs)
+        strict = (
+            req.strict if req.strict is not None else self.bundle_mode == "two_phase"
+        )
+        if strict and req.mode == "best_effort":
+            raise ConfigError("strict (two-phase) bundles cannot use best_effort")
+        store: BundleStore | None = None
+        if strict or self.bundle_fairness is not None:
+            store = await self._store()
+            if req.bundle_id is None:
+                req = replace(req, bundle_id=f"bundle-{await store.next_seq():012d}")
+        bundle_id = req.bundle_id or ""
+        if req.bundle_id and req.bundle_id in self._bundles:
+            existing = self._bundles[req.bundle_id]
+            if existing.consumer == req.consumer:
+                return existing
+            raise ConfigError(f"bundle id {req.bundle_id!r} is already in use")
+        pools = tuple(sorted(slot.pool for slot in req.slots))
+        marker_ttl = (
+            self.fairness_ttl
+            if self.bundle_fairness is not None
+            else self.reservation_ttl
+        )
+        try:
+            if self.bundle_fairness is not None and store is not None:
+                await self._fairness_gate(req, store)
+            if store is not None:
+                await store.admit(bundle_id, req.consumer, pools, marker_ttl)
+            last_error: Exception | None = None
+            for attempt in range(req.max_retries + 1):
+                slots = await self._order_bundle_slots(
+                    req, deterministic=strict
+                )
+                acquired: list[tuple[str, Lease]] = []
+                try:
+                    if store is not None:
+                        await store.begin_members(bundle_id, self.reservation_ttl)
+                    for slot in slots:
+                        pool = self.require_pool(slot.pool)
+                        areq = (
+                            replace(slot.req)
+                            if slot.req is not None
+                            else AcquireRequest()
+                        )
+                        consumer = (
+                            req.consumer if req.consumer is not None else areq.consumer
+                        )
+                        areq = replace(areq, consumer=consumer)
+                        if slot.resource_id is not None:
+                            areq = replace(areq, resource_id=slot.resource_id)
+                        if slot.match is not None:
+                            anchor = next(
+                                (
+                                    lease
+                                    for name, lease in acquired
+                                    if name == slot.match.anchor_pool
+                                ),
+                                None,
+                            )
+                            if anchor is None:
+                                raise ConfigError(
+                                    "bundle match anchor pool "
+                                    f"{slot.match.anchor_pool!r} must be acquired "
+                                    "before the matched slot"
+                                )
+                            value = self._bundle_match_value(
+                                anchor.resource, slot.match
+                            ) if anchor.resource is not None else None
+                            if value is None:
+                                raise ConfigError(
+                                    "bundle match field "
+                                    f"{slot.match.from_field!r} missing on "
+                                    f"resource {anchor.resource_id!r}"
+                                )
+                            areq = replace(
+                                areq, required_tag=f"{slot.match.to_tag}:{value}"
+                            )
+                        if req.timeout is not None:
+                            areq = replace(areq, timeout=req.timeout)
+                        lease = await pool.acquire(areq)
+                        acquired.append((slot.pool, lease))
+                        if store is not None:
+                            await store.add_member(
+                                bundle_id,
+                                ReservationMember(
+                                    pool=slot.pool,
+                                    rid=lease.resource_id,
+                                    token=lease.token,
+                                ),
+                            )
+                    if store is not None:
+                        await store.confirm(bundle_id, marker_ttl)
+                    return self._register_bundle(req, acquired)
+                except asyncio.CancelledError:
+                    await self._release_bundle_members(acquired)
+                    raise
+                except Exception as exc:
+                    await self._release_bundle_members(acquired)
+                    last_error = exc
+                    if req.mode == "best_effort" and acquired:
+                        if store is not None:
+                            await store.confirm(bundle_id, marker_ttl)
+                        return self._register_bundle(req, acquired)
+                    transient = isinstance(
+                        exc, (PoolEmpty, PoolExhausted, ResourceBusy)
+                    )
+                    if attempt < req.max_retries and transient:
+                        # Deadlock mitigation: rollback + jittered backoff.
+                        await asyncio.sleep(
+                            random.uniform(0.05, 0.2) * (attempt + 1)
+                        )
+                        continue
+                    raise BundleAcquireFailed(
+                        f"bundle {req.bundle_id or '-'} could not be completed: {exc}"
+                    ) from exc
+            raise BundleAcquireFailed(
+                f"bundle {req.bundle_id or '-'} could not be completed: {last_error}"
+            ) from last_error
+        except BaseException:
+            if store is not None:
+                await store.release(bundle_id)
+            if self.bundle_fairness is not None:
+                self._fairness_release_notify()
+            raise
+
+    async def release_bundle(
+        self,
+        bundle: BundleLease,
+        *,
+        outcome_by_pool: dict[str, UsageOutcome] | None = None,
+        used_by_pool: dict[str, int] | None = None,
+    ) -> None:
+        """Release every member lease of a bundle (reversed acquisition order)."""
+
+        outcomes = outcome_by_pool or {}
+        used = used_by_pool or {}
+        for pool_name, lease in reversed(list(bundle.members.items())):
+            pool = self._pools.get(pool_name)
+            if pool is None:
+                continue
+            await pool.release(
+                lease,
+                outcome=outcomes.get(pool_name),
+                used=used.get(pool_name),
+            )
+        self._bundles.pop(bundle.bundle_id, None)
+        if self._bundle_store is not None:
+            await self._bundle_store.release(bundle.bundle_id)
+            if self.bundle_fairness is not None:
+                self._fairness_release_notify()
+
+    async def bundle_gc(self) -> dict[str, int]:
+        """Keep live bundle markers fresh, then sweep expired reservations."""
+
+        store = self._bundle_store
+        if store is None:
+            return {"revoked": 0, "pruned": 0, "revived": 0}
+        ttl = (
+            self.fairness_ttl
+            if self.bundle_fairness is not None
+            else self.reservation_ttl
+        )
+        revived = 0
+        # Bundles this process still holds must never drop out of the active
+        # set, otherwise fairness under-counts long-held combinations.
+        for bundle in list(self._bundles.values()):
+            await store.refresh(bundle.bundle_id, ttl)
+            revived += 1
+        revoked = 0
+        pruned = 0
+        for res in await store.expired(_now()):
+            # A committed bundle whose member leases are still alive was
+            # assembled by a live (possibly other-instance) process: refresh
+            # instead of pruning so fairness keeps counting it.
+            if (
+                res.status == "committed"
+                and res.members
+                and await self._bundle_members_alive(res)
+            ):
+                await store.refresh(res.bundle_id, ttl)
+                revived += 1
+                continue
+            if res.status == "assembling":
+                for member in res.members.values():
+                    pool = self._pools.get(member.pool)
+                    if pool is None:
+                        continue
+                    try:
+                        await pool.force_revoke(
+                            member.rid,
+                            operator="system",
+                            reason="bundle_gc",
+                            token=member.token,
+                        )
+                        revoked += 1
+                    except Exception:
+                        continue
+            await store.release(res.bundle_id)
+            pruned += 1
+        if self.bundle_fairness is not None:
+            self._fairness_release_notify()
+        return {"revoked": revoked, "pruned": pruned, "revived": revived}
+
+    async def _bundle_members_alive(self, res: Any) -> bool:
+        for member in res.members.values():
+            pool = self._pools.get(member.pool)
+            if pool is None:
+                return False
+            leases = await pool.leases(member.rid)
+            if not any(lease.token == member.token for lease in leases):
+                return False
+        return True
+
+    async def _bundle_gc_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.bundle_gc_interval)
+            try:
+                await self.bundle_gc()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("bundle_gc sweep failed")
+
+    @contextlib.asynccontextmanager
+    async def bundle(
+        self,
+        request: BundleRequest | dict[str, Any],
+        **overrides: Any,
+    ) -> AsyncIterator[BundleLease]:
+        """Atomic bundle acquire/release context manager (O8)."""
+
+        bundle_lease = await self.acquire_bundle(request, **overrides)
+        try:
+            yield bundle_lease
+        finally:
+            await self.release_bundle(bundle_lease)
+
+    def _bundle_match_value(self, resource: Resource, rule: Any) -> str | None:
+        value = getattr(resource, rule.from_field, None)
+        if value is None:
+            value = (getattr(resource, "payload", None) or {}).get(rule.from_field)
+        if value is None or value == "":
+            return None
+        return str(value)
 
     # -- usage report (R1) -------------------------------------------------
 
@@ -3432,13 +4265,21 @@ class Purser:
         await self.bus.start()
         for pool in self._pools.values():
             await pool.start()
+        if self.bundle_mode == "two_phase" or self.bundle_fairness is not None:
+            self._bundle_gc_task = asyncio.create_task(self._bundle_gc_loop())
 
     async def close(self) -> None:
         self._ensure_process()
         self._running = False
         try:
+            task, self._bundle_gc_task = self._bundle_gc_task, None
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
             for pool in self._pools.values():
                 await pool.close()
+            self._bundles.clear()
             await self.bus.stop()
             self.audit.close()
         finally:

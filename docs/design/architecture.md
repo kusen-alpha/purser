@@ -11,7 +11,7 @@ flowchart TB
         C4["LocalScheduler"]
     end
 
-    subgraph Core["purser 内核（与资源类型无关）"]
+    subgraph Core["purser 内核（与资源适配器无关）"]
         A["Purser / 资源池"]
         M["状态机 StateMachine"]
         AL["分配器 Allocator"]
@@ -24,10 +24,10 @@ flowchart TB
         U["用量账本 UsageLedger"]
     end
 
-    subgraph Plugin["资源类型插件"]
-        P1["ProxyType"]
-        P2["AccountType"]
-        P3["自定义 ResourceType"]
+    subgraph Plugin["资源适配器插件"]
+        P1["ProxyAdapter"]
+        P2["AccountAdapter"]
+        P3["自定义 ResourceAdapter"]
     end
 
     subgraph Backend["后端适配层"]
@@ -64,7 +64,7 @@ flowchart TB
 | 概念 | 说明 |
 | --- | --- |
 | `Resource` | 一条资源（代理/账号/自定义对象），携带状态、健康分、租约、配额 |
-| `ResourceType` | 类型插件：`generate` / `validate` / 请求级钩子 |
+| `ResourceAdapter` | 适配器插件：`generate` / `validate` / 请求级钩子 |
 | `Pool` | 一个类型 + 一套配置对应的资源集合 |
 | `Lease` | 一次租约：token + TTL + 心跳 + 槽位数 |
 | `StorageBackend` | 存储层接口 |
@@ -100,7 +100,7 @@ purser/
   metrics.py             # 计数器/直方图
   core/
     state.py             # ResourceState + 转移表
-    resource.py          # Resource / PayloadField / Lease / AcquireRequest
+    resource.py          # Resource / PayloadField(Annotated schema) / Lease / AcquireRequest
     allocator.py         # 分配器协议与内置策略
     lease.py             # LeaseManager / 租约回收器
     health.py            # HealthReport / 验活调度
@@ -117,10 +117,10 @@ purser/
     mysql.py             # MySQL 存储
     coordination.py      # Memory / Redis 协调
     serde.py             # 资源序列化
-  types/
-    base.py              # ResourceType 基类与注册表
-    proxy.py             # 代理类型
-    account.py           # 账号类型
+  adapters/
+    base.py              # ResourceAdapter 基类与注册表
+    proxy.py             # 代理适配器
+    account.py           # 账号适配器
   local/
     protocol.py          # 本地调度协议
     server.py            # 本地调度服务
@@ -141,4 +141,4 @@ purser/
 - **持久化**：SQLite / MySQL 存储、审计落库、备份恢复。
 - **同步 Purser**：独立事件循环线程、回调线程池、跨进程隔离。
 
-P2/P3 项（组合租约 bundle、配置门控自动抢占、blue-green 迁移、事件游标增强等）按设计文档预留，未进入首版。
+P2/P3 项（配置门控自动抢占、blue-green 迁移、事件游标增强等）按设计文档预留；组合租约 bundle 已落地（单调度进程内原子获取 + 失败回滚 + `MatchRule` 约束派生 + REST `bundle` 字段 + `max_retries` 抖动重试 + 锚点排序约束）；跨实例严格两阶段（`bundle_mode="two_phase"`）与整体公平配额（`bundle_fairness`）也已实现，默认关闭，用法见[组合租约指南](../guides/bundle-leases.md)。

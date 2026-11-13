@@ -29,7 +29,7 @@ curl -X POST http://127.0.0.1:8000/pools \
 {"pool": "proxies", "kind": "proxy"}
 ```
 
-`kind` 必须是已注册类型。池已存在返回 `409`。
+`kind` 必须是已注册适配器。池已存在返回 `409`。
 
 ## 统计
 
@@ -88,7 +88,7 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/recall \
   -H "Content-Type: application/json" \
   -d '{"batch_id": "b-20261108", "action": "requalify", "reason": "recheck"}'
 
-# 维护任务：quota_reset | periodic_unban | lost_gc | validating_gc | quarantine_gc | archive_gc
+# 维护任务：quota_reset | periodic_unban | lost_gc | validating_gc | quarantine_gc | archive_gc | expire_gc
 curl -X POST http://127.0.0.1:8000/pools/proxies/maintenance/quarantine_gc
 ```
 

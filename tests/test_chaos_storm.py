@@ -44,7 +44,7 @@ async def test_chaos_storm_invariants(storage_kind, coordination_kind):
         sqlite_path=":memory:" if storage_kind == "sqlite" else None,
         redis_client=fakeredis.aioredis.FakeRedis() if coordination_kind == "redis" else None,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     pool = ps.create_pool("chaos", "fakecheck", max_slots=3)
     try:
         records = [{"id": f"r{i}", "host": "127.0.0.1", "port": i} for i in range(5)]
@@ -148,7 +148,7 @@ async def test_chaos_restart_across_churn(tmp_path, storage_kind, coordination_k
             sqlite_path=path,
             redis_client=fakeredis.aioredis.FakeRedis() if coordination_kind == "redis" else None,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1 = build()
@@ -209,7 +209,7 @@ async def test_multi_instance_chaos_no_oversell(
             sqlite_path=path,
             redis_url=REAL_REDIS_URL,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     instances = [build() for _ in range(3)]

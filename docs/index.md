@@ -28,9 +28,9 @@
 
     ---
 
-    代理、账号和自定义资源都收敛到 `Resource` 与 `ResourceType`，调度内核不感知业务差异。
+    代理、账号和自定义资源都收敛到 `Resource` 与 `ResourceAdapter`，调度内核不感知业务差异。
 
-    [:octicons-arrow-right-24: 自定义资源类型](guides/custom-resource-type.md)
+    [:octicons-arrow-right-24: 自定义资源适配器](guides/custom-resource-adapter.md)
 
 -   :material-shield-check-outline:{ .lg .middle } __状态机与验活__
 
@@ -88,7 +88,7 @@ asyncio.run(main())
 | 第一次完成 | [安装](getting-started/install.md) → [嵌入式快速开始](getting-started/quickstart-async.md) |
 | 理解资源为什么获取不到 | [资源可用性判定](guides/availability.md) |
 | 理解租约、验活、强制撤销 | [租约生命周期](guides/lease-lifecycle.md) |
-| 接代理/账号以外的资源 | [自定义资源类型](guides/custom-resource-type.md) |
+| 接代理/账号以外的资源 | [自定义资源适配器](guides/custom-resource-adapter.md) |
 | 在同步代码里调用 | [同步 Purser](guides/sync-facade.md) |
 
 ### 我是运维/平台方

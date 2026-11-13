@@ -43,7 +43,7 @@ def _make_sqlite_purser(path: str, coordination_kind: str, audit_path: str | Non
         audit_path=audit_path,
         redis_client=fakeredis.aioredis.FakeRedis() if coordination_kind == "redis" else None,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     return ps
 
 

@@ -81,7 +81,8 @@ print(report.validation)   # on_import 的逐条结果
 
 ## 验活语义
 
-- 验活结果由 `ResourceType.validate()` 返回 `HealthReport`；失败进入 `QUARANTINED`，连续失败升级 `BANNED`。
+- 验活结果由 `ResourceAdapter.validate()` 返回 `HealthReport`；失败进入 `QUARANTINED`，连续失败升级 `BANNED`。
+- 命名检查项（`@validator`）先于 `validate()` 自动执行：`both=True` 的检查项失败与验活失败同流程（`QUARANTINED` / 连续失败升 `BANNED`）；`both=False` 的检查项只按名手动触发，不改状态。详见[自定义资源适配器](custom-resource-adapter.md)。
 - 请求级校验（`on_request_check`）发生在获取路径，按目标站拒绝不合适的候选；它与导入验活是两条独立路径。
 - 验活并发度由 `validate_concurrency` 控制；后台任务 worker 数取 `min(validate_concurrency, 本批资源数)`。
 

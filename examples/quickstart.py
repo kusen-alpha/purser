@@ -1,4 +1,4 @@
-"""Purser 端到端演示：嵌入式、服务态、Redis、自定义类型。
+"""Purser 端到端演示：嵌入式、服务态、Redis、自定义适配器。
 
 运行：.venv\\Scripts\\python examples\\quickstart.py
 """
@@ -16,12 +16,12 @@ from purser import (
     HealthReport,
     Purser,
     Resource,
-    ResourceType,
+    ResourceAdapter,
     UsageOutcome,
 )
 
 
-class LocalChecker(ResourceType):
+class LocalChecker(ResourceAdapter):
     """不联网的确定性验活器，适合本地演示与测试。"""
 
     kind = "local"
@@ -42,7 +42,7 @@ class LocalChecker(ResourceType):
 async def embedded() -> None:
     print("== 嵌入式 ==")
     ps = Purser(maintenance_enabled=False)
-    ps.register_type(LocalChecker())
+    ps.register_adapter(LocalChecker())
     pool = ps.create_pool("demo", "local")
     await pool.import_resources(
         [
@@ -73,7 +73,7 @@ async def service() -> None:
     from purser.ui.server import create_app
 
     ps = Purser(maintenance_enabled=False)
-    ps.register_type(LocalChecker())
+    ps.register_adapter(LocalChecker())
     ps.create_pool("demo", "local")
     app = create_app(ps, api_key=None, readonly_key=None)
 
@@ -110,7 +110,7 @@ async def redis_backend() -> None:
         sqlite_path=":memory:",
         redis_client=fakeredis.aioredis.FakeRedis(),
     )
-    ps.register_type(LocalChecker())
+    ps.register_adapter(LocalChecker())
     pool = ps.create_pool("shared", "local")
     await pool.import_resources(
         [{"id": f"r{i}"} for i in range(3)], import_validate="on_import"

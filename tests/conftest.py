@@ -11,13 +11,13 @@ from fastapi.testclient import TestClient
 from redis import asyncio as aioredis
 
 from purser import Purser
+from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport
 from purser.core.resource import Resource
-from purser.types.base import ResourceType
 from purser.ui.server import create_app
 
 
-class FakeChecker(ResourceType):
+class FakeChecker(ResourceAdapter):
     """Deterministic checker: alive unless programmed to fail."""
 
     kind = "fakecheck"
@@ -123,7 +123,7 @@ async def purser(storage_kind: str, coordination_kind: str):
     ps = Purser(
         **kwargs,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     await ps.start()
     yield ps
     await ps.close()
@@ -150,10 +150,10 @@ def make_client():
         def factory(
             api_key: str | None = "admin-key",
             readonly_key: str | None = "ro-key",
-            checker: ResourceType | None = None,
+            checker: ResourceAdapter | None = None,
         ):
             ps = Purser(maintenance_enabled=False)
-            ps.register_type(checker or FakeChecker())
+            ps.register_adapter(checker or FakeChecker())
             app = create_app(ps, api_key=api_key, readonly_key=readonly_key)
             return stack.enter_context(TestClient(app)), ps
 

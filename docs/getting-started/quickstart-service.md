@@ -28,7 +28,7 @@ curl -X POST http://127.0.0.1:8000/pools \
   -d '{"name": "proxies", "kind": "proxy"}'
 ```
 
-`kind` 使用已注册的类型，例如内置的 `proxy` / `account`。自定义类型需要先通过 `ps.register_type(...)` 注册（可用 `create_app(ps)` 自行组装应用）；`PURSER_POOLS_FILE` 只用于恢复已有池的配置，不会注册新类型。
+`kind` 使用已注册的类型，例如内置的 `proxy` / `account`。自定义适配器需要先通过 `ps.register_adapter(...)` 注册（可用 `create_app(ps)` 自行组装应用）；`PURSER_POOLS_FILE` 只用于恢复已有池的配置，不会注册新适配器。
 
 ## 3. 导入资源
 

@@ -23,7 +23,7 @@
      worker 1  worker 2 ...     # 各自持有 LocalSchedulerClient
 ```
 
-默认 `start_method="spawn"`，因此调度进程不会继承父进程的 `Purser` 实例；类型通过 `types=[...]` 显式传入并在子进程内注册。
+默认 `start_method="spawn"`，因此调度进程不会继承父进程的 `Purser` 实例；适配器通过 `adapters=[...]` 显式传入并在子进程内注册。
 
 ## 启动调度进程
 
@@ -34,7 +34,7 @@ with LocalScheduler(
     storage="sqlite",
     coordination="memory",      # 协调状态始终在调度进程内
     sqlite_path="/var/lib/purser/purser.db",
-    types=[MyResourceType()],
+    adapters=[MyResourceAdapter()],
 ) as sched:
     sched.create_pool("workers", "my-resource", config={"lease_ttl": 120})
     sched.import_resources("workers", [{"id": "r1"}, {"id": "r2"}])
@@ -77,7 +77,7 @@ def task():
 父进程开启环境发布：
 
 ```python
-with LocalScheduler(types=[MyResourceType()]) as sched:
+with LocalScheduler(adapters=[MyResourceAdapter()]) as sched:
     with sched.env():       # 设置 PURSER_LOCAL_SCHEDULER，退出时恢复
         with ProcessPoolExecutor(initializer=init_worker) as pool:
             ...
@@ -88,7 +88,7 @@ with LocalScheduler(types=[MyResourceType()]) as sched:
 `SchedulerAddress`（可从顶层 `purser` 或 `purser.local` 导入）可 pickle，可直接作为子进程参数：
 
 ```python
-sched = LocalScheduler(types=[MyResourceType()]).start()
+sched = LocalScheduler(adapters=[MyResourceAdapter()]).start()
 child = ctx.Process(target=worker, args=(sched.address,))
 ```
 

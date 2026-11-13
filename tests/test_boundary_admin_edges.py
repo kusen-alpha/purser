@@ -67,7 +67,7 @@ async def test_ban_revokes_active_leases(make_pool):
 
 
 async def test_request_level_ban_records_site_failure(purser):
-    purser.register_type(_BanOnTargetChecker())
+    purser.register_adapter(_BanOnTargetChecker())
     pool = purser.pool("bantargetpool", "bantarget")
     await pool.import_resources(
         [{"id": "r1", "host": "10.0.0.1", "port": 8081}], import_validate="on_import"
@@ -135,7 +135,7 @@ async def test_restart_new_state_preserved(tmp_path, storage_kind, coordination_
             if coordination_kind == "redis"
             else None,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1 = build()
@@ -173,7 +173,7 @@ async def test_restart_suspended_and_resume(tmp_path, storage_kind, coordination
             if coordination_kind == "redis"
             else None,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1 = build()
@@ -209,7 +209,7 @@ async def test_restart_cooldown_preserved(tmp_path, storage_kind, coordination_k
             if coordination_kind == "redis"
             else None,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1 = build()

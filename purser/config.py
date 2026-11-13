@@ -3,12 +3,45 @@
 from __future__ import annotations
 
 import math
-import warnings
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from purser.core.quarantine import QuarantinePolicy
 from purser.errors import ConfigError
+
+if TYPE_CHECKING:
+    from purser.adapters.base import ResourceAdapter
+
+# The periodic sweeps a pool can run; ``scheduler_intervals`` keys must come
+# from this set.  Kept here so PoolConfig can validate them without importing
+# the facade (which would be circular).
+MAINTENANCE_NAMES: tuple[str, ...] = (
+    "quota_reset",
+    "periodic_unban",
+    "lost_gc",
+    "validating_gc",
+    "quarantine_gc",
+    "archive_gc",
+    "expire_gc",
+)
+
+
+def apply_adapter_defaults(
+    cfg: PoolConfig, adapter: ResourceAdapter
+) -> PoolConfig:
+    """Merge an adapter's pool-level defaults into a PoolConfig.
+
+    ``create_pool`` and ``PoolConfig.default_for`` both go through here so the
+    adapter stays the single default source for ``max_slots`` and
+    ``secret_fields``.
+    """
+
+    defaults = adapter.defaults()
+    if cfg.max_slots is None and defaults.max_slots is not None:
+        cfg = cfg.with_overrides(max_slots=defaults.max_slots)
+    if not cfg.secret_fields and defaults.secret_fields:
+        cfg = cfg.with_overrides(secret_fields=defaults.secret_fields)
+    return cfg
 
 
 @dataclass
@@ -39,7 +72,7 @@ _IMPORT_VALIDATE = ("none", "on_import", "batch")
 
 @dataclass
 class PoolConfig:
-    """Per-pool knobs.  ResourceType provides defaults; pool overrides them."""
+    """Per-pool knobs.  ResourceAdapter provides defaults; pool overrides them."""
 
     kind: str
     storage: str = "memory"
@@ -51,6 +84,11 @@ class PoolConfig:
     unban_mode: str = "mixed"
     unban_after: float = 86400.0  # BANNED -> VALIDATING after this TTL (auto)
     quarantine: QuarantinePolicy = field(default_factory=QuarantinePolicy)
+    # What an absolute expiry does to the resource (S18): flip it to
+    # ``suspended`` or treat it like quota exhaustion (``quota``).
+    expire_policy: str = "suspended"
+    # Whether quarantine release re-validates the resource instead of idling.
+    requalify_on_release: bool = False
 
     lease_ttl: float = 60.0
     heartbeat_interval: float | None = None  # defaults to ttl / 3
@@ -64,10 +102,12 @@ class PoolConfig:
 
     cooldown_after_release: float = 0.0
     cooldown_consumer_only: bool = False
+    quota_cooldown: float = 0.0
     usage_quota: int | None = None
     expires_in: float | None = None
-    total_quota: int | None = None
-    target_quota: dict[str, int] | None = None  # deprecated alias for total_quota
+    # Per-resource default for the period quota, applied at import time when
+    # the resource does not set one itself.
+    quota_limit: int | None = None
 
     probe_targets: list[str] | None = None
     site_failure_ttl: float = 300.0
@@ -87,10 +127,16 @@ class PoolConfig:
     drain_timeout: float = 30.0
     archive_retention: float = 30 * 86400.0
     lost_retention: float = 4 * 3600.0
+    # How long an expired (suspended) resource is kept before ``expire_gc``
+    # archives it.  ``None`` disables the sweep (current behaviour).
+    expired_retention: float | None = None
 
     top_k: int = 8
     event_queue_size: int = 10_000
     weights: Weights = field(default_factory=Weights)
+    # Overrides for maintenance sweep intervals (keys from MAINTENANCE_NAMES);
+    # ``None`` keeps the defaults.
+    scheduler_intervals: dict[str, float] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -143,34 +189,33 @@ class PoolConfig:
             not isinstance(self.usage_quota, int) or self.usage_quota < 0
         ):
             raise ConfigError("usage_quota must be a non-negative integer")
-        if self.total_quota is not None and (
-            isinstance(self.total_quota, bool)
-            or not isinstance(self.total_quota, int)
-            or self.total_quota <= 0
+        if self.quota_limit is not None and (
+            isinstance(self.quota_limit, bool)
+            or not isinstance(self.quota_limit, int)
+            or self.quota_limit <= 0
         ):
-            raise ConfigError("total_quota must be a positive integer")
-        if self.target_quota is not None:
-            if self.total_quota is not None:
-                raise ConfigError(
-                    "set only total_quota; target_quota is its deprecated alias"
-                )
-            if not isinstance(self.target_quota, dict):
-                raise ConfigError("target_quota must be a mapping of target to limit")
-            for target, limit in self.target_quota.items():
-                if not isinstance(limit, int) or limit < 0:
+            raise ConfigError("quota_limit must be a positive integer")
+        if self.expire_policy not in ("suspended", "quota"):
+            raise ConfigError("expire_policy must be 'suspended' or 'quota'")
+        if not isinstance(self.requalify_on_release, bool):
+            raise ConfigError("requalify_on_release must be a boolean")
+        if self.scheduler_intervals is not None:
+            if not isinstance(self.scheduler_intervals, dict):
+                raise ConfigError("scheduler_intervals must be an object")
+            for name, interval in self.scheduler_intervals.items():
+                if name not in MAINTENANCE_NAMES:
                     raise ConfigError(
-                        f"target_quota[{target!r}] must be a non-negative integer"
+                        f"scheduler_intervals has unknown maintenance task {name!r}"
                     )
-            if sum(self.target_quota.values()) <= 0:
-                raise ConfigError("target_quota must have a positive total")
-            warnings.warn(
-                "target_quota is deprecated; use total_quota=<sum of limits>. "
-                "target_quota was never applied per target, only as a total quota.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.total_quota = int(sum(self.target_quota.values()))
-            self.target_quota = None
+                if (
+                    isinstance(interval, bool)
+                    or not isinstance(interval, (int, float))
+                    or not math.isfinite(float(interval))
+                    or interval <= 0
+                ):
+                    raise ConfigError(
+                        f"scheduler_intervals[{name!r}] must be a positive number"
+                    )
         if self.expires_in is not None and (
             not math.isfinite(self.expires_in) or self.expires_in < 0
         ):
@@ -179,6 +224,8 @@ class PoolConfig:
             not math.isfinite(self.max_lease_duration) or self.max_lease_duration <= 0
         ):
             raise ConfigError("max_lease_duration must be finite and > 0")
+        if not math.isfinite(self.quota_cooldown) or self.quota_cooldown < 0:
+            raise ConfigError("quota_cooldown must be a finite number >= 0")
         if not math.isfinite(self.unban_after) or self.unban_after < 0:
             raise ConfigError("unban_after must be finite and >= 0")
         if not isinstance(self.validate_concurrency, int) or self.validate_concurrency < 1:
@@ -191,6 +238,10 @@ class PoolConfig:
             value = getattr(self, name)
             if not math.isfinite(value) or value < 0:
                 raise ConfigError(f"{name} must be a finite, non-negative number")
+        if self.expired_retention is not None and (
+            not math.isfinite(self.expired_retention) or self.expired_retention < 0
+        ):
+            raise ConfigError("expired_retention must be a finite number >= 0")
         if self.schema_version != 1:
             raise ConfigError(f"unsupported schema_version {self.schema_version!r}")
         if self.drain_timeout != 30.0:
@@ -210,7 +261,7 @@ class PoolConfig:
         if self.probe_targets is not None:
             raise ConfigError(
                 "pool-level probe_targets is not implemented; configure "
-                "ProxyType(probe_targets=...)"
+                "ProxyAdapter(probe_targets=...)"
             )
         if not isinstance(self.weights, Weights):
             self.weights = Weights.from_dict(self.weights)
@@ -219,23 +270,33 @@ class PoolConfig:
     def with_overrides(self, **updates: Any) -> PoolConfig:
         """Return a shallow copy with the given knobs replaced (O16)."""
 
-        # The deprecated alias replaces the canonical quota rather than colliding
-        # with the value it was normalised into at construction time.
-        if "target_quota" in updates and "total_quota" not in updates:
-            updates["total_quota"] = None
         cfg = replace(self, **updates)
         cfg.__post_init__()
         return cfg
 
     @classmethod
     def default_for(
-        cls, kind: str, *, max_slots: int | None = None, **overrides: Any
+        cls,
+        kind: str,
+        *,
+        adapter: ResourceAdapter | None = None,
+        max_slots: int | None = None,
+        **overrides: Any,
     ) -> PoolConfig:
-        """Build a config from ResourceType defaults plus caller overrides."""
+        """Build a config from adapter defaults plus caller overrides.
+
+        Pass the ``ResourceAdapter`` for ``kind`` (from ``Purser.adapters``)
+        to apply the same pool-level defaults (``max_slots`` /
+        ``secret_fields``) that ``create_pool`` uses; caller ``max_slots``
+        and ``overrides`` win.  Without an adapter the config is built from
+        ``kind`` alone.
+        """
 
         base = cls(kind=kind)
+        if adapter is not None:
+            base = apply_adapter_defaults(base, adapter)
         if max_slots is not None:
-            base.max_slots = max_slots
+            base = base.with_overrides(max_slots=max_slots)
         if overrides:
             base = base.with_overrides(**overrides)
         return base

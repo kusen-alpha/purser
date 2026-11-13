@@ -129,7 +129,7 @@ def _shard(shape: str, tmp_path, label: str) -> tuple[dict, str]:
 
 def _new_instance(cfg: dict) -> SyncPurser:
     ps = SyncPurser(maintenance_enabled=False, **cfg)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     return ps
 
 

@@ -1,6 +1,6 @@
 # Python API
 
-`purser` 是 async-first 库：`Purser` 持有池与插件注册表，`ResourcePool` 负责资源与租约，`ResourceType` 描述一类资源的生成与验活。本组页面按对象分组给出公开契约，与 [REST API](../rest-api/index.md) 的端点分组一一对应。
+`purser` 是 async-first 库：`Purser` 持有池与插件注册表，`ResourcePool` 负责资源与租约，`ResourceAdapter` 描述一类资源的生成与验活。本组页面按对象分组给出公开契约，与 [REST API](../rest-api/index.md) 的端点分组一一对应。
 
 发生冲突时按[参考页权威层级](../index.md)采信源码；本组页面只描述当前版本的公开导出。
 
@@ -15,7 +15,7 @@ from purser import (
     # 请求、租约与结果
     AcquireRequest, Lease, BatchLease, ImportReport, HealthReport,
     # 资源与插件
-    Resource, ResourceType, PayloadField, ProxyType, AccountType,
+    Resource, ResourceAdapter, PayloadField, ProxyAdapter, AccountAdapter,
     # 枚举与视图
     ResourceState, UsageOutcome, CheckVerdict,
     PoolStats, UsageReport, ValidateJobView,
@@ -32,10 +32,10 @@ from purser import (
 
 | 对象 | 页面 | 职责 |
 | --- | --- | --- |
-| `Purser` | [Purser](purser.md) | 生命周期、池注册表、类型注册、用量报表、备份恢复、事件/审计/指标 |
+| `Purser` | [Purser](purser.md) | 生命周期、池注册表、适配器注册、用量报表、备份恢复、事件/审计/指标 |
 | `ResourcePool` | [ResourcePool](pools.md) | 导入、查询、遍历、统计、运维动作、验活任务、维护扫描 |
 | `AcquireRequest` / `Lease` / `BatchLease` | [AcquireRequest / Lease / BatchLease](acquisition.md) | 获取参数、租约字段、续约、归还、批量与强制撤销 |
-| `Resource` / `ResourceType` / `PayloadField` | [Resource / ResourceType](resources.md) | 资源字段、类型化 payload、插件钩子与注册 |
+| `Resource` / `ResourceAdapter` / `PayloadField` | [Resource / ResourceAdapter](resources.md) | 资源字段、类型化 payload、插件钩子与注册 |
 | `StorageBackend` / `Coordination` | [StorageBackend / Coordination](backends.md) | 两个数据平面的契约、内置实现与对账语义 |
 
 ## 最小生命周期
@@ -48,7 +48,7 @@ from purser import AcquireRequest, Purser, UsageOutcome
 
 async def main() -> None:
     async with Purser() as ps:
-        ps.register_type(MyType())
+        ps.register_adapter(MyAdapter())
         pool = ps.create_pool("demo", "my-kind")
 
         await pool.import_resources(
@@ -84,7 +84,7 @@ asyncio.run(main())
 | [Purser](purser.md) | 构造参数、启动/关闭、池管理、报表、备份恢复、运行时属性 |
 | [ResourcePool](pools.md) | 导入与去重、查询与遍历、运维动作、验活任务、维护扫描 |
 | [AcquireRequest / Lease / BatchLease](acquisition.md) | 请求字段、获取失败矩阵、租约与批量、强制撤销 |
-| [Resource / ResourceType](resources.md) | `Resource` 字段与属性、`PayloadField`、`ResourceType` 钩子 |
+| [Resource / ResourceAdapter](resources.md) | `Resource` 字段与属性、`PayloadField`、`ResourceAdapter` 钩子 |
 | [StorageBackend / Coordination](backends.md) | 后端选择、两个 ABC 契约、对账 |
 
 ## 版本

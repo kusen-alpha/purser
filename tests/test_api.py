@@ -597,7 +597,7 @@ def test_pool_config_advanced_knobs_and_immutables(make_client):
                 "secret_fields": ["token"],
                 "weights": {"health": 2.0, "age": 0.2},
                 "quarantine": {"base": 5.0, "max_failures": 2},
-                "target_quota": {"site-a": 3},
+                "quota_limit": 3,
             },
         },
         headers=head,
@@ -607,8 +607,7 @@ def test_pool_config_advanced_knobs_and_immutables(make_client):
     assert cfg["secret_fields"] == ["token"]
     assert cfg["weights"]["health"] == 2.0
     assert cfg["quarantine"]["base"] == 5.0
-    assert cfg["total_quota"] == 3
-    assert cfg["target_quota"] is None
+    assert cfg["quota_limit"] == 3
 
     patched = client.patch(
         "/pools/pc",
@@ -617,7 +616,7 @@ def test_pool_config_advanced_knobs_and_immutables(make_client):
                 "weights": {"health": 0.5},
                 "quarantine": {"cap": 60.0},
                 "unban_after": 120.0,
-                "total_quota": 3,
+                "quota_limit": 3,
             }
         },
         headers=head,
@@ -892,12 +891,25 @@ def test_acquire_extras_batch_mode_and_lease_renew(make_client):
         assert field in lease, field
     assert lease["priority"] == 2 and lease["use_limit"] == 3
 
-    for reserved in ("probe", "affinity"):
-        rejected = client.post(
-            "/pools/px/leases", json={"consumer": "c", reserved: "x"}, headers=head
-        )
-        assert rejected.status_code == 422, rejected.text
-        assert reserved in rejected.json()["detail"]
+    # probe is now a supported per-target live check; affinity is still unused.
+    ok_probe = client.post(
+        "/pools/px/leases",
+        json={"consumer": "c", "probe": "http://example.com:80"},
+        headers=head,
+    )
+    assert ok_probe.status_code == 200, ok_probe.text
+    probe_lease = ok_probe.json()["leases"][0]
+    assert (
+        client.delete(
+            f"/pools/px/leases/{probe_lease['token']}", headers=head
+        ).status_code
+        == 200
+    )
+    rejected = client.post(
+        "/pools/px/leases", json={"consumer": "c", "affinity": "x"}, headers=head
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert "affinity" in rejected.json()["detail"]
 
     renewed = client.post(
         f"/pools/px/leases/{lease['token']}/renew", headers=head
@@ -978,7 +990,7 @@ def test_service_metrics_and_persistence(make_client, monkeypatch, tmp_path):
             "config": {
                 "secret_fields": ["token"],
                 "weights": {"health": 1.3},
-                "total_quota": 2,
+                "quota_limit": 2,
             },
         },
         headers=head,
@@ -995,7 +1007,7 @@ def test_service_metrics_and_persistence(make_client, monkeypatch, tmp_path):
     assert restored is not None
     assert restored.cfg.secret_fields == ("token",)
     assert restored.cfg.weights.health == 1.3
-    assert restored.cfg.total_quota == 2
+    assert restored.cfg.quota_limit == 2
     client2.delete("/pools/px", params={"force": "true"}, headers=head)
 
 

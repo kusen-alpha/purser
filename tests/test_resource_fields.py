@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+import types
 from dataclasses import dataclass
 from typing import ClassVar
 
 import pytest
+from typing_extensions import Annotated
 
-from purser import Purser
+from purser import HealthReport, PoolConfig, Purser, ResourceState
+from purser.adapters.account import AccountAdapter, AccountResource
+from purser.adapters.base import ResourceAdapter
+from purser.adapters.proxy import ProxyAdapter, ProxyResource
 from purser.core.resource import PayloadField, Resource
-from purser.types.account import AccountResource, AccountType
-from purser.types.base import ResourceType
-from purser.types.proxy import ProxyResource, ProxyType
 
 
-def test_payload_fields_drive_typed_names_and_secrets():
+def test_declared_fields_drive_typed_names_and_secrets():
+    assert not hasattr(ProxyResource, "payload_fields")
+    assert not hasattr(AccountResource, "payload_fields")
     assert ProxyResource.typed_payload_fields == (
         "host",
         "port",
@@ -28,7 +33,7 @@ def test_payload_fields_drive_typed_names_and_secrets():
         "city",
         "district",
     )
-    assert ProxyType.secret_fields == ("password",)
+    assert ProxyAdapter.secret_fields == ("password",)
     assert AccountResource.typed_payload_fields == (
         "username",
         "email",
@@ -37,7 +42,7 @@ def test_payload_fields_drive_typed_names_and_secrets():
         "access_token",
         "refresh_token",
     )
-    assert AccountType.secret_fields == (
+    assert AccountAdapter.secret_fields == (
         "password",
         "cookie",
         "access_token",
@@ -73,14 +78,14 @@ def test_normalize_payload_fills_defaults_and_checks_required():
 
 
 def test_hydrate_normalizes_without_requiring_fields():
-    typed = ProxyType().hydrate(
+    typed = ProxyAdapter().hydrate(
         Resource(id="p", kind="proxy", payload={"host": "h", "port": "81"})
     )
     assert isinstance(typed, ProxyResource)
     assert typed.port == 81
     assert typed.protocol == "http"
 
-    sparse = ProxyType().hydrate(
+    sparse = ProxyAdapter().hydrate(
         Resource(id="p", kind="proxy", payload={"port": 81})
     )
     assert isinstance(sparse, ProxyResource)
@@ -88,7 +93,7 @@ def test_hydrate_normalizes_without_requiring_fields():
 
 
 async def test_proxy_generate_keeps_custom_payload():
-    resource = await ProxyType().generate(
+    resource = await ProxyAdapter().generate(
         {
             "id": "p-custom",
             "host": "1.2.3.4",
@@ -119,11 +124,10 @@ async def test_import_enforces_required_fields(purser):
     assert report.errors and "port" in report.errors[0]["error"]
 
 
-def test_payload_fields_merge_across_inheritance():
+def test_declared_fields_merge_across_inheritance():
     @dataclass
     class MyProxy(ProxyResource):
-        payload_fields = (PayloadField("isp"),)
-        isp: str | None = None
+        isp: Annotated[str | None, PayloadField()] = None
 
     assert MyProxy.typed_payload_fields == (
         *ProxyResource.typed_payload_fields,
@@ -136,23 +140,20 @@ def test_payload_fields_merge_across_inheritance():
     assert resource.extra == {"note": "x"}
 
 
-def test_payload_fields_merge_multiple_bases():
+def test_declared_fields_merge_multiple_bases():
     @dataclass
     class Left(Resource):
         kind: str = "left"
-        payload_fields = (PayloadField("left"),)
-        left: str | None = None
+        left: Annotated[str | None, PayloadField()] = None
 
     @dataclass
     class Right(Resource):
         kind: str = "right"
-        payload_fields = (PayloadField("right"),)
-        right: str | None = None
+        right: Annotated[str | None, PayloadField()] = None
 
     @dataclass
     class Both(Left, Right):
-        payload_fields = (PayloadField("both"),)
-        both: str | None = None
+        both: Annotated[str | None, PayloadField()] = None
 
     assert set(Both.typed_payload_fields) == {"left", "right", "both"}
     resource = Both(id="b", payload={"left": "l", "right": "r", "both": "b"})
@@ -164,8 +165,7 @@ def test_payload_default_is_copied_per_instance():
     @dataclass
     class ListResource(Resource):
         kind: str = "list"
-        payload_fields = (PayloadField("items", default=[]),)
-        items: list | None = None
+        items: Annotated[list | None, PayloadField(default=[])] = None
 
     first, second = ListResource(id="a"), ListResource(id="b")
     first.normalize_payload()
@@ -179,8 +179,7 @@ def test_payload_field_cannot_be_classvar():
     with pytest.raises(TypeError, match="flag"):
         class Bad(Resource):
             kind: str = "bad"
-            payload_fields = (PayloadField("flag"),)
-            flag: ClassVar[str] = "x"
+            flag: Annotated[ClassVar[str], PayloadField()] = "x"
 
 
 def test_extra_is_a_deep_copy():
@@ -241,8 +240,7 @@ def test_required_rejects_empty_but_accepts_zero():
     @dataclass
     class CounterResource(Resource):
         kind: str = "counter"
-        payload_fields = (PayloadField("count", required=True, coerce=int),)
-        count: int | None = None
+        count: Annotated[int | None, PayloadField(required=True, coerce=int)] = None
 
     present = CounterResource(id="c", payload={"count": 0})
     present.normalize_payload(require=True)
@@ -285,27 +283,13 @@ async def test_proxy_password_is_encrypted_at_rest(tmp_path):
         await ps.close()
 
 
-def test_payload_fields_must_name_dataclass_fields():
-    with pytest.raises(TypeError, match="not dataclass fields"):
-        class Broken(Resource):
-            kind: str = "broken"
-            payload_fields = (PayloadField("missing"),)
-
-    with pytest.raises(TypeError, match="duplicate"):
-        class Duplicated(Resource):
-            kind: str = "duplicated"
-            payload_fields = (PayloadField("value"), PayloadField("value"))
-            value: str | None = None
-
-
 def test_custom_type_derives_secrets_and_hydrates():
     @dataclass
     class TokenResource(Resource):
         kind: str = "token"
-        payload_fields = (PayloadField("token", secret=True),)
-        token: str | None = None
+        token: Annotated[str | None, PayloadField(secret=True)] = None
 
-    class TokenType(ResourceType):
+    class TokenAdapter(ResourceAdapter):
         kind = "token"
         resource_class = TokenResource
 
@@ -315,9 +299,301 @@ def test_custom_type_derives_secrets_and_hydrates():
         async def validate(self, resource):
             raise NotImplementedError
 
-    assert TokenType.secret_fields == ("token",)
-    typed = TokenType().hydrate(
+    assert TokenAdapter.secret_fields == ("token",)
+    typed = TokenAdapter().hydrate(
         Resource(id="t", kind="token", payload={"token": "abc"})
     )
     assert isinstance(typed, TokenResource)
     assert typed.token == "abc"
+
+
+async def test_default_generate_maps_spec_one_to_one():
+    @dataclass
+    class CardResource(Resource):
+        kind: str = "card"
+        number: Annotated[str | None, PayloadField(required=True, coerce=str)] = None
+        cvv: Annotated[str | None, PayloadField(secret=True)] = None
+        attempts: Annotated[int | None, PayloadField(coerce=int, default=0)] = None
+
+    class CardAdapter(ResourceAdapter):
+        kind = "card"
+        resource_class = CardResource
+
+        async def validate(self, resource):
+            return HealthReport.ok()
+
+    adapter = CardAdapter()
+    made = await adapter.generate(
+        {
+            "id": "c1",
+            "number": "4111",
+            "cvv": "123",
+            "attempts": "3",
+            "note": "extra",
+            "tags": ["vip", "us"],
+        }
+    )
+    assert isinstance(made, CardResource)
+    assert made.id == "c1"
+    assert made.kind == "card"
+    assert made.number == "4111"
+    assert made.cvv == "123"
+    assert made.attempts == 3
+    assert made.extra == {"note": "extra"}
+    assert made.tags == frozenset({"vip", "us"})
+
+    with pytest.raises(ValueError, match="number"):
+        await adapter.generate({"id": "c2", "cvv": "000"})
+
+
+async def test_default_generate_derives_stable_id():
+    @dataclass
+    class CardResource(Resource):
+        kind: str = "card"
+        number: Annotated[str | None, PayloadField(required=True)] = None
+        cvv: Annotated[str | None, PayloadField()] = None
+
+    class CardAdapter(ResourceAdapter):
+        kind = "card"
+        resource_class = CardResource
+
+        async def validate(self, resource):
+            return HealthReport.ok()
+
+    adapter = CardAdapter()
+    a = await adapter.generate({"number": "4111", "cvv": "123"})
+    b = await adapter.generate({"number": "4111", "cvv": "123"})
+    c = await adapter.generate({"number": "4111", "cvv": "456"})
+    assert a.id == b.id
+    assert a.id.startswith("card-")
+    assert a.id != c.id
+
+
+async def test_default_generate_imports_through_pool():
+    @dataclass
+    class CardResource(Resource):
+        kind: str = "card"
+        number: Annotated[str | None, PayloadField(required=True)] = None
+        attempts: Annotated[int | None, PayloadField(coerce=int)] = None
+
+    class CardAdapter(ResourceAdapter):
+        kind = "card"
+        resource_class = CardResource
+
+        async def validate(self, resource):
+            return HealthReport.ok()
+
+    ps = Purser(maintenance_enabled=False)
+    try:
+        ps.register_adapter(CardAdapter())
+        pool = ps.create_pool("cards", "card")
+        report = await pool.import_resources(
+            [{"id": "c1", "number": "4111", "attempts": "2"}],
+            import_validate="on_import",
+        )
+        assert report.imported == 1
+        loaded = await pool.get("c1")
+        assert isinstance(loaded, CardResource)
+        assert loaded.number == "4111"
+        assert loaded.attempts == 2
+    finally:
+        await ps.close()
+
+
+def test_annotated_fields_declare_schema():
+    @dataclass
+    class AnnotatedCard(Resource):
+        kind: str = "card"
+        number: Annotated[str | None, PayloadField(required=True, coerce=str)] = None
+        cvv: Annotated[str | None, PayloadField(secret=True)] = None
+        attempts: Annotated[int | None, PayloadField(coerce=int, default=0)] = None
+        plain: str | None = None
+
+    class AnnotatedCardAdapter(ResourceAdapter):
+        kind = "card"
+        resource_class = AnnotatedCard
+
+        async def validate(self, resource):
+            return HealthReport.ok()
+
+    assert AnnotatedCard.typed_payload_fields == ("number", "cvv", "attempts")
+    assert "plain" not in AnnotatedCard.typed_payload_fields
+    assert AnnotatedCardAdapter.secret_fields == ("cvv",)
+
+    r = AnnotatedCard(
+        id="a", number="4111", cvv="123", attempts="3", payload={"plain": "x"}
+    )
+    assert r.number == "4111"
+    assert r.cvv == "123"
+    assert r.attempts == 3
+    assert r.extra == {"plain": "x"}
+    assert r.to_dict()["payload"] == {
+        "number": "4111",
+        "cvv": "123",
+        "attempts": 3,
+        "plain": "x",
+    }
+
+    with pytest.raises(ValueError, match="number"):
+        AnnotatedCard(id="b", cvv="1").normalize_payload(require=True)
+
+
+def test_annotated_fields_with_string_annotations():
+    mod = types.ModuleType("_annotated_string_mod")
+    mod.Annotated = Annotated
+    mod.PayloadField = PayloadField
+    mod.Resource = Resource
+    mod.dataclass = dataclass
+    sys.modules["_annotated_string_mod"] = mod
+    try:
+        ns = {"__name__": "_annotated_string_mod"}
+        exec(
+            "from __future__ import annotations\n"
+            "from dataclasses import dataclass\n"
+            "from typing_extensions import Annotated\n"
+            "from purser.core.resource import Resource, PayloadField\n"
+            "@dataclass\n"
+            "class SmsCard(Resource):\n"
+            "    kind: str = 'sms'\n"
+            "    phone: Annotated[str | None, PayloadField(required=True, coerce=str)] = None\n"
+            "    retries: Annotated[int | None, PayloadField(coerce=int)] = None\n",
+            ns,
+        )
+        cls = ns["SmsCard"]
+        assert cls.typed_payload_fields == ("phone", "retries")
+        made = cls(id="s1", phone="+86138", retries="2")
+        assert made.phone == "+86138"
+        assert made.retries == 2
+    finally:
+        sys.modules.pop("_annotated_string_mod", None)
+
+
+def test_annotated_fields_merge_across_bases():
+    @dataclass
+    class BaseCard(Resource):
+        kind: str = "card"
+        pan: Annotated[str | None, PayloadField(required=True, coerce=str)] = None
+
+    @dataclass
+    class VipCard(BaseCard):
+        note: Annotated[str | None, PayloadField(doc="vip note")] = None
+
+    assert BaseCard.typed_payload_fields == ("pan",)
+    assert VipCard.typed_payload_fields == ("pan", "note")
+
+
+async def test_annotated_fields_end_to_end_import(tmp_path):
+    @dataclass
+    class TokenCard(Resource):
+        kind: str = "tcard"
+        token: Annotated[str | None, PayloadField(required=True, secret=True)] = None
+        note: str | None = None
+
+    class TokenCardAdapter(ResourceAdapter):
+        kind = "tcard"
+        resource_class = TokenCard
+
+        async def validate(self, resource):
+            return HealthReport.ok()
+
+    db = str(tmp_path / "cards.db")
+    ps = Purser(
+        maintenance_enabled=False,
+        storage="sqlite",
+        coordination="memory",
+        sqlite_path=db,
+    )
+    try:
+        ps.register_adapter(TokenCardAdapter())
+        pool = ps.create_pool("cards", "tcard")
+        report = await pool.import_resources(
+            [{"id": "t1", "token": "hunter2", "note": "extra"}],
+            import_validate="on_import",
+        )
+        assert report.imported == 1
+        loaded = await pool.get("t1")
+        assert isinstance(loaded, TokenCard)
+        assert loaded.token == "hunter2"
+        assert loaded.extra == {"note": "extra"}
+
+        conn = sqlite3.connect(db)
+        try:
+            blob = conn.execute(
+                "SELECT payload FROM resources WHERE pool = 'cards' AND id = 't1'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert "hunter2" not in blob
+        assert "token" in json.loads(blob)["_enc"]
+    finally:
+        await ps.close()
+
+
+async def test_validate_defaults_to_ok():
+    adapter = ResourceAdapter()
+    report = await adapter.validate(Resource(id="r", kind="x"))
+    assert report.alive is True
+    assert report.latency_ms == 1.0
+
+
+async def test_minimal_type_without_hooks_works_end_to_end():
+    class BareAdapter(ResourceAdapter):
+        kind = "bare"
+
+    ps = Purser(maintenance_enabled=False)
+    try:
+        ps.register_adapter(BareAdapter())
+        pool = ps.create_pool("bare", "bare")
+        report = await pool.import_resources(
+            [{"id": "b1", "host": "1.2.3.4"}],
+            import_validate="on_import",
+        )
+        assert report.imported == 1
+        await ps.start()
+        async with pool.lease(consumer="c") as lease:
+            assert lease.resource_id == "b1"
+        counts = await pool.counts()
+        assert counts[ResourceState.IDLE] == 1
+    finally:
+        await ps.close()
+
+
+def test_adapter_fields_public_contract():
+    fields = {spec.name: spec for spec in ProxyAdapter().fields()}
+    assert fields["host"].required is True
+    assert fields["port"].coerce is int
+    assert fields["port"].required is True
+    assert fields["password"].secret is True
+    assert set(fields) >= {"host", "port", "protocol", "username", "password"}
+
+
+def test_adapter_defaults_public_contract():
+    account = AccountAdapter().defaults()
+    assert account.max_slots == 4
+    assert set(account.secret_fields) == {
+        "password",
+        "cookie",
+        "access_token",
+        "refresh_token",
+    }
+    proxy = ProxyAdapter().defaults()
+    assert proxy.max_slots == 1
+    assert proxy.secret_fields == ("password",)
+
+
+def test_pool_config_default_for_consumes_adapter():
+    cfg = PoolConfig.default_for("account", adapter=AccountAdapter())
+    assert cfg.max_slots == 4
+    assert set(cfg.secret_fields) == {
+        "password",
+        "cookie",
+        "access_token",
+        "refresh_token",
+    }
+    overridden = PoolConfig.default_for(
+        "account", adapter=AccountAdapter(), max_slots=8
+    )
+    assert overridden.max_slots == 8
+    bare = PoolConfig.default_for("account")
+    assert bare.max_slots is None
+    assert bare.secret_fields == ()

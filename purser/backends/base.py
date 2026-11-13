@@ -54,7 +54,14 @@ class ResourcePatch:
     clear_fields: frozenset[str] = frozenset()
 
     _CLEARABLE = frozenset(
-        {"usage_quota", "expires_at", "next_available_at", "mutex_group", "schedule_window"}
+        {
+            "usage_quota",
+            "expires_at",
+            "next_available_at",
+            "mutex_group",
+            "schedule_window",
+            "quota",
+        }
     )
 
     def apply(self, resource: Resource) -> Resource:

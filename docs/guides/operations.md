@@ -16,6 +16,7 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/maintenance/quarantine_gc
 | `validating_gc` | 清理滞留验活 |
 | `quarantine_gc` | 清理到期隔离 |
 | `archive_gc` | 清理过期归档 |
+| `expire_gc` | 归档超过 `expired_retention` 的过期资源（需显式配置，默认关闭） |
 
 维护任务默认由后台周期任务执行；手动触发适合排障或补执行。返回任务统计。
 

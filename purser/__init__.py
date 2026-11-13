@@ -28,11 +28,28 @@ Synchronous facade (blocking calls from any thread)::
             print(lease.payload)
 """
 
+from purser.adapters import (
+    AccountAdapter,
+    AccountResource,
+    ProxyAdapter,
+    ProxyResource,
+    ResourceAdapter,
+    clear_default_adapters,
+    register,
+    validator,
+)
 from purser.backends.coordination import MemoryCoordination, RedisCoordination
 from purser.backends.memory import MemoryStorage
 from purser.backends.mysql import MySqlStorage
 from purser.backends.sqlite import SqliteStorage
 from purser.config import PoolConfig, Weights
+from purser.core.bundle import (
+    BundleFairness,
+    BundleLease,
+    BundleRequest,
+    BundleSlot,
+    MatchRule,
+)
 from purser.core.health import HealthReport
 from purser.core.resource import (
     AcquireRequest,
@@ -60,6 +77,8 @@ from purser.errors import (
     BackendUnavailable,
     BadPayload,
     BadState,
+    BundleAcquireFailed,
+    BundleQuotaExceeded,
     ConfigError,
     InvalidTransition,
     IsolationConflict,
@@ -95,13 +114,6 @@ from purser.sync import (
     SyncResourceIterator,
     SyncSubscription,
 )
-from purser.types import (
-    AccountResource,
-    AccountType,
-    ProxyResource,
-    ProxyType,
-    ResourceType,
-)
 
 __version__ = "0.2.0"
 
@@ -109,6 +121,13 @@ __all__ = [
     "Purser",
     "ResourcePool",
     "BatchLease",
+    "BundleLease",
+    "BundleRequest",
+    "BundleSlot",
+    "MatchRule",
+    "BundleAcquireFailed",
+    "BundleFairness",
+    "BundleQuotaExceeded",
     "ImportReport",
     "SyncPurser",
     "SyncPool",
@@ -144,10 +163,13 @@ __all__ = [
     "ValidateJobView",
     "ValidateJobCancelView",
     "ValidateJobError",
-    "ResourceType",
-    "ProxyType",
+    "ResourceAdapter",
+    "register",
+    "validator",
+    "clear_default_adapters",
+    "ProxyAdapter",
     "ProxyResource",
-    "AccountType",
+    "AccountAdapter",
     "AccountResource",
     "PurserError",
     "ConfigError",

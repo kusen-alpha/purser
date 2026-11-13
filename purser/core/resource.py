@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import enum
+import re
+import sys
 import time
 import uuid
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import InitVar, asdict, dataclass, field, replace
-from typing import Any, ClassVar, TypeVar, get_origin, get_type_hints
+from typing import Any, ClassVar, Optional, TypeVar, get_origin
 
 try:
     from zoneinfo import ZoneInfo
@@ -20,6 +22,56 @@ from purser.errors import ConfigError
 
 _MISSING = object()
 ResourceT = TypeVar("ResourceT", bound="Resource")
+
+# Keys the framework itself writes into ``meta`` for bookkeeping.  Users can
+# still read them through ``meta`` (backwards compatible), but ``user_meta``
+# exposes only the non-system remainder and ``system_meta`` the inverse, so
+# the two namespaces can be told apart instead of living indistinguishably
+# in one bag.
+SYSTEM_META_KEYS: frozenset[str] = frozenset(
+    {
+        "source",
+        "batch_id",
+        "created_at",
+        "updated_at",
+        "last_used_at",
+        "updated_by",
+        "update_reason",
+        "needs_validate",
+        "last_validated_at",
+        "validate_started_at",
+        "last_failure_reason",
+        "banned_at",
+        "banned_reason",
+        "suspended_at",
+        "suspend_reason",
+        "resumed_at",
+        "resume_reason",
+        "quarantine_until",
+        "quarantine_released_at",
+        "expired_at",
+        "drained_at",
+        "drain_reason",
+        "drain_cancelled_at",
+        "lost_at",
+        "archived_at",
+        "archived_reason",
+        "restored_at",
+        "restore_reason",
+        "admin_set_at",
+        "admin_reason",
+        "admin_operator",
+        "quota_reset_at",
+        "top_ups",
+        "switched_at",
+    }
+)
+
+
+def is_system_meta_key(key: str) -> bool:
+    """True when ``key`` is owned by the framework, not user metadata."""
+
+    return key in SYSTEM_META_KEYS or key.startswith("cooldown:")
 
 
 def _now() -> float:
@@ -239,16 +291,20 @@ class Lease:
 class PayloadField:
     """Declarative metadata for one typed payload field.
 
-    A subclass lists these in :attr:`Resource.payload_fields`; the field names
-    become ``typed_payload_fields`` automatically.  One table therefore drives
-    coercion, required checks, defaults and at-rest encryption.
+    A subclass attaches one of these to a field annotation::
+
+        phone: Annotated[str | None, PayloadField(required=True)] = None
+
+    The field names become ``typed_payload_fields`` automatically.  One table
+    therefore drives coercion, required checks, defaults and at-rest
+    encryption.
 
     ``coerce`` must be pure and idempotent: hydration may run it again on an
     already-typed value.  ``required`` means present and non-empty (``None``
     and ``""`` are rejected; ``0`` and ``False`` are valid).
     """
 
-    name: str
+    name: str = ""
     coerce: Callable[[Any], Any] | None = None
     required: bool = False
     secret: bool = False
@@ -259,15 +315,84 @@ class PayloadField:
         return value if self.coerce is None else self.coerce(value)
 
 
+def _resolve_annotation(raw: str, cls: type) -> Any:
+    """Evaluate one annotation string in the declaring module's namespace."""
+
+    module = sys.modules.get(cls.__module__)
+    namespace: dict[str, Any] = dict(vars(module)) if module is not None else {}
+    namespace.setdefault("Optional", Optional)
+    try:
+        return eval(raw, namespace)  # noqa: S307 - same contract as get_type_hints
+    except Exception:
+        # Python 3.8/3.9 cannot evaluate PEP 604 unions at runtime (X | None).
+        # Rewrite the optional case so annotation metadata still resolves.
+        if sys.version_info < (3, 10):
+            rewritten = _pep604_compat_rewrite(raw)
+            if rewritten != raw:
+                try:
+                    return eval(rewritten, namespace)  # noqa: S307
+                except Exception:
+                    return None
+        return None
+
+
+def _pep604_compat_rewrite(raw: str) -> str:
+    """Rewrite ``T | None`` / ``None | T`` into ``Optional[T]`` (best effort)."""
+
+    rewritten = re.sub(
+        r"\b([A-Za-z_][\w.]*)\s*\|\s*None\b", r"Optional[\1]", raw
+    )
+    rewritten = re.sub(
+        r"\bNone\s*\|\s*([A-Za-z_][\w.]*)\b", r"Optional[\1]", rewritten
+    )
+    return rewritten
+
+
+def _extract_declared_fields(
+    cls: type,
+) -> tuple[PayloadField, ...] | None:
+    """Collect PayloadField metadata carried by ``Annotated[...]`` annotations.
+
+    A subclass may declare its schema directly on the fields::
+
+        phone: Annotated[str | None, PayloadField(required=True, coerce=str)] = None
+
+    Plain annotations without a PayloadField extra are not schema fields, and
+    a :class:`ClassVar` field can never carry payload metadata.
+    """
+
+    annotations = cls.__dict__.get("__annotations__")
+    if not annotations:
+        return None
+    found: list[PayloadField] = []
+    for name, raw in annotations.items():
+        resolved = raw if not isinstance(raw, str) else _resolve_annotation(raw, cls)
+        metadata = getattr(resolved, "__metadata__", None)
+        if not metadata:
+            continue
+        if get_origin(getattr(resolved, "__origin__", resolved)) is ClassVar:
+            raise TypeError(f"{cls.__name__}.{name} is a ClassVar, not a payload field")
+        specs = [item for item in metadata if isinstance(item, PayloadField)]
+        if not specs:
+            continue
+        spec = specs[0]
+        if spec.name and spec.name != name:
+            raise TypeError(
+                f"{cls.__name__}.{name} annotation names field {spec.name!r}"
+            )
+        found.append(spec if spec.name else replace(spec, name=name))
+    return tuple(found) if found else None
+
+
 @dataclass
 class Resource:
     """One resource: a proxy, account or custom object (3.2).
 
     ``payload`` is a derived view: ``_payload`` only keeps custom keys while
-    subclasses declare their common fields in ``payload_fields``.  The merge
-    happens on read, so typed attributes never drift from the bag.  Writing
-    ``payload`` replaces the typed view as well; unknown keys stay in
-    :attr:`extra`.
+    subclasses declare their common fields via ``Annotated[..., PayloadField()]``
+    annotations.  The merge happens on read, so typed attributes never drift
+    from the bag.  Writing ``payload`` replaces the typed view as well; unknown
+    keys stay in :attr:`extra`.
 
     This is not a plain DTO: ``dataclasses.asdict`` exposes ``_payload`` and
     ``dataclasses.replace(..., payload=...)`` cannot apply typed payload keys.
@@ -293,50 +418,22 @@ class Resource:
     schedule_window: tuple[str, str] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
-    payload_fields: ClassVar[tuple[PayloadField, ...]] = ()
     typed_payload_fields: ClassVar[tuple[str, ...]] = ()
     _payload_field_map: ClassVar[dict[str, PayloadField]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        if "payload_fields" not in cls.__dict__:
+        declared = _extract_declared_fields(cls)
+        if declared is None:
             return
-        declared = cls.payload_fields
-        for spec in declared:
-            if not isinstance(spec, PayloadField):
-                raise TypeError(
-                    f"{cls.__name__}.payload_fields must contain PayloadField"
-                )
-        names = [spec.name for spec in declared]
-        if len(set(names)) != len(names):
-            raise TypeError(f"{cls.__name__}.payload_fields has duplicate names")
         # Dataclass fields accumulate down the MRO, so declarations must too;
         # nearer bases override by name but never drop inherited fields.
         merged: dict[str, PayloadField] = {}
         for base in reversed(cls.__mro__[1:]):
-            inherited = base.__dict__.get("payload_fields")
+            inherited = base.__dict__.get("_payload_field_map")
             if inherited is not None:
-                merged.update({spec.name: spec for spec in inherited})
+                merged.update(inherited)
         merged.update({spec.name: spec for spec in declared})
-        known: set[str] = set()
-        for base in cls.__mro__:
-            known.update(getattr(base, "__dataclass_fields__", {}))
-            known.update(base.__dict__.get("__annotations__", {}))
-        known -= {"payload", "_payload", "typed_payload_fields", "payload_fields"}
-        try:
-            hints = get_type_hints(cls)
-        except Exception:
-            hints = {}
-        known -= {
-            name for name, hint in hints.items() if get_origin(hint) is ClassVar
-        }
-        unknown = [name for name in merged if name not in known]
-        if unknown:
-            raise TypeError(
-                f"{cls.__name__}.payload_fields names are not dataclass fields: "
-                + ", ".join(unknown)
-            )
-        cls.payload_fields = tuple(merged.values())
         cls.typed_payload_fields = tuple(merged)
         cls._payload_field_map = merged
 
@@ -395,7 +492,7 @@ class Resource:
         part of the derived view but is only persisted by the next write.
         """
 
-        for spec in self.payload_fields:
+        for spec in self._payload_field_map.values():
             value = getattr(self, spec.name, None)
             if value is None:
                 if spec.default is None:
@@ -416,6 +513,26 @@ class Resource:
         """Deep copy of the custom keys that have no declared typed field."""
 
         return deepcopy(self._payload)
+
+    @property
+    def system_meta(self) -> dict[str, Any]:
+        """Framework-owned meta entries (timestamps, reasons, cooldowns)."""
+
+        return {
+            key: self.meta[key]
+            for key in self.meta
+            if is_system_meta_key(key)
+        }
+
+    @property
+    def user_meta(self) -> dict[str, Any]:
+        """Meta entries that belong to the user, excluding framework keys."""
+
+        return {
+            key: self.meta[key]
+            for key in self.meta
+            if not is_system_meta_key(key)
+        }
 
     def to_dict(self) -> dict[str, Any]:
         """Deep-copy the resource in its storage shape.
@@ -558,10 +675,8 @@ class AcquireRequest:
             raise ValueError("AcquireRequest.tags must contain non-empty strings")
         self.tags = tags
         if self.probe is not None:
-            raise ConfigError(
-                "AcquireRequest.probe is not implemented; configure probe targets "
-                "on the resource type: ProxyType(probe_targets=[...])"
-            )
+            if not isinstance(self.probe, str) or not self.probe.strip():
+                raise ValueError("AcquireRequest.probe must be a non-empty string")
         if self.affinity is not None:
             raise ConfigError(
                 "AcquireRequest.affinity is not implemented; enable affinity scoring "

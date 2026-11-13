@@ -8,11 +8,11 @@ import pytest
 from conftest import seed
 from test_api import auth
 
+from purser.adapters.proxy import parse_endpoint
 from purser.core.health import HealthStats
 from purser.core.resource import AcquireRequest, Quota
 from purser.core.state import ResourceState
 from purser.errors import PoolExhausted
-from purser.types.proxy import parse_endpoint
 
 
 def test_parse_endpoint_variants():

@@ -13,6 +13,7 @@ import asyncio
 import copy
 import json
 import sqlite3
+import sys
 import time
 
 import fakeredis
@@ -58,7 +59,7 @@ def make_resource(rid: str, **kwargs: object) -> Resource:
 
 
 async def test_quota_reset_is_not_reapplied_within_same_day(make_pool):
-    pool = make_pool(target_quota={"site1": 1})
+    pool = make_pool(quota_limit=1)
     [rid] = await seed(pool, n=1)
 
     lease = await pool.acquire(
@@ -227,7 +228,7 @@ def test_secret_codec_honours_key_id_and_rotation():
 
 def test_mysql_secret_fields_require_explicit_key():
     ps = Purser(storage="mysql", mysql_url="mysql://user:pass@localhost/db")
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     try:
         with pytest.raises(ConfigError):
             ps.create_pool(
@@ -239,7 +240,7 @@ def test_mysql_secret_fields_require_explicit_key():
 
 def test_sqlite_storage_requires_explicit_path():
     ps = Purser(storage="sqlite")
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     try:
         with pytest.raises(ConfigError):
             ps.create_pool("p", "fakecheck")
@@ -484,9 +485,12 @@ async def test_scheduler_tasks_run_independently():
         {"max_lease_duration": float("nan")},
         {"expires_in": -5},
         {"unban_after": -1},
-        {"target_quota": {"site": 0}},
-        {"total_quota": 0},
-        {"total_quota": 2, "target_quota": {"site": 1}},
+        {"quota_limit": 0},
+        {"expire_policy": "bogus"},
+        {"expired_retention": -1},
+        {"expired_retention": float("nan")},
+        {"requalify_on_release": "yes"},
+        {"scheduler_intervals": {"quota_reset": 0}},
         {"schema_version": 2},
         {"scheduler": "token_bucket"},
         {"scheduler": "fifo"},
@@ -502,18 +506,20 @@ def test_invalid_pool_config_is_rejected(overrides):
         PoolConfig(kind="k", **overrides)
 
 
-def test_total_quota_is_canonical_and_target_quota_is_an_alias():
-    assert PoolConfig(kind="k", total_quota=2).total_quota == 2
-    with pytest.warns(DeprecationWarning):
-        cfg = PoolConfig(kind="k", target_quota={"a": 1, "b": 1})
-    assert cfg.total_quota == 2 and cfg.target_quota is None
-    replaced = cfg.with_overrides(target_quota={"a": 3})
-    assert replaced.total_quota == 3 and replaced.target_quota is None
+def test_quota_limit_is_the_period_quota_knob():
+    cfg = PoolConfig(kind="k", quota_limit=2)
+    assert cfg.quota_limit == 2
+    dumped = cfg.to_dict()
+    assert dumped["quota_limit"] == 2
+    assert "total_quota" not in dumped
+    assert "target_quota" not in dumped
+    replaced = cfg.with_overrides(quota_limit=3)
+    assert replaced.quota_limit == 3
 
 
 def test_acquire_request_rejects_unimplemented_hints():
-    with pytest.raises(ConfigError, match="probe"):
-        AcquireRequest(probe="site")
+    # probe is now a supported per-target live check; only affinity is unused.
+    assert AcquireRequest(probe="site").probe == "site"
     with pytest.raises(ConfigError, match="affinity"):
         AcquireRequest(affinity="c")
 
@@ -611,18 +617,20 @@ def test_report_views_are_exported_from_top_level():
         assert getattr(purser, name) is getattr(views, name)
         assert name in purser.__all__
 
-    assert views.PoolStats.__required_keys__ >= {"name", "counts", "config"}
-    assert views.UsageReport.__required_keys__ >= {
-        "window",
-        "totals",
-        "groups",
-        "active",
-        "pools",
-    }
-    assert views.ValidateJobView.__required_keys__ >= {
-        "id",
-        "status",
-        "pending",
-        "errors",
-    }
-    assert "cancelled" in views.ValidateJobCancelView.__required_keys__
+    # TypedDict.__required_keys__ only exists on Python 3.9+.
+    if sys.version_info >= (3, 9):
+        assert views.PoolStats.__required_keys__ >= {"name", "counts", "config"}
+        assert views.UsageReport.__required_keys__ >= {
+            "window",
+            "totals",
+            "groups",
+            "active",
+            "pools",
+        }
+        assert views.ValidateJobView.__required_keys__ >= {
+            "id",
+            "status",
+            "pending",
+            "errors",
+        }
+        assert "cancelled" in views.ValidateJobCancelView.__required_keys__

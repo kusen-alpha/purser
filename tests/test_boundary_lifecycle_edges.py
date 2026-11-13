@@ -18,7 +18,7 @@ from purser.errors import NotStarted, PoolExhausted
 
 async def test_runtime_ops_require_start_management_ops_do_not():
     ps = Purser(maintenance_enabled=False)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     pool = ps.create_pool("proxies", "fakecheck")
     try:
         assert ps.started is False and pool.started is False
@@ -55,7 +55,7 @@ async def test_runtime_ops_require_start_management_ops_do_not():
 
 async def test_pool_created_after_start_is_immediately_usable():
     async with Purser(maintenance_enabled=False) as ps:
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         pool = ps.create_pool("proxies", "fakecheck")
         await pool.import_resources(
             [{"id": "p1", "host": "1.1.1.1", "port": 8080}],

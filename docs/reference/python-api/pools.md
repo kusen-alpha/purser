@@ -22,7 +22,7 @@ report = await pool.import_resources(
 | `import_validate` | 池配置 | `none` / `on_import` / `batch`，见[导入与验活](../../guides/import-and-validate.md) |
 | `batch_id` | 自动生成 | 批次标识；同时写入每个资源的 `meta["batch_id"]` |
 
-`dict` 记录中与 payload 字段并列的保留键会被拆出并应用到调度字段：`max_slots`、`usage_quota`、`expires_at`、`mutex_group`、`schedule_window`、`source`。未显式给 `max_slots` 时使用池配置值；`expires_in`、`usage_quota`、`total_quota` 等池默认值只在记录未提供时补齐。
+`dict` 记录中与 payload 字段并列的保留键会被拆出并应用到调度字段：`max_slots`、`usage_quota`、`quota_limit`、`expires_at`、`next_available_at`、`mutex_group`、`schedule_window`、`source`。未显式给 `max_slots` 时使用池配置值；`expires_in`、`usage_quota`、`quota_limit` 等池默认值只在记录未提供时补齐。
 
 重复导入同一 id 是**更新**而不是替换：
 
@@ -65,7 +65,7 @@ async for resource in pool.iter_resources(states=None, tags=None, search=None, b
 - `tags` 是“全部包含”语义；`search` 匹配 id、kind、标签以及 `meta` 中的 `batch_id` / `source`。
 - `sort` 仅支持 `id` / `health` / `recent`；默认 `id` 升序，其余默认降序。`order` 只能是 `asc` / `desc`。
 - `iter_resources()` 过滤语义与 `query()` 一致，但按 id 顺序逐条 hydrate，不使用 offset，遍历期间的新增/删除不会造成窗口偏移。SQL 后端仍会在内部一次性读取匹配行，内存优势来自不构造完整结果列表。
-- 读取边界统一执行 `ResourceType.hydrate()`，返回声明了 `payload_fields` 的类型化子类。
+- 读取边界统一执行 `ResourceAdapter.hydrate()`，返回声明了字段的类型化子类。
 
 | 方法 | 说明 |
 | --- | --- |
@@ -114,7 +114,9 @@ updated = await pool.update_resource(
     tags=frozenset({"us"}),           # 整体替换标签
     max_slots=4,
     usage_quota=1000,                 # 省略则保持；None 清空
+    quota_limit=200,                  # 周期配额；省略则保持，None 清空
     expires_at=None,                  # None 清空
+    next_available_at=None,           # None 清空
     mutex_group="account-group",
     schedule_window=["08:00", "20:00"],
     operator="alice", reason="rotate endpoint",
@@ -123,7 +125,7 @@ updated = await pool.update_resource(
 
 - 资源有活跃租约时拒绝修改（`BadState`）。
 - `payload` / `tags` / `max_slots` 是整体替换；未传则保持。
-- `usage_quota` / `expires_at` / `mutex_group` / `schedule_window` 支持“省略保持、传 `None` 清空”。
+- `usage_quota` / `quota_limit` / `expires_at` / `next_available_at` / `mutex_group` / `schedule_window` 支持“省略保持、传 `None` 清空”。
 - `schedule_window` 必须是两个 `HH:MM` 字符串，支持跨夜窗口。
 - 迁移资源用 `move_resource(rid, target_pool, reason=...)`：资源必须空闲、目标池 kind 相同、目标池不能已有同 id。
 
@@ -145,6 +147,7 @@ result = await pool.recall_batch(batch_id, action="retire", reason="vendor batch
 | `validating_gc` | `VALIDATING` 超过 `validate_timeout` 按验活失败处理 |
 | `quarantine_gc` | 隔离到期的资源回 `IDLE`（或按策略回 `VALIDATING`） |
 | `archive_gc` | 归档超过 `archive_retention` 的资源安全擦除 payload 后删除 |
+| `expire_gc` | 过期超过 `expired_retention` 的 `SUSPENDED` 资源归档；需 `expired_retention` 非空才启用，默认关闭 |
 
 `maintenance_enabled=True` 时这些扫描由后台周期任务自动执行；`run_maintenance()` 用于手动触发或测试。
 
@@ -158,7 +161,7 @@ job = pool.validate_job(job_id)
 cancelled = pool.cancel_validate_job(job_id)
 ```
 
-- `validate_now()` 对 `NEW` / `IDLE` 先进入 `VALIDATING` 再执行类型校验；`ACTIVE` 原地校验，不改变状态。`BANNED`、`DRAINING`、`ARCHIVED`、`SUSPENDED`、`QUOTA_EXHAUSTED` 拒绝。
+- `validate_now()` 对 `NEW` / `IDLE` 先进入 `VALIDATING` 再执行适配器校验；`ACTIVE` 原地校验，不改变状态。`BANNED`、`DRAINING`、`ARCHIVED`、`SUSPENDED`、`QUOTA_EXHAUSTED` 拒绝。
 - `import_validate="batch"` 创建的后台任务以 `batch_id` 为 job id；任务状态为 `running` / `cancelling` / `completed` / `cancelled`。
 - `validate_jobs()` 按创建时间倒序返回；`validate_job()` 不存在时返回 `None`。
 - `cancel_validate_job()` 停止未开始的条目，在途探测允许完成；未知 job 返回 `None`，已结束 job 返回 `cancelled=False`。

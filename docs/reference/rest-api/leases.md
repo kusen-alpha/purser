@@ -42,7 +42,7 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/leases \
 | `mode` | `atomic` | 批量模式：`atomic` / `best_effort` |
 | `n_min` | `null` | `best_effort` 的最低数量 |
 
-`probe` / `affinity` 是未实现的保留字段，传入非空值返回 `422`。
+`probe` 可传目标 URL，启用“取得前按目标实时验活”（同 `AcquireRequest.probe`）；`affinity` 仍是未实现的保留字段，传入返回 `422`。
 
 响应：
 

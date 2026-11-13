@@ -6,12 +6,12 @@
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | 无 | 存活探针 |
 | `GET` | `/readyz` | 无 | 就绪探针，返回池列表 |
-| `GET` | `/service` | 读 | 版本、运行时长、后端、类型与维护开关 |
+| `GET` | `/service` | 读 | 版本、运行时长、后端、适配器与维护开关 |
 | `GET` | `/metrics` | 无 | Prometheus 文本指标 |
 | `GET` | `/metrics/snapshot` | 读 | 计数器与直方图快照 |
 | `GET` | `/audit` | 读 | 审计分页 |
 | `GET` | `/audit/verify` | 读 | 校验哈希链 |
-| `GET` | `/types` | 读 | 已注册类型及字段 |
+| `GET` | `/adapters` | 读 | 已注册适配器及字段 |
 | `GET` | `/backup` | admin | 全量导出（含明文密钥） |
 | `POST` | `/restore` | 写 | 导入备份；支持 `Idempotency-Key` |
 
@@ -47,10 +47,10 @@ curl http://127.0.0.1:8000/audit/verify
 
 响应为 `{entries, cursor, has_older}`。审计是 append-only 哈希链；配置 `audit_path` 时落 SQLite，重启后继续校验。
 
-## 类型
+## 适配器
 
 ```bash
-curl http://127.0.0.1:8000/types
+curl http://127.0.0.1:8000/adapters
 ```
 
 返回每个已注册 `kind` 的资源类、默认并发度与 `PayloadField` 字段（名称、类型、required、secret、default、doc），控制台据此渲染表单。

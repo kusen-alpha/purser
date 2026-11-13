@@ -52,7 +52,7 @@ def _purser(sqlite_path: str, redis_url: str | None = None) -> Purser:
         sqlite_path=sqlite_path,
         redis_url=redis_url or URL,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     return ps
 
 

@@ -70,7 +70,7 @@ async def test_purser_restart_reconciles_orphan_leases(tmp_path):
         sqlite_path=db,
         audit_path=db,
     )
-    ps1.register_type(FakeChecker())
+    ps1.register_adapter(FakeChecker())
     pool = ps1.create_pool("px", "fakecheck")
     await ps1.start()
     await pool.import_resources(
@@ -90,7 +90,7 @@ async def test_purser_restart_reconciles_orphan_leases(tmp_path):
         audit_path=db,
     )
     try:
-        ps2.register_type(FakeChecker())
+        ps2.register_adapter(FakeChecker())
         pool2 = ps2.create_pool("px", "fakecheck")
         await pool2.start()  # runs _reconcile_leases
         res = await pool2.get("r1")
@@ -120,7 +120,7 @@ async def test_redis_coordination_survives_restart(tmp_path):
             sqlite_path=db,
             redis_client=redis,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1 = build()

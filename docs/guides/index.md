@@ -14,10 +14,14 @@
 | 任务 | 页面 |
 | --- | --- |
 | 导入资源、决定何时验活 | [导入与验活](import-and-validate.md) |
+| 一次拿整套（账号+代理）、约束配对、准入配额 | [组合租约](bundle-leases.md) |
 | 调公平性、健康度、隔离与配额 | [公平性与健康度](fairness-and-health.md) |
 | 部署多实例、共享 Redis | [多实例部署](multi-instance.md) |
+| 选择并配置存储层 / 协调层 | [后端配置示例](backend-configuration.md) |
+| 在多线程里并发使用 | [多线程使用](threading.md) |
+| 同主机多进程共享资源池 | [多进程使用](multiprocessing.md) |
 | 在同步代码里调用 | [同步 Purser](sync-facade.md) |
-| 接入代理/账号之外的新资源 | [自定义资源类型](custom-resource-type.md) |
+| 接入代理/账号之外的新资源 | [自定义资源适配器](custom-resource-adapter.md) |
 | 在浏览器里建池、加资源、看租约 | [Web 控制台](web-console.md) |
 | 退役、备份、审计、轮换密钥 | [运维操作](operations.md) |
 

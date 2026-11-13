@@ -30,7 +30,7 @@ Linux / macOS 把 `.venv\Scripts\` 换成 `.venv/bin/`。`dev` extras 包含测�
 | `purser/facade.py` | `Purser` / `ResourcePool` 编排：获取、归还、验活、对账 |
 | `purser/core/` | 状态机、分配器、租约、健康度、隔离、事件、用量 |
 | `purser/backends/` | 存储（memory/sqlite/mysql）与协调（memory/redis） |
-| `purser/types/` | `ResourceType` 基类与内置 proxy/account |
+| `purser/adapters/` | `ResourceAdapter` 基类与内置 proxy/account |
 | `purser/local/` | 同机多进程调度进程与 IPC 客户端 |
 | `purser/ui/` | FastAPI 应用、REST/SSE 与控制台 |
 | `purser/sync.py` | 同步 Purser |

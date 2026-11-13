@@ -153,7 +153,7 @@ async def test_restart_lost_archived_by_gc(tmp_path, storage_kind, coordination_
             if coordination_kind == "redis"
             else None,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1 = build()
@@ -196,7 +196,7 @@ async def test_restart_validating_stale_gced(tmp_path, storage_kind, coordinatio
             if coordination_kind == "redis"
             else None,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1 = build()

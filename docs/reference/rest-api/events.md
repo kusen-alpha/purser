@@ -51,8 +51,11 @@ SSE 与历史回放都走同一套鉴权：配置密钥后，两者都需要 `Au
 | --- | --- |
 | 租约 | `lease_acquired`、`lease_released`、`lease_lost`、`lease_expired`、`lease_revoked`、`lease_reconciled` |
 | 导入 | `import_finished` |
-| 状态 | `state_changed`、`quarantined`、`quarantine_expired`、`banned`、`resource_restored` |
+| 状态 | `state_changed`、`quarantined`、`quarantine_expired`、`banned`、`unbanned`、`expired`、`quota_exhausted`、`quota_reset`、`validate_ok`、`resource_restored`、`resource_switched` |
+| 健康 | `health_reported` |
 | 池 | `pool_created`、`pool_deleted` |
 | 验活任务 | `validate_job_started`、`validate_job_finished` |
+
+上表为当前实现发布的事件全集；`state_changed` 的 `data` 带 `old` / `new` / `reason`。
 
 事件总线是有界环形缓冲（默认 10 000 条）：慢订阅者会被丢弃并告警，历史回放保留最近窗口。

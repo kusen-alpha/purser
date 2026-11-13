@@ -65,6 +65,14 @@ class NoSuitableResource(PurserError):
         super().__init__(detail)
 
 
+class BundleAcquireFailed(PurserError):
+    """A cross-pool bundle could not be completed; members were rolled back."""
+
+
+class BundleQuotaExceeded(PurserError):
+    """Bundle admission rejected (fairness limit) before any member was taken."""
+
+
 class ResourceBusy(PurserError):
     """Directed acquire timed out waiting for the resource."""
 

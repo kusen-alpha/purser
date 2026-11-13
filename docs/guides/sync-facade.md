@@ -21,7 +21,7 @@
 from purser import AcquireRequest, SyncPurser, UsageOutcome
 
 with SyncPurser() as ps:
-    ps.register_type(MyType())
+    ps.register_adapter(MyAdapter())
     pool = ps.create_pool("demo", "my-kind")
     pool.import_resources([{"id": "r1"}], import_validate="on_import")
 

@@ -2,7 +2,7 @@
 
 Two ``Purser`` instances inside one process must be fully independent: they may
 not share a SQLite file, a MySQL database, a Redis DB, an external client
-object, or a ``ResourceType`` instance.  Half-sharing (same storage but separate
+object, or a ``ResourceAdapter`` instance.  Half-sharing (same storage but separate
 coordination, or the opposite) produces lease/slot views that no single owner
 can reconcile, so the library rejects it at the point the shared plane is
 wired up.
@@ -30,7 +30,7 @@ import os
 import stat
 import threading
 import weakref
-from typing import Any
+from typing import Any, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 from purser.errors import IsolationConflict
@@ -39,7 +39,7 @@ ALLOW_SHARED_ENV = "PURSER_ALLOW_SHARED_BACKENDS"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
-Identity = tuple[Any, str]
+Identity = Tuple[Any, str]
 
 
 class _Claim:
@@ -71,7 +71,7 @@ def _conflict_message(label: str) -> str:
     return (
         f"this Purser shares {label} with another live Purser in the same process; "
         "same-process instances must not share storage, coordination or "
-        "ResourceType state. Share one Purser/SyncPurser across threads, give "
+        "ResourceAdapter state. Share one Purser/SyncPurser across threads, give "
         "each instance its own backend, or run the extra instances in another "
         "process (LocalScheduler). Set "
         f"{ALLOW_SHARED_ENV}=1 only for harnesses that simulate separate hosts."
@@ -295,6 +295,6 @@ def mysql_connection_identity(connection: Any) -> Identity:
     return ("mysql-connection", id(connection)), "a shared mysql_connection object"
 
 
-def resource_type_identity(rtype: Any) -> Identity:
-    kind = getattr(rtype, "kind", type(rtype).__name__)
-    return ("resource-type", id(rtype)), f"ResourceType {kind!r} instance"
+def resource_adapter_identity(adapter: Any) -> Identity:
+    kind = getattr(adapter, "kind", type(adapter).__name__)
+    return ("resource-adapter", id(adapter)), f"ResourceAdapter {kind!r} instance"

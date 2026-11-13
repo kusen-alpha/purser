@@ -116,7 +116,7 @@ class Backend:
         self, name: str, *, max_slots: int = 1, lease_ttl: float = 30.0
     ) -> tuple[SyncPurser, object]:
         ps = SyncPurser(**self.kwargs())
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         # Create before starting: ``ps.start()`` then awaits the pool's
         # startup reconcile, so assertions after it are deterministic.
         pool = ps.create_pool(
@@ -138,7 +138,7 @@ class Backend:
         ps: SyncPurser | None = None
         try:
             ps = SyncPurser(**self.kwargs())
-            ps.register_type(FakeChecker())
+            ps.register_adapter(FakeChecker())
             ps.start()
             pool = ps.pool(
                 name, "fakecheck", max_slots=max_slots, lease_ttl=lease_ttl
@@ -399,7 +399,7 @@ def _crash_worker(
         mysql_url=mysql_url,
         redis_url=redis_url,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     pool = ps.create_pool(name, "fakecheck", max_slots=1, lease_ttl=lease_ttl)
     ps.start()
     lease = pool.acquire(
@@ -491,7 +491,7 @@ def _contend_worker(
         mysql_url=mysql_url,
         redis_url=redis_url,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     pool = ps.create_pool(name, "fakecheck", max_slots=max_slots, lease_ttl=30.0)
     try:
         ps.start()

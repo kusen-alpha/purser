@@ -14,13 +14,13 @@ import threading
 import time
 
 from purser import Purser
+from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport
 from purser.core.resource import AcquireRequest, Resource
 from purser.errors import PurserError
-from purser.types.base import ResourceType
 
 
-class _WorkerType(ResourceType):
+class _WorkerAdapter(ResourceAdapter):
     kind = "w"
 
     async def generate(self, spec: dict) -> Resource:
@@ -42,7 +42,7 @@ def _worker(sqlite_path: str, worker_id: int, attempts: int) -> dict:
             coordination="memory",
             sqlite_path=sqlite_path,
         )
-        ps.register_type(_WorkerType())
+        ps.register_adapter(_WorkerAdapter())
         pool = ps.create_pool("shared", "w", max_slots=2)
         held: list = []
         try:
@@ -78,7 +78,7 @@ def test_multiprocess_shared_sqlite_no_oversell(tmp_path):
 
     async def seed_once() -> None:
         ps = Purser(maintenance_enabled=False, storage="sqlite", coordination="memory", sqlite_path=path)
-        ps.register_type(_WorkerType())
+        ps.register_adapter(_WorkerAdapter())
         pool = ps.create_pool("shared", "w", max_slots=2)
         await pool.import_resources(
             [{"id": "r0", "host": "1.1.1.1", "port": 1}], import_validate="on_import"

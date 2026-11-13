@@ -43,7 +43,7 @@ async def test_started_pool_reaper_auto_returns_expired(storage_kind, coordinati
         sqlite_path=":memory:" if storage_kind == "sqlite" else None,
         redis_client=fakeredis.aioredis.FakeRedis() if coordination_kind == "redis" else None,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     pool = ps.create_pool("px", "fakecheck", lease_ttl=0.3)
     await ps.start()
     try:
@@ -142,7 +142,7 @@ def test_audit_paging():
 
 async def test_purser_start_idempotent():
     ps = Purser(maintenance_enabled=True)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     await ps.start()
     await ps.start()
     assert ps._running

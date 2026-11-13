@@ -106,7 +106,7 @@
 | 同一 MySQL 库（池名不同也不行） | `create_pool` 构造 mysql 存储时 | 规范化 `host:port/db`，忽略用户名/密码 |
 | 同一 Redis DB（协调层是 memory 也禁止） | `Purser.__init__`（幂等存储）与 `create_pool`（Redis 协调） | 规范化 `host:port/db`，忽略凭据与 `redis`/`rediss` 差异；幂等键是整库范围，故初始化即认领 |
 | 同一个 `mysql_connection` / `redis_client` 对象 | 对应后端构造时 | 对象身份（外部客户端跨 loop 共享本身不安全） |
-| 同一个 `ResourceType` 实例 | `register_type` 与 `create_pool` | 对象身份（插件可能带可变状态） |
+| 同一个 `ResourceAdapter` 实例 | `register_adapter` 与 `create_pool` | 对象身份（插件可能带可变状态） |
 
 语义细节：
 
@@ -192,7 +192,7 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 
 - **一个资源集合仍只能有一个调度进程。** 启动第二个 `LocalScheduler` 或另行启动 `purser serve` 指向同一存储/协调时，就回到 §1.5 的共享后端语义，而不是自动获得全局一致性；若后端是 memory 半共享组合，第二个实例会在 `start()` 时被 §1.5.3 拒绝。
 - **跨主机不适用。** 命名管道/UDS 只在本机；远程或多副本需要 HTTP/服务化，并另行解决鉴权、重试与对账。
-- **消息是 JSON，不是 pickle。** 自定义 `ResourceType` 需在创建 `LocalScheduler(types=[...])` 时传入，且类在 `spawn` 子进程中可导入；资源 `payload` 中的 `bytes` 以 base64 哨兵传输，其他不可 JSON 化的对象会被拒绝。
+- **消息是 JSON，不是 pickle。** 自定义 `ResourceAdapter` 需在创建 `LocalScheduler(adapters=[...])` 时传入，且类在 `spawn` 子进程中可导入；资源 `payload` 中的 `bytes` 以 base64 哨兵传输，其他不可 JSON 化的对象会被拒绝。
 
 ### 1.5.3 跨进程 memory 组合的运行时拒绝
 
@@ -327,7 +327,7 @@ Python 3.8/3.9 与新版本的锁、信号量绑定时机不同；本轮没有�
 | `_check_cache`、`probe_guard` | 校验缓存及熔断范围按实例；需要明确是否接受此作用域 |
 | `_validate_jobs`、维护调度器 | 任务查询、取消与维护执行没有统一跨实例协调 |
 | `bus`、`usage`、`metrics` | 事件和用量、指标需额外汇总；单实例结果不能冒充全局结果 |
-| `_pools`、类型注册表 | 其他实例不会自动获得新建池、类型插件或配置变更 |
+| `_pools`、适配器注册表 | 其他实例不会自动获得新建池、适配器插件或配置变更 |
 | 审计内存视图 | 可以共享磁盘审计库，但当前写者内存视图存在并发缺漏问题 |
 
 ## 三、同步门面：可行，但不能只做方法转发
@@ -421,7 +421,7 @@ copy_used=1, core_used=0
 | 所属对象 | 分组 | 必须纳入适配清单的方法 |
 | --- | --- | --- |
 | Purser | 生命周期 | `start`、`close` |
-| Purser | 类型 / 池 | `register_type`、`create_pool`、`pool`、`get_pool`、`require_pool`、`pool_names`、`delete_pool` |
+| Purser | 适配器 / 池 | `register_adapter`、`create_pool`、`pool`、`get_pool`、`require_pool`、`pool_names`、`delete_pool` |
 | Purser | 运维 | `report_usage`、`backup`、`restore` |
 | ResourcePool | 生命周期 | `start`、`close`、`reconfigure` |
 | ResourcePool | 读取 | `get`、`require`、`query`、`iter_resources`、`count_matching`、`batches`、`counts`、`stats`、`describe`、`leases` |
@@ -596,7 +596,7 @@ used=2, live=3, max_slots=2
 | 事件跨实例 | 当前没有桥接 | 区分临时通知与可重放事件；pub/sub 本身不提供可靠历史 |
 | 用量 / 指标 | 实例内累计 | 汇总范围、重复处理、持久化及故障丢失策略 |
 | 验活任务 | 查询和取消主要依赖发起实例 | 共享任务状态或明确要求路由回所属实例 |
-| 池注册、配置和类型 | 每实例本地注册 | 配置传播、插件部署及版本一致性；UI 保存配置文件不是分布式注册表 |
+| 池注册、配置和适配器 | 每实例本地注册 | 配置传播、插件部署及版本一致性；UI 保存配置文件不是分布式注册表 |
 | 备份 / 恢复 / 删除池 | 主要按本实例注册表操作，没有全局维护屏障 | 定义操作范围，防止其他实例仍在写入或获取 |
 
 SQLite 的写并发受到单写者机制和事务长度影响，MySQL 也受连接、锁及事务设计影响。删除“2～3 个 SQLite 进程以内必然可接受”这样的无基准阈值，按实际负载测试后选型。
@@ -750,13 +750,13 @@ from fakeredis.aioredis import FakeRedis
 from purser import Purser
 from purser.core.health import HealthReport
 from purser.core.resource import Resource
-from purser.types.base import ResourceType
+from purser.adapters.base import ResourceAdapter
 
 # Reproduce V02/V05 in one process: this deliberately simulates two hosts.
 os.environ["PURSER_ALLOW_SHARED_BACKENDS"] = "1"
 
 
-class ProbeType(ResourceType):
+class ProbeAdapter(ResourceAdapter):
     kind = "probe"
 
     async def generate(self, spec):
@@ -775,7 +775,7 @@ def build(path, capacity, client=None):
         secret_key=b"x" * 32,
         maintenance_enabled=False,
     )
-    ps.register_type(ProbeType())
+    ps.register_adapter(ProbeAdapter())
     pool = ps.create_pool(
         "p", "probe", max_slots=capacity,
         lease_ttl=600, heartbeat_interval=300,

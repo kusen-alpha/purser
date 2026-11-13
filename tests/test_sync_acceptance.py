@@ -104,7 +104,7 @@ PURSER_METHODS = {
     "require_pool",
     "pool_names",
     "delete_pool",
-    "register_type",
+    "register_adapter",
     "report_usage",
     "backup",
     "restore",
@@ -136,7 +136,7 @@ def sync_backend(request, tmp_path):
                 kwargs["redis_client"] = client
         kwargs.update(overrides)
         ps = SyncPurser(**kwargs)
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         ps.start()
         created.append(ps)
         return ps

@@ -24,8 +24,8 @@ stateDiagram-v2
     ACTIVE --> IDLE : release(还清)
     FULL --> ACTIVE : release(仍有租约)
     FULL --> IDLE : force_revoke / 租约超时回收(全部归还)
-    ACTIVE -.-> LOST : 保留事件(无自动触发)
-    FULL -.-> LOST : 保留事件(无自动触发)
+    ACTIVE --> LOST : 保留事件(无自动触发)
+    FULL --> LOST : 保留事件(无自动触发)
     ACTIVE --> BANNED : 使用中被风控
     FULL --> BANNED : 使用中被风控
 
@@ -82,7 +82,7 @@ stateDiagram-v2
 | ACTIVE / FULL | `force_revoke` | IDLE / ACTIVE | 管理员强制撤销（带原因 + 审计） |
 | ACTIVE / FULL | `lost` | LOST | — |
 | ACTIVE / FULL | `banned` | BANNED | — |
-| QUARANTINED | `quarantine_expired` | IDLE | 隔离期到；`meta.requalify_on_release=true` 时转 VALIDATING |
+| QUARANTINED | `quarantine_expired` | IDLE | 隔离期到；`requalify_on_release=true` 时转 VALIDATING |
 | QUARANTINED | `validate_ok` | IDLE | 直接重验通过 |
 | QUARANTINED | `validate_fail` | BANNED | 累计失败达上限 |
 | SUSPENDED | `resume` | IDLE / VALIDATING | 可选先重验 |

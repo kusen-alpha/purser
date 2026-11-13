@@ -4,7 +4,7 @@
 
 基于 [purser 设计文档](docs/design/design-doc.md) 实现，遵循三条设计原则：
 
-- **通用内核 + 类型插件**：内核只关心状态机、调度、租约与后端一致性，代理/账号等差异全部收敛到 `ResourceType` 插件。
+- **通用内核 + 适配器插件**：内核只关心状态机、调度、租约与后端一致性，代理/账号等差异全部收敛到 `ResourceAdapter` 插件。
 - **异步优先**：全链路 `asyncio`，单事件循环内零锁竞争。
 - **后端可插拔**：`memory` 后端开箱即用，`redis` 后端提供多实例共享与跨进程原子性，切换后端不需要修改业务代码。
 
@@ -71,7 +71,7 @@ asyncio.run(main())
 
 > 示例里的 IP 是占位符：`import_validate="on_import"` 会真实验活，请替换成可达代理；
 > 想离线完成流程，可参照 [examples/quickstart.py](examples/quickstart.py) 注册一个
-> `validate()` 恒为 OK 的自定义 `ResourceType`。
+> `validate()` 恒为 OK 的自定义 `ResourceAdapter`。
 
 ## 服务模式（REST API + Web UI + CLI）
 
@@ -148,7 +148,7 @@ pool = ps.create_pool("proxies", "proxy")
 
 - [文档首页](docs/index.md)：安装、两个快速开始与按角色划分的文档地图。
 - 指南：[资源可用性判定](docs/guides/availability.md)、[租约生命周期](docs/guides/lease-lifecycle.md)、[导入与验活](docs/guides/import-and-validate.md)、[多实例部署](docs/guides/multi-instance.md)、[同步 Purser](docs/guides/sync-facade.md)。
-- 参考：[Python API](docs/reference/python-api/index.md)、[REST API](docs/reference/rest-api/index.md)、[CLI](docs/reference/cli.md)、[配置](docs/reference/configuration.md)、[内置资源类型](docs/reference/resource-types.md)、[LocalScheduler](docs/reference/local-scheduler.md)、[错误处理](docs/reference/errors.md)、[状态机](docs/reference/state-machine.md)。
+- 参考：[Python API](docs/reference/python-api/index.md)、[REST API](docs/reference/rest-api/index.md)、[CLI](docs/reference/cli.md)、[配置](docs/reference/configuration.md)、[内置资源适配器](docs/reference/resource-adapters.md)、[LocalScheduler](docs/reference/local-scheduler.md)、[错误处理](docs/reference/errors.md)、[状态机](docs/reference/state-machine.md)。
 - 设计与内部：[架构](docs/design/architecture.md)、[数据平面与丢失语义](docs/design/data-planes.md)、[算法与不变量](docs/design/algorithms.md)。
 - [贡献指南](docs/contributing/index.md)与[测试规范](docs/contributing/testing.md)。
 - 归档：[设计文档](docs/design/design-doc.md)、[可行性分析](docs/design/feasibility.md)。

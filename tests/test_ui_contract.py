@@ -17,13 +17,13 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from purser import Purser
+from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport
 from purser.core.resource import Resource
-from purser.types.base import ResourceType
 from purser.ui.server import create_app
 
 
-class _UiChecker(ResourceType):
+class _UiChecker(ResourceAdapter):
     """Deterministic plugin for the console flow tests."""
 
     kind = "uifake"
@@ -44,7 +44,7 @@ class _UiChecker(ResourceType):
 @pytest.fixture
 def client() -> TestClient:
     ps = Purser(maintenance_enabled=False)
-    ps.register_type(_UiChecker())
+    ps.register_adapter(_UiChecker())
     # Enter the context so the app lifespan runs (ps.start()).
     with TestClient(create_app(ps)) as client:
         yield client
@@ -94,7 +94,7 @@ def test_console_served_and_endpoints_exist(client: TestClient):
         'id="cfgSecrets"',
         'id="cfgWHealth"',
         'id="cfgQBase"',
-        'id="cfgTotalQuota"',
+        'id="cfgQuotaLimit"',
         'id="maintTask"',
         'qs.set("tail"',
         "EventSource",
@@ -142,7 +142,7 @@ def test_console_fetch_targets_registered(client: TestClient):
         ("GET", "/backup"),
         ("POST", "/restore"),
         ("GET", "/reports/usage"),
-        ("GET", "/types"),
+        ("GET", "/adapters"),
         ("GET", "/pools"),
         ("POST", "/pools"),
         ("PATCH", "/pools/{pool_name}"),
@@ -177,14 +177,14 @@ def test_console_fetch_targets_registered(client: TestClient):
         assert method in methods_by_path[path], (method, path)
 
 
-def test_types_schema_drives_resource_forms(client: TestClient):
+def test_adapters_schema_drives_resource_forms(client: TestClient):
     """The add-resource modal is generated from this payload, so every field
     marker (type/required/secret/default) has to be present and JSON-safe."""
 
-    types = {item["kind"]: item for item in client.get("/types").json()["types"]}
-    assert {"proxy", "account", "uifake"} <= set(types)
+    adapters = {item["kind"]: item for item in client.get("/adapters").json()["adapters"]}
+    assert {"proxy", "account", "uifake"} <= set(adapters)
 
-    proxy = types["proxy"]
+    proxy = adapters["proxy"]
     assert proxy["resource_class"] == "ProxyResource"
     assert proxy["default_concurrency"] == 1
     fields = {f["name"]: f for f in proxy["fields"]}
@@ -206,13 +206,13 @@ def test_types_schema_drives_resource_forms(client: TestClient):
     assert fields["password"]["secret"] is True
     assert fields["host"]["secret"] is False
 
-    account = {f["name"]: f for f in types["account"]["fields"]}
+    account = {f["name"]: f for f in adapters["account"]["fields"]}
     for secret in ("password", "cookie", "access_token", "refresh_token"):
         assert account[secret]["secret"] is True
-    assert all(f["required"] is False for f in types["account"]["fields"])
+    assert all(f["required"] is False for f in adapters["account"]["fields"])
 
     # A plugin whose resource class declares no typed fields exposes none.
-    assert types["uifake"]["fields"] == []
+    assert adapters["uifake"]["fields"] == []
 
 
 def test_console_flow_response_shapes(client: TestClient):
@@ -385,7 +385,7 @@ def test_console_extended_console_flow(client: TestClient):
     and event replay."""
 
     service = client.get("/service").json()
-    for key in ("version", "uptime_s", "storage", "coordination", "pools", "types", "maintenance"):
+    for key in ("version", "uptime_s", "storage", "coordination", "pools", "adapters", "maintenance"):
         assert key in service, key
 
     for name in ("ui-ext", "ui-ext2"):
@@ -397,7 +397,7 @@ def test_console_extended_console_flow(client: TestClient):
                 "secret_fields": ["token"],
                 "weights": {"health": 1.5, "age": 0.25},
                 "quarantine": {"base": 10.0, "max_failures": 2},
-                "total_quota": 4,
+                "quota_limit": 4,
             }
         created = client.post("/pools", json=body)
         assert created.status_code == 200, created.text
@@ -406,7 +406,7 @@ def test_console_extended_console_flow(client: TestClient):
     assert cfg["secret_fields"] == ["token"]
     assert cfg["weights"]["health"] == 1.5
     assert cfg["quarantine"]["max_failures"] == 2
-    assert cfg["total_quota"] == 4
+    assert cfg["quota_limit"] == 4
 
     patched = client.patch(
         "/pools/ui-ext",
@@ -416,7 +416,7 @@ def test_console_extended_console_flow(client: TestClient):
                 "quarantine": {"cap": 90.0},
                 "unban_after": 600.0,
                 "cooldown_consumer_only": True,
-                "total_quota": 2,
+                "quota_limit": 2,
             }
         },
     )
@@ -425,7 +425,7 @@ def test_console_extended_console_flow(client: TestClient):
     assert patched_cfg["unban_after"] == 600.0
     assert patched_cfg["cooldown_consumer_only"] is True
     assert patched_cfg["quarantine"]["cap"] == 90.0
-    assert patched_cfg["total_quota"] == 2
+    assert patched_cfg["quota_limit"] == 2
 
     report = client.post(
         "/pools/ui-ext/resources",
@@ -615,7 +615,7 @@ def test_console_extended_console_flow(client: TestClient):
 
 def test_sse_stream_emits_published_events():
     ps = Purser(maintenance_enabled=False)
-    ps.register_type(_UiChecker())
+    ps.register_adapter(_UiChecker())
     config = uvicorn.Config(
         create_app(ps), host="127.0.0.1", port=0, log_level="error"
     )

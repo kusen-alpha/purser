@@ -60,7 +60,7 @@ def _scheduler_main(
     config: dict[str, Any],
     ready_event: Any,
     error_queue: Any,
-    types: tuple[Any, ...] = (),
+    adapters: tuple[Any, ...] = (),
 ) -> None:
     """Module-level entry point (spawn-safe) for the scheduler process."""
 
@@ -69,8 +69,8 @@ def _scheduler_main(
     service: _Service | None = None
     try:
         purser = SyncPurser(**config)
-        for rtype in types:
-            purser.register_type(rtype)
+        for adapter in adapters:
+            purser.register_adapter(adapter)
         purser.start()
         listener = Listener(
             address.address, family=address.family, authkey=address.authkey

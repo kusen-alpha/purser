@@ -7,12 +7,12 @@ import asyncio
 import pytest
 from conftest import seed
 
+from purser.adapters.proxy import ProxyAdapter
 from purser.core.events import EventBus
 from purser.core.resource import AcquireRequest, Resource
 from purser.core.state import ResourceState
 from purser.crypto import SecretCodec
 from purser.metrics import Metrics
-from purser.types.proxy import ProxyType
 
 
 async def test_lease_lost_unregisters_from_manager(make_pool):
@@ -96,17 +96,17 @@ def test_secret_codec_short_keys():
 async def test_proxy_validate_quorum_and_latency(
     probe_results, expected_alive, expected_latency
 ):
-    rtype = ProxyType(probe_targets=["t1", "t2", "t3"])
+    adapter = ProxyAdapter(probe_targets=["t1", "t2", "t3"])
     calls = iter(probe_results)
 
     async def fake_probe(protocol, host, port, target, auth, timeout):
         return next(calls)
 
-    rtype._probe = fake_probe
+    adapter._probe = fake_probe
     resource = Resource(
         id="p", kind="proxy", payload={"host": "1.2.3.4", "port": 8080}
     )
-    report = await rtype.validate(resource)
+    report = await adapter.validate(resource)
     assert report.alive is expected_alive
     assert report.latency_ms == expected_latency
 
@@ -117,7 +117,7 @@ async def test_same_purser_restart_cycle():
     from purser import Purser
 
     ps = Purser(maintenance_enabled=True)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     pool = ps.create_pool("px", "fakecheck")
     await ps.start()
     [rid] = await seed(pool, n=1)

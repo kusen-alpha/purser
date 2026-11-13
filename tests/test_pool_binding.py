@@ -200,7 +200,7 @@ async def test_sqlite_pool_pins_are_per_pool(tmp_path):
         sqlite_path=db,
         redis_client=client,
     )
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     try:
         memory_pool = ps.create_pool("memory-pool", "fakecheck")
         redis_pool = ps.create_pool(
@@ -233,7 +233,7 @@ async def test_delete_pool_allows_rebinding(tmp_path):
             sqlite_path=db,
             redis_client=client,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     first = build("memory")
@@ -529,7 +529,7 @@ async def test_close_releases_redis_storage_marker(tmp_path):
             sqlite_path=path,
             redis_client=client,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     owner = build(db_a)
@@ -559,7 +559,7 @@ async def test_failed_start_rolls_back_new_pin(tmp_path):
         coordination="memory",
         sqlite_path=db,
     )
-    first.register_type(FakeChecker())
+    first.register_adapter(FakeChecker())
     pool = first.create_pool("p", "fakecheck")
 
     async def boom() -> None:
@@ -580,7 +580,7 @@ async def test_failed_start_rolls_back_new_pin(tmp_path):
         sqlite_path=db,
         redis_client=client,
     )
-    second.register_type(FakeChecker())
+    second.register_adapter(FakeChecker())
     try:
         second.create_pool("p", "fakecheck")
         await second.start()

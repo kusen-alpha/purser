@@ -158,7 +158,7 @@ async def test_purser_end_to_end_restart_reconcile(tmp_path):
         mysql_url=MYSQL_URL,
         audit_path=audit,
     )
-    ps1.register_type(FakeChecker())
+    ps1.register_adapter(FakeChecker())
     p1 = ps1.create_pool(pool, "fakecheck")
     await ps1.start()
     await p1.import_resources(
@@ -176,7 +176,7 @@ async def test_purser_end_to_end_restart_reconcile(tmp_path):
         audit_path=audit,
     )
     try:
-        ps2.register_type(FakeChecker())
+        ps2.register_adapter(FakeChecker())
         p2 = ps2.create_pool(pool, "fakecheck")
         await p2.start()  # reconciliation returns orphaned slots to IDLE
         res = await p2.get("r1")

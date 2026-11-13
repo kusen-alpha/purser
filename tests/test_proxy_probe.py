@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+from purser.adapters.proxy import ProxyAdapter
 from purser.core.resource import Resource
-from purser.types.proxy import ProxyType
 
 
 async def start_connect_server() -> tuple[asyncio.Server, int]:
@@ -75,8 +75,8 @@ def proxy_resource(host: str, port: int, protocol: str = "http") -> Resource:
 
 async def test_http_connect_probe_ok():
     server, port = await start_connect_server()
-    rtype = ProxyType(probe_targets=["http://example.com:80"], timeout=3.0)
-    report = await rtype.validate(proxy_resource("127.0.0.1", port))
+    adapter = ProxyAdapter(probe_targets=["http://example.com:80"], timeout=3.0)
+    report = await adapter.validate(proxy_resource("127.0.0.1", port))
     assert report.alive
     assert report.latency_ms is not None and report.latency_ms >= 0
     server.close()
@@ -84,18 +84,18 @@ async def test_http_connect_probe_ok():
 
 
 async def test_http_connect_probe_fails_on_refused():
-    rtype = ProxyType(probe_targets=["http://example.com:80"], timeout=1.0)
-    report = await rtype.validate(proxy_resource("127.0.0.1", 1))  # closed port
+    adapter = ProxyAdapter(probe_targets=["http://example.com:80"], timeout=1.0)
+    report = await adapter.validate(proxy_resource("127.0.0.1", 1))  # closed port
     assert not report.alive
     assert report.error is not None
 
 
 async def test_socks5_probe_ok():
     server, port = await start_socks5_server()
-    rtype = ProxyType(
+    adapter = ProxyAdapter(
         probe_targets=["http://example.com:80"], timeout=3.0
     )
-    report = await rtype.validate(proxy_resource("127.0.0.1", port, protocol="socks5"))
+    report = await adapter.validate(proxy_resource("127.0.0.1", port, protocol="socks5"))
     assert report.alive
     server.close()
     await server.wait_closed()
@@ -103,8 +103,8 @@ async def test_socks5_probe_ok():
 
 async def test_socks5_probe_domain_bnd_ok():
     server, port = await start_socks5_server(reply=b"\x05\x00\x00\x03\x03foo\x00\x50")
-    rtype = ProxyType(probe_targets=["http://example.com:80"], timeout=3.0)
-    report = await rtype.validate(proxy_resource("127.0.0.1", port, protocol="socks5"))
+    adapter = ProxyAdapter(probe_targets=["http://example.com:80"], timeout=3.0)
+    report = await adapter.validate(proxy_resource("127.0.0.1", port, protocol="socks5"))
     assert report.alive
     server.close()
     await server.wait_closed()
@@ -115,9 +115,9 @@ async def test_probe_guard_pauses_judgement_when_all_down():
 
     guard = ProbeGuard(fail_threshold=1, cooldown=600.0)
     guard.record("http://example.com:80", ok=False)
-    rtype = ProxyType(
+    adapter = ProxyAdapter(
         probe_targets=["http://example.com:80"], timeout=1.0, probe_guard=guard
     )
-    report = await rtype.validate(proxy_resource("127.0.0.1", 1))
+    report = await adapter.validate(proxy_resource("127.0.0.1", 1))
     assert report.alive  # paused, never banned (X1)
     assert "disabled" in (report.error or "")

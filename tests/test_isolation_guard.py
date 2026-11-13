@@ -14,7 +14,7 @@ from purser.isolation import ALLOW_SHARED_ENV, redis_identity, sqlite_file_key
 
 def make_purser(**kwargs) -> Purser:
     ps = Purser(maintenance_enabled=False, **kwargs)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     return ps
 
 
@@ -156,17 +156,17 @@ async def test_independent_files_are_allowed(tmp_path):
         await ps2.close()
 
 
-async def test_shared_resource_type_conflicts():
-    rtype = FakeChecker()
+async def test_shared_resource_adapter_conflicts():
+    adapter = FakeChecker()
     ps1 = Purser(maintenance_enabled=False)
     ps2 = Purser(maintenance_enabled=False)
     try:
-        ps1.register_type(rtype)
-        with pytest.raises(IsolationConflict, match="ResourceType"):
-            ps2.register_type(rtype)
+        ps1.register_adapter(adapter)
+        with pytest.raises(IsolationConflict, match="ResourceAdapter"):
+            ps2.register_adapter(adapter)
         # Registering through the raw registry must not dodge the guard.
-        ps2.types.register(rtype)
-        with pytest.raises(IsolationConflict, match="ResourceType"):
+        ps2.adapters.register(adapter)
+        with pytest.raises(IsolationConflict, match="ResourceAdapter"):
             ps2.create_pool("b", "fakecheck")
     finally:
         await ps1.close()

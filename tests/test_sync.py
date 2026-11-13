@@ -36,7 +36,7 @@ def seed(pool: SyncPool, n: int = 3, *, prefix: str = "r") -> list[str]:
 @pytest.fixture
 def sync_ps():
     with SyncPurser(maintenance_enabled=False) as ps:
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         yield ps
 
 
@@ -123,7 +123,7 @@ def test_lease_context_manager(sync_ps):
 
 def test_delivery_failure_compensates_leases():
     with SyncPurser(maintenance_enabled=False) as ps:
-        ps.register_type(LockChecker())
+        ps.register_adapter(LockChecker())
         pool = ps.create_pool("p", "lockcheck")
         pool.import_resources(
             [{"id": "l1"}, {"id": "l2"}], import_validate="on_import"
@@ -242,18 +242,18 @@ def test_proxies_expose_loop_owned_objects(sync_ps):
     assert any(key.endswith("lease_total") for key in snap["counters"])
     assert sync_ps.audit.verify() is True
     assert len(sync_ps.audit.entries(limit=5)) <= 5
-    assert "fakecheck" in sync_ps.types.names()
+    assert "fakecheck" in sync_ps.adapters.names()
     # get() must return the real plugin object, not a copy, and register()
     # must keep the caller's instance rather than a deep copy.
-    assert isinstance(sync_ps.types.get("fakecheck"), FakeChecker)
+    assert isinstance(sync_ps.adapters.get("fakecheck"), FakeChecker)
     plugin = LockChecker()
-    sync_ps.types.register(plugin)
-    assert sync_ps.types.get("lockcheck") is plugin
+    sync_ps.adapters.register(plugin)
+    assert sync_ps.adapters.get("lockcheck") is plugin
 
 
 def test_close_is_idempotent_and_rejects_later_calls():
     ps = SyncPurser(maintenance_enabled=False)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     ps.start()
     pool = ps.create_pool("p", "fakecheck")
     seed(pool, 1)
@@ -392,7 +392,7 @@ def test_admin_methods_forward(sync_ps):
 
 def test_close_during_concurrent_calls_does_not_hang():
     ps = SyncPurser(maintenance_enabled=False, close_timeout=10)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     ps.start()
     pool = ps.create_pool("p", "fakecheck")
     seed(pool, 2)

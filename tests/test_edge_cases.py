@@ -125,7 +125,7 @@ async def test_two_instances_shared_sqlite_redis_no_oversell(
             sqlite_path=path,
             redis_url=REAL_REDIS_URL,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1, ps2 = build(), build()
@@ -173,7 +173,7 @@ async def test_restart_batch_import_background_drained(tmp_path, storage_kind, c
         sqlite_path=path,
         redis_client=fakeredis.aioredis.FakeRedis() if coordination_kind == "redis" else None,
     )
-    ps1.register_type(FakeChecker())
+    ps1.register_adapter(FakeChecker())
     pool = ps1.create_pool("px", "fakecheck")
     report = await pool.import_resources(
         [{"id": f"r{i}", "host": "1.1.1.1", "port": i} for i in range(4)],
@@ -189,7 +189,7 @@ async def test_restart_batch_import_background_drained(tmp_path, storage_kind, c
         sqlite_path=path,
         redis_client=fakeredis.aioredis.FakeRedis() if coordination_kind == "redis" else None,
     )
-    ps2.register_type(FakeChecker())
+    ps2.register_adapter(FakeChecker())
     try:
         pool2 = ps2.create_pool("px", "fakecheck")
         assert len(await pool2.query()) == 4

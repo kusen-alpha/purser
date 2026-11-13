@@ -21,7 +21,7 @@ AcquireRequest(
 | `slots` | `1` | 单个租约占用的槽位数，必须为正整数 |
 | `tags` | 空 | 资源必须包含全部标签 |
 | `timeout` | `None` | 等待秒数；缺省用池 `wait_timeout` |
-| `probe` | `None` | **保留字段**：非 `None` 立即抛 `ConfigError`；探测目标在 `ProxyType(probe_targets=[...])` 配置 |
+| `probe` | `None` | 按目标实时验活（opt-in）：以该 URL 为目标，在取得候选前调用 `on_request_check` 实测；结果按 `(consumer, target, rid)` 缓存 `check_cache_ttl` 秒。`None` 时维持原行为（默认 `PASS` / 自定义钩子照旧） |
 | `trace_id` | `None` | 缺省按调用生成；不会写回传入对象 |
 | `use_limit` | `None` | 本租约允许的使用次数，必须 `>= 0`；达到后心跳不再续约 |
 | `allow_duplicate` | `False` | 允许同一 consumer 重复持有同一资源 |

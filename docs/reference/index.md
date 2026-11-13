@@ -16,11 +16,11 @@
 
 | 页面 | 内容 |
 | --- | --- |
-| [Python API](python-api/index.md) | `Purser` / `ResourcePool` / `Lease` / `ResourceType` 的签名、字段与后端契约 |
+| [Python API](python-api/index.md) | `Purser` / `ResourcePool` / `Lease` / `ResourceAdapter` 的签名、字段与后端契约 |
 | [REST API](rest-api/index.md) | 端点、鉴权、幂等、错误映射 |
 | [CLI](cli.md) | 命令、参数、导入文件格式 |
 | [配置](configuration.md) | 环境变量、`PoolConfig`、预留字段、热更新限制 |
-| [内置资源类型](resource-types.md) | `ProxyType` / `AccountType` 的字段、并发与验活 |
+| [内置资源适配器](resource-adapters.md) | `ProxyAdapter` / `AccountAdapter` 的字段、并发与验活 |
 | [LocalScheduler](local-scheduler.md) | 同机多进程调度的 API、协议与环境变量 |
 | [错误处理](errors.md) | 异常清单与 REST 状态码 |
 | [状态机](state-machine.md) | 12 个状态、事件与转移表 |

@@ -37,7 +37,7 @@ MYSQL_URL = os.environ.get("PURSER_TEST_MYSQL_URL")
 
 def _scheduler(**kwargs) -> LocalScheduler:
     return LocalScheduler(
-        types=[FakeChecker()], maintenance_enabled=False, **kwargs
+        adapters=[FakeChecker()], maintenance_enabled=False, **kwargs
     )
 
 

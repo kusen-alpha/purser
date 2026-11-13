@@ -26,12 +26,12 @@ import uuid
 from pathlib import Path
 
 from purser import AcquireRequest, SyncPurser
+from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport
 from purser.core.resource import Resource
-from purser.types.base import ResourceType
 
 
-class BenchResource(ResourceType):
+class BenchAdapter(ResourceAdapter):
     kind = "bench"
     default_concurrency = 4
 
@@ -83,7 +83,7 @@ def run_case(
         kwargs["redis_url"] = redis_url
 
     ps = SyncPurser(**kwargs)
-    ps.register_type(BenchResource())
+    ps.register_adapter(BenchAdapter())
     ps.start()
     try:
         pool = ps.create_pool(name, "bench", max_slots=max_slots)

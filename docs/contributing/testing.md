@@ -8,6 +8,8 @@ python -m venv .venv
 ```
 
 Linux / macOS 使用 `.venv/bin/pip`。真实 Redis / MySQL 用例由环境变量门控，未设置时自动跳过。
+本地跑 Redis 协调用例需要 Lua 支持：`pip install -e ".[dev,lua]"`。只装 `[dev]` 时，这些用例会因
+`unknown command 'eval'` 失败。
 
 ## 快速运行
 
@@ -25,8 +27,8 @@ Linux / macOS 使用 `.venv/bin/pip`。真实 Redis / MySQL 用例由环境变�
 | 层次 | 代表文件 | 关注点 |
 | --- | --- | --- |
 | 单元与状态机 | `test_state_machine.py`、`test_allocator.py` | 转移表穷举、分配器属性（hypothesis） |
-| 存储 × 协调矩阵 | `test_storage_matrix.py`、`test_coordination.py` | 各后端组合下行为一致、CAS、对账 |
-| 核心行为 | `test_lease.py`、`test_fairness.py`、`test_quarantine.py`、`test_health.py` | 租约/心跳/租约回收器、公平队列、退避、EWMA |
+| 存储 × 协调矩阵 | `test_backends.py` | 两平面契约套件（storage memory/sqlite × coordination memory/redis）、CAS、对账 |
+| 核心行为 | `test_reaper_heartbeat.py`、`test_pool.py`、`test_health_quarantine.py`、`test_quota_cooldown.py` | 租约/心跳/租约回收器、公平队列、退避、EWMA |
 | 服务面 | `test_api.py`、`test_cli.py`、`test_ui_contract.py` | 鉴权、幂等、错误映射、静态控制台契约 |
 | 边界补充 | `test_boundary_*.py` | 数据/并发/生命周期/流式/管理/钩子等单点边界 |
 | 故障与混沌 | `test_fault_tolerance.py`、`test_chaos_storm.py` | 协调层故障注入、并发抢占、确定性混沌风暴 |
@@ -67,6 +69,9 @@ pytest tests/test_redis_real.py -q
 - 建议指向独立 DB（示例用 `15`）；测试前后会 flush 该 DB。
 - 设置后，整包中所有协调用例也会走真实 Redis；未设置时用 `fakeredis`。
 - 覆盖租约哈希/token 索引与 `PEXPIRE`、断连重连、进程崩溃后 TTL 过期与重启对账、跨实例可见/强制撤销/迟到 release、多进程共享 SQLite + Redis 不超卖。
+
+未设置 `PURSER_TEST_REDIS_URL` 时协调用例走 `fakeredis`，需要 `fakeredis[lua]`：
+`pip install -e ".[dev,lua]"`。
 
 ## 新增测试约定
 

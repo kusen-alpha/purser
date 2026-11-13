@@ -8,6 +8,8 @@ import time
 import pytest
 from conftest import FakeChecker, seed
 
+from purser.adapters.account import AccountResource
+from purser.adapters.proxy import ProxyResource
 from purser.backends.base import ResourcePatch
 from purser.core.resource import (
     AcquireRequest,
@@ -24,8 +26,6 @@ from purser.errors import (
     PoolExhausted,
     ResourceBusy,
 )
-from purser.types.account import AccountResource
-from purser.types.proxy import ProxyResource
 
 
 async def test_lifecycle_roundtrip(make_pool):
@@ -447,7 +447,7 @@ async def test_request_level_check_rejection(make_pool, purser):
                 return CheckVerdict.FAIL
             return CheckVerdict.PASS
 
-    purser.register_type(Guarded())
+    purser.register_adapter(Guarded())
     pool = purser.pool("guarded", "guarded", max_slots=2)
     records = [{"id": f"g-{i}", "host": "1.1.1.1", "port": i} for i in range(3)]
     await pool.import_resources(records, import_validate="on_import")
@@ -670,7 +670,7 @@ async def test_proxy_resource_location_syncs_on_adopt(purser):
 
 async def test_proxy_generate_returns_typed_resource(purser):
     pool = purser.create_pool("proxy-generate-typed", "proxy")
-    resource = await pool.type.generate(
+    resource = await pool.adapter.generate(
         {
             "host": "1.2.3.4",
             "port": 8080,

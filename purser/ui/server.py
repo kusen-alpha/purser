@@ -19,6 +19,7 @@ from starlette.responses import Response
 
 from purser import Purser, ResourcePool, __version__
 from purser.config import Weights
+from purser.core.bundle import bundle_request_from_dict
 from purser.core.quarantine import QuarantinePolicy
 from purser.core.resource import AcquireRequest, Resource, UsageOutcome
 from purser.core.state import ResourceState
@@ -191,17 +192,17 @@ def _clean_pool_config(raw: Any) -> dict[str, Any]:
                 detail=f"unknown quarantine field(s): {', '.join(sorted(unknown))}",
             )
         data["quarantine"] = QuarantinePolicy(**quarantine)
-    for key in ("target_quota", "meta"):
+    for key in ("meta",):
         if key in data and data[key] is not None and not isinstance(data[key], dict):
             raise HTTPException(status_code=422, detail=f"{key} must be an object")
-    total_quota = data.get("total_quota")
-    if total_quota is not None and (
-        isinstance(total_quota, bool)
-        or not isinstance(total_quota, int)
-        or total_quota <= 0
+    quota_limit = data.get("quota_limit")
+    if quota_limit is not None and (
+        isinstance(quota_limit, bool)
+        or not isinstance(quota_limit, int)
+        or quota_limit <= 0
     ):
         raise HTTPException(
-            status_code=422, detail="total_quota must be a positive integer"
+            status_code=422, detail="quota_limit must be a positive integer"
         )
     return data
 
@@ -230,6 +231,20 @@ def _lease_view(lease: Any, *, admin: bool) -> dict[str, Any]:
         "payload": lease.payload
         if admin
         else mask_payload(lease.payload or {}),
+    }
+
+
+def _bundle_view(bundle: Any, *, admin: bool) -> dict[str, Any]:
+    return {
+        "bundle_id": bundle.bundle_id,
+        "consumer": bundle.consumer,
+        "members": {
+            pool_name: {
+                **{"pool": pool_name},
+                **_lease_view(lease, admin=admin),
+            }
+            for pool_name, lease in bundle.members.items()
+        },
     }
 
 
@@ -498,7 +513,7 @@ def create_app(
             "storage": ps.storage_kind,
             "coordination": ps.coordination_kind,
             "pools": ps.pool_names(),
-            "types": sorted(ps.types.names()),
+            "adapters": sorted(ps.adapters.names()),
             "maintenance": ps.maintenance_enabled,
         }
 
@@ -559,19 +574,23 @@ def create_app(
         require(request, write=False)
         return {"ok": ps.audit.verify(), "entries": len(ps.audit)}
 
-    @app.get("/types", response_model=None)
-    async def list_types(request: Request) -> dict[str, Any]:
-        """Describe registered resource types so the console can render forms."""
+    @app.get("/adapters", response_model=None)
+    async def list_adapters(request: Request) -> dict[str, Any]:
+        """Describe registered resource adapters so the console can render forms."""
 
         require(request, write=False)
         out = []
-        for name in sorted(ps.types.names()):
-            rtype = ps.types.get(name)
+        for name in sorted(ps.adapters.names()):
+            adapter = ps.adapters.get(name)
             out.append(
                 {
-                    "kind": rtype.kind,
-                    "resource_class": rtype.resource_class.__name__,
-                    "default_concurrency": rtype.default_concurrency,
+                    "kind": adapter.kind,
+                    "resource_class": adapter.resource_class.__name__,
+                    "default_concurrency": adapter.default_concurrency,
+                    "validators": [
+                        {"name": spec.name, "both": spec.both}
+                        for spec in adapter.validators()
+                    ],
                     "fields": [
                         {
                             "name": spec.name,
@@ -581,11 +600,11 @@ def create_app(
                             "default": _json_scalar(spec.default),
                             "doc": spec.doc,
                         }
-                        for spec in getattr(rtype.resource_class, "payload_fields", ())
+                        for spec in adapter.fields()
                     ],
                 }
             )
-        return {"types": out}
+        return {"adapters": out}
 
     # -- pools -------------------------------------------------------------
 
@@ -903,13 +922,19 @@ def create_app(
         pool = pool_of(pool_name)
         fn = write_actions.get(action)
         if action == "validate":
+            check = (body or {}).get("check")
             try:
-                report = await pool.validate_now(rid, operator=operator)
+                if check:
+                    report = await pool.validate_check(rid, check)
+                    audit_action = "validate_check"
+                else:
+                    report = await pool.validate_now(rid, operator=operator)
+                    audit_action = "validate"
             except PurserError as exc:
                 raise _http_purser_error(exc) from exc
             ps.audit.record(
                 operator=operator,
-                action="validate",
+                action=audit_action,
                 pool=pool_name,
                 rid=rid,
                 reason=(body or {}).get("reason"),
@@ -917,6 +942,7 @@ def create_app(
                     "alive": report.alive,
                     "latency_ms": report.latency_ms,
                     "error": report.error,
+                    **({"check": check} if check else {}),
                 },
             )
             res = await pool.get(rid)
@@ -929,6 +955,7 @@ def create_app(
                     "latency_ms": report.latency_ms,
                     "error": report.error,
                     "action": report.action.value,
+                    **({"check": check} if check else {}),
                 },
             }
         if action == "admin-state":
@@ -977,8 +1004,20 @@ def create_app(
                     body["usage_quota"], name="usage_quota", cast=int, minimum=0
                 )
             )
+        if "quota_limit" in body:
+            extra["quota_limit"] = (
+                None
+                if body["quota_limit"] is None
+                else _coerce(
+                    body["quota_limit"], name="quota_limit", cast=int, minimum=1
+                )
+            )
         if "expires_at" in body:
             extra["expires_at"] = _optional_epoch(body["expires_at"], "expires_at")
+        if "next_available_at" in body:
+            extra["next_available_at"] = _optional_epoch(
+                body["next_available_at"], "next_available_at"
+            )
         if "mutex_group" in body:
             mutex = body["mutex_group"]
             if mutex is not None and not isinstance(mutex, str):
@@ -1052,6 +1091,29 @@ def create_app(
             cached = await ps.idempotency.aget(key)
             if cached is not None:
                 return {**cached, "replayed": True}
+        bundle_raw = body.get("bundle")
+        if bundle_raw is not None:
+            if not isinstance(bundle_raw, dict):
+                raise HTTPException(status_code=422, detail="bundle must be an object")
+            slots_raw = bundle_raw.get("slots")
+            if not isinstance(slots_raw, list) or not any(
+                isinstance(slot, dict) and slot.get("pool") == pool_name
+                for slot in slots_raw
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="bundle must include the anchor pool in slots",
+                )
+            bundle_raw.setdefault("consumer", body.get("consumer"))
+            try:
+                bundle_req = bundle_request_from_dict(bundle_raw)
+                bundle = await ps.acquire_bundle(bundle_req)
+            except PurserError as exc:
+                raise _http_purser_error(exc) from exc
+            bundle_out = _bundle_view(bundle, admin=admin)
+            if key:
+                await ps.idempotency.aput(key, bundle_out)
+            return bundle_out
         tags_raw = body.get("tags") or ()
         if not isinstance(tags_raw, (list, tuple, set, frozenset)):
             raise HTTPException(status_code=422, detail="tags must be a list")
@@ -1064,20 +1126,19 @@ def create_app(
             "required_tag": body.get("required_tag"),
             "consumer": body.get("consumer"),
             "target": body.get("target"),
+            "probe": body.get("probe"),
         }
         for name, value in optional_strings.items():
             if value is not None and not isinstance(value, str):
                 raise HTTPException(status_code=422, detail=f"{name} must be a string")
-        for name in ("probe", "affinity"):
+        for name in ("affinity",):
             if body.get(name) is not None:
                 raise HTTPException(
                     status_code=422,
                     detail=(
                         f"{name} is not implemented; "
                         + (
-                            "configure ProxyType(probe_targets=[...]) for probes"
-                            if name == "probe"
-                            else "enable PoolConfig(affinity_weight=...) for affinity"
+                            "enable PoolConfig(affinity_weight=...) for affinity"
                         )
                     ),
                 )
@@ -1099,6 +1160,7 @@ def create_app(
             ignore_cooldown=bool(body.get("ignore_cooldown")),
             resource_id=body.get("resource_id"),
             required_tag=body.get("required_tag"),
+            probe=body.get("probe"),
         )
         count = 0
         n_min: int | None = None

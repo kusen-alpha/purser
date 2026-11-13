@@ -84,3 +84,116 @@
   height: auto;
   border-radius: 0.15rem;
 }
+
+/* Mermaid 流程图放大查看 */
+.mmz-wrap {
+  position: relative;
+}
+
+.mmz-wrap svg {
+  cursor: zoom-in;
+}
+
+.mmz-open {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.3rem;
+  cursor: pointer;
+  box-shadow: var(--md-shadow-z1);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.mmz-wrap:hover .mmz-open,
+.mmz-open:focus-visible {
+  opacity: 1;
+}
+
+.mmz-lock {
+  overflow: hidden;
+}
+
+.mmz-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 72%);
+}
+
+.mmz-panel {
+  position: relative;
+  display: flex;
+  width: min(96vw, 1400px);
+  height: 90vh;
+  background: var(--md-default-bg-color);
+  border-radius: 0.3rem;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+}
+
+.mmz-canvas {
+  flex: 1;
+  overflow: auto;
+  cursor: grab;
+  user-select: none;
+  touch-action: pan-x pan-y;
+}
+
+.mmz-canvas.mmz-dragging {
+  cursor: grabbing;
+}
+
+.mmz-canvas.mmz-dragging .mmz-svg {
+  pointer-events: none;
+}
+
+.mmz-svg {
+  display: block;
+}
+
+.mmz-svg svg {
+  display: block;
+  max-width: none;
+}
+
+.mmz-toolbar {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 3;
+  display: flex;
+  gap: 0.3rem;
+}
+
+.mmz-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.3rem;
+  cursor: pointer;
+}
+
+.mmz-btn:hover {
+  background: var(--md-default-fg-color--lightest);
+}

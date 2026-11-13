@@ -138,7 +138,7 @@ def _crash_worker(sqlite_path: str, marker_path: str, ttl: float) -> None:
             sqlite_path=sqlite_path,
             redis_url=URL,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         pool = ps.create_pool("crash", "fakecheck", max_slots=1, lease_ttl=ttl)
         await ps.start()
         await pool.import_resources(
@@ -163,7 +163,7 @@ async def test_hard_crash_reclaims_slot_after_ttl(tmp_path):
     marker = str(tmp_path / "crash.marker")
 
     seed = await _make_purser(storage="sqlite", coordination="memory", sqlite_path=sqlite_path)
-    seed.register_type(FakeChecker())
+    seed.register_adapter(FakeChecker())
     pool_seed = seed.create_pool("crash", "fakecheck", max_slots=1, lease_ttl=ttl)
     await pool_seed.import_resources(
         [{"id": "r0", "host": "10.0.0.9", "port": 9001}],
@@ -186,7 +186,7 @@ async def test_hard_crash_reclaims_slot_after_ttl(tmp_path):
 
     # While the dead lease is still live, the slot must stay busy (no oversell).
     ps = await _make_purser(storage="sqlite", coordination="redis", sqlite_path=sqlite_path)
-    ps.register_type(FakeChecker())
+    ps.register_adapter(FakeChecker())
     pool = ps.create_pool("crash", "fakecheck", max_slots=1, lease_ttl=ttl)
     try:
         with pytest.raises((ResourceBusy, PoolExhausted, PurserError)):
@@ -236,7 +236,7 @@ async def test_cross_instance_visibility_revoke_and_stale_release(
 
     sqlite_path = str(tmp_path / "x.db")
     ps_a = await _make_purser(storage="sqlite", coordination="redis", sqlite_path=sqlite_path)
-    ps_a.register_type(FakeChecker())
+    ps_a.register_adapter(FakeChecker())
     pool_a = ps_a.create_pool("x", "fakecheck", max_slots=1, lease_ttl=30.0)
     await pool_a.import_resources(
         [{"id": "r0", "host": "5.6.7.8", "port": 3306}],
@@ -246,7 +246,7 @@ async def test_cross_instance_visibility_revoke_and_stale_release(
     lease_a = await pool_a.acquire(AcquireRequest(consumer="a", slots=1, timeout=1.0))
 
     ps_b = await _make_purser(storage="sqlite", coordination="redis", sqlite_path=sqlite_path)
-    ps_b.register_type(FakeChecker())
+    ps_b.register_adapter(FakeChecker())
     pool_b = ps_b.create_pool("x", "fakecheck", max_slots=1, lease_ttl=30.0)
     await ps_b.start()
     try:
@@ -318,7 +318,7 @@ def _mp_worker(
             sqlite_path=sqlite_path,
             redis_url=URL,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         pool = ps.create_pool("shared", "fakecheck", max_slots=2, lease_ttl=5.0)
         log("pool-created")
         held: list = []
@@ -371,7 +371,7 @@ async def test_multiprocess_real_redis_no_oversell(tmp_path):
 
     sqlite_path = str(tmp_path / "shared.db")
     seed = await _make_purser(storage="sqlite", coordination="memory", sqlite_path=sqlite_path)
-    seed.register_type(FakeChecker())
+    seed.register_adapter(FakeChecker())
     pool_seed = seed.create_pool("shared", "fakecheck", max_slots=2)
     await pool_seed.import_resources(
         [{"id": "r0", "host": "1.1.1.1", "port": 1}],
@@ -456,7 +456,7 @@ async def test_multiprocess_real_redis_no_oversell(tmp_path):
         await client.aclose()
 
     check = await _make_purser(storage="sqlite", coordination="redis", sqlite_path=sqlite_path)
-    check.register_type(FakeChecker())
+    check.register_adapter(FakeChecker())
     pool_check = check.create_pool("shared", "fakecheck", max_slots=2)
     await pool_check.start()
     try:

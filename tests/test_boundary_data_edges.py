@@ -117,7 +117,7 @@ async def test_restart_partial_active_reconciled(tmp_path, storage_kind, coordin
             sqlite_path=path,
             redis_client=fakeredis.aioredis.FakeRedis() if coordination_kind == "redis" else None,
         )
-        ps.register_type(FakeChecker())
+        ps.register_adapter(FakeChecker())
         return ps
 
     ps1 = build()

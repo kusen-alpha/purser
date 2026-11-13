@@ -1,22 +1,15 @@
-"""Account resource type (S3): manual validation by default, hooks exposed."""
+"""Account resource adapter (S3): manual validation by default, hooks exposed."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
+from typing_extensions import Annotated
+
+from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport
 from purser.core.resource import PayloadField, Resource
-from purser.types.base import ResourceType
-
-ACCOUNT_FIELDS = (
-    PayloadField("username"),
-    PayloadField("email"),
-    PayloadField("password", secret=True),
-    PayloadField("cookie", secret=True),
-    PayloadField("access_token", secret=True),
-    PayloadField("refresh_token", secret=True),
-)
 
 
 @dataclass
@@ -24,16 +17,15 @@ class AccountResource(Resource):
     """Typed account resource; ``payload`` merges these fields with custom keys."""
 
     kind: str = "account"
-    payload_fields = ACCOUNT_FIELDS
-    username: str | None = None
-    email: str | None = None
-    password: str | None = None
-    cookie: str | None = None
-    access_token: str | None = None
-    refresh_token: str | None = None
+    username: Annotated[str | None, PayloadField()] = None
+    email: Annotated[str | None, PayloadField()] = None
+    password: Annotated[str | None, PayloadField(secret=True)] = None
+    cookie: Annotated[str | None, PayloadField(secret=True)] = None
+    access_token: Annotated[str | None, PayloadField(secret=True)] = None
+    refresh_token: Annotated[str | None, PayloadField(secret=True)] = None
 
 
-class AccountType(ResourceType):
+class AccountAdapter(ResourceAdapter):
     kind = "account"
     default_concurrency = 4
     resource_class = AccountResource

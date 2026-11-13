@@ -36,7 +36,7 @@
 `expires_at` 是**截止时间**，不是“最早可用时间”。资源一旦到期：
 
 - 默认转 `SUSPENDED`；
-- 池配置 `meta={"expire_policy": "quota"}` 时转 `QUOTA_EXHAUSTED`，可用 `top_up` 恢复；
+- 池配置 `expire_policy="quota"` 时转 `QUOTA_EXHAUSTED`，可用 `top_up` 恢复；
 - 到期处理由获取路径触发，不依赖单独的定时器。
 
 通过 `PoolConfig(expires_in=N)` 导入的资源会自动设置 `expires_at = now + N`；已有 `expires_at` 的资源以自身值为准。
@@ -64,9 +64,9 @@
 | 概念 | 字段 | 作用范围 | 耗尽后 |
 | --- | --- | --- | --- |
 | 单资源累计用量 | `usage_quota` / `used_count` | 一条资源 | 过滤跳过；`top_up` 或重置 |
-| 周期配额 | `total_quota` / `quota` | 一条资源的周期计划 | 状态转 `QUOTA_EXHAUSTED`，周期任务重置或 `top_up` |
+| 周期配额 | `quota_limit` / `quota` | 一条资源的周期计划 | 状态转 `QUOTA_EXHAUSTED`，周期任务重置或 `top_up` |
 
-`target_quota` 不是“按目标站配额”，只是 `total_quota` 的弃用别名（把各 target 限额求和）。真正的按站限流由请求级校验与站点失败索引承担。
+真正的按站限流由请求级校验与站点失败索引承担；`quota_limit` 是每资源的周期配额，不按 target 分别生效。
 
 ### 互斥与重复持有
 

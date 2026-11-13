@@ -1,10 +1,10 @@
-# 内置资源类型
+# 内置资源适配器
 
-`Purser` 构造时会自动注册两个内置类型：`proxy` 与 `account`。它们只是 `ResourceType` 插件的两个实现，行为与自定义类型完全一致。
+`Purser` 构造时会自动注册两个内置适配器：`proxy` 与 `account`。它们只是 `ResourceAdapter` 插件的两个实现，行为与自定义适配器完全一致。
 
 ## 对比
 
-| 项目 | `ProxyType` | `AccountType` |
+| 项目 | `ProxyAdapter` | `AccountAdapter` |
 | --- | --- | --- |
 | `kind` | `proxy` | `account` |
 | 资源类 | `ProxyResource` | `AccountResource` |
@@ -12,13 +12,13 @@
 | 验活 | 真实网络探测 | 默认恒通过（人工标记） |
 | 典型用法 | 代理 IP 池 | 账号/会话池 |
 
-## `ProxyType`
+## `ProxyAdapter`
 
 ```python
-from purser import ProxyType
+from purser import ProxyAdapter
 
-ps.register_type(
-    ProxyType(
+ps.register_adapter(
+    ProxyAdapter(
         probe_targets=["http://example.com:80", "https://example.com:443"],
         timeout=8.0,
     )
@@ -40,20 +40,21 @@ ps.register_type(
 
 ### 验活
 
-- 构造参数 `probe_targets` 默认 `["http://example.com:80"]`，属于**类型实例**配置，不是池配置。
+- 构造参数 `probe_targets` 默认 `["http://example.com:80"]`，属于**适配器实例**配置，不是池配置。
 - `http` / `https` 走真实 `CONNECT` 请求，`socks4` / `socks5` 走对应握手；支持代理用户名/密码。
 - 多目标时至少 `ceil(2n/3)` 个通过才算健康（3 个目标即 2/3），延迟取通过目标的最小值。
 - 所有探针都处于退避期时返回“alive + all probes disabled”，避免误判；全部目标同时不可达时暂停判断，而不是把整池判定为失败。
 - 每次探测受 `timeout`（默认 8 秒）约束。
+- 按目标实时验活：请求带 `AcquireRequest(probe=...)`（REST 同名字段）时，取得该代理前会对目标 URL 实测（复用同一探针），`PASS/FAIL` 走池的请求级校验与缓存；不传 `probe` 维持原来的生命周期探测，行为不变。
 
-> `PoolConfig.probe_targets` 是未实现的预留字段，传入会报错；探测目标只能配在 `ProxyType` 上。
+> `PoolConfig.probe_targets` 是未实现的预留字段，传入会报错；探测目标只能配在 `ProxyAdapter` 上。
 
-## `AccountType`
+## `AccountAdapter`
 
 ```python
-from purser import AccountType
+from purser import AccountAdapter
 
-ps.register_type(AccountType())
+ps.register_adapter(AccountAdapter())
 ```
 
 ### 字段
@@ -72,10 +73,10 @@ ps.register_type(AccountType())
 
 ### 验活
 
-默认 `validate()` **恒返回健康**，不访问网络：账号是否可用通常取决于业务系统，库不替业务做登录判断。需要真实校验时继承 `AccountType` 并覆写：
+默认 `validate()` **恒返回健康**，不访问网络：账号是否可用通常取决于业务系统，库不替业务做登录判断。需要真实校验时继承 `AccountAdapter` 并覆写：
 
 ```python
-class MyAccountType(AccountType):
+class MyAccountAdapter(AccountAdapter):
     kind = "my-account"
 
     async def validate(self, resource):
@@ -93,6 +94,6 @@ class MyAccountType(AccountType):
 | 账号只在工作时段可用 | 资源 `schedule_window=["08:00", "20:00"]` |
 | 每条账号最多用 1000 次 | 资源或池 `usage_quota=1000` |
 | 代理按国家筛选 | 导入时写 `country`，获取时用 `tags` 或 `required_tag` |
-| 共享资源并发 8 | 池 `max_slots=8`（覆盖类型的默认并发） |
+| 共享资源并发 8 | 池 `max_slots=8`（覆盖适配器的默认并发） |
 
-字段级序列化、`secret_fields` 推导与规范化边界见 [Resource / ResourceType](python-api/resources.md)；自定义类型见[自定义资源类型](../guides/custom-resource-type.md)。
+字段级序列化、`secret_fields` 推导与规范化边界见 [Resource / ResourceAdapter](python-api/resources.md)；自定义适配器见[自定义资源适配器](../guides/custom-resource-adapter.md)。

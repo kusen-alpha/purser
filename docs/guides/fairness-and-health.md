@@ -69,9 +69,9 @@ score = health*w_health + age*w_age - load*w_load + preference + affinity + jitt
 | 能力 | 配置 | 行为 |
 | --- | --- | --- |
 | 单资源用量配额 | `usage_quota` | 用尽进入 `QUOTA_EXHAUSTED`，`top_up` 恢复 |
-| 周期配额 | `total_quota` | 周期任务重置；`target_quota` 只是它的弃用别名，不按 target 分别生效 |
+| 周期配额 | `quota_limit` | 每资源周期配额，周期任务重置 |
 | 释放后冷却 | `cooldown_after_release` | 冷却期内不分配；`cooldown_consumer_only` 只冷却原消费者 |
-| 绝对过期 | `expires_in` / `expires_at` | 到期后不可获取，默认转 `SUSPENDED`；`meta.expire_policy="quota"` 时转 `QUOTA_EXHAUSTED` |
+| 绝对过期 | `expires_in` / `expires_at` | 到期后不可获取，默认转 `SUSPENDED`；`expire_policy="quota"` 时转 `QUOTA_EXHAUSTED` |
 | 亲和性 | `affinity_weight` | 同一 consumer 优先复用资源 |
 
 > 自动抢占（`preemptible` / `preempt_threshold`）尚未实现，配置为非默认值会抛 `ConfigError`；当前被占用资源只能等待、强制撤销或换资源。

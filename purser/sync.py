@@ -24,19 +24,19 @@ from collections.abc import (
     AsyncGenerator,
     Awaitable,
     Callable,
-    Coroutine,
     Iterator,
 )
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from typing import Any, TypeVar, cast
+from typing import Any, Coroutine, TypeVar, cast
 
+from purser.adapters.base import ResourceAdapter
+from purser.core.bundle import BundleLease
 from purser.core.resource import Lease, Resource, UsageOutcome
 from purser.core.views import PoolStats, UsageReport
 from purser.errors import IsolationConflict
 from purser.facade import ImportReport, Purser, ResourcePool
 from purser.isolation import PICKLE_MESSAGE
-from purser.types.base import ResourceType
 
 logger = logging.getLogger("purser.sync")
 
@@ -796,6 +796,17 @@ class SyncPool:
             lambda: self._pool.update_resource(rid, **kwargs)
         )
 
+    def switch_resource(
+        self,
+        rid: str,
+        *,
+        operator: str = "system",
+        reason: str,
+    ) -> Resource | None:
+        return self._snapshot_call(
+            lambda: self._pool.switch_resource(rid, operator=operator, reason=reason)
+        )
+
     def move_resource(
         self,
         rid: str,
@@ -889,9 +900,9 @@ class SyncPurser:
         self.idempotency = _LoopProxy(self, self._ps.idempotency)
         self.probe_guard = _LoopProxy(self, self._ps.probe_guard)
         self.usage = _LoopProxy(self, self._ps.usage)
-        self.types = _LoopProxy(
+        self.adapters = _LoopProxy(
             self,
-            self._ps.types,
+            self._ps.adapters,
             copy_results=False,
             copy_inputs=False,
         )
@@ -1149,7 +1160,7 @@ class SyncPurser:
                         errors.append(exc)
         finally:
             # This path bypasses Purser.close(), so release the instance-level
-            # isolation claims (redis DB, registered types) here as well.
+            # isolation claims (redis DB, registered adapters) here as well.
             ps._isolation.release_all()
         if errors:
             raise errors[0]
@@ -1184,9 +1195,38 @@ class SyncPurser:
     def closed(self) -> bool:
         return self._closed
 
-    # -- types / pools ----------------------------------------------------
-    def register_type(self, rtype: ResourceType) -> None:
-        self._call_sync(lambda: self._ps.register_type(rtype))
+    # -- adapters / pools ----------------------------------------------------
+    def register_adapter(self, adapter: ResourceAdapter) -> None:
+        self._call_sync(lambda: self._ps.register_adapter(adapter))
+
+    def acquire_bundle(self, request: Any, **overrides: Any) -> BundleLease:
+        """Synchronous cross-pool bundle acquire (O8)."""
+
+        return self._submit(
+            lambda: self._ps.acquire_bundle(request, **overrides)
+        )
+
+    def release_bundle(
+        self,
+        bundle: BundleLease,
+        *,
+        outcome_by_pool: dict[str, UsageOutcome] | None = None,
+        used_by_pool: dict[str, int] | None = None,
+    ) -> None:
+        """Synchronous bundle release (reversed acquisition order)."""
+
+        self._submit(
+            lambda: self._ps.release_bundle(
+                bundle,
+                outcome_by_pool=outcome_by_pool,
+                used_by_pool=used_by_pool,
+            )
+        )
+
+    def bundle_gc(self) -> dict[str, int]:
+        """Synchronous sweep of expired bundle reservations."""
+
+        return self._submit(lambda: self._ps.bundle_gc())
 
     async def _create_pool_async(
         self,

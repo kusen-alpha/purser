@@ -28,6 +28,7 @@ except PurserError as exc:
 | `PoolExhausted` | 等待超时仍未满足请求；池内资源全部为 `NEW` 时立即抛出 | 扩容、缩短占用、提高超时或先验活 |
 | `NoSuitableResource` | 候选存在但全部被请求级校验拒绝 | 调整 `target` / 探测配置 |
 | `ResourceBusy` | 定向获取等待超时 | 重试或换资源 |
+| `BundleAcquireFailed` | 跨池组合获取未完成，已拿到的成员已回滚释放 | 补充资源、调整约束或改用 `best_effort` |
 | `LeaseConflict` | token 不匹配或乐观锁冲突 | 用最新租约状态重试 |
 | `LeaseExpired` | 租约已过期 | 续约或重新获取 |
 | `LeaseRevokedError` | 租约被管理员强制撤销 | 停止使用该资源 |

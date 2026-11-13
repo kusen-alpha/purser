@@ -1,4 +1,4 @@
-"""Proxy resource type with real HTTP CONNECT / SOCKS probes (S2)."""
+"""Proxy resource adapter with real HTTP CONNECT / SOCKS probes (S2)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from typing_extensions import Annotated
+
+from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport, ProbeGuard
 from purser.core.resource import (
     AcquireRequest,
@@ -17,18 +20,8 @@ from purser.core.resource import (
     PayloadField,
     Resource,
 )
-from purser.types.base import ResourceType
 
 DEFAULT_PROBE_TARGETS = ["http://example.com:80"]
-LOCATION_FIELDS = ("country", "province", "city", "district")
-PROXY_FIELDS = (
-    PayloadField("host", required=True, doc="Proxy host name or IP."),
-    PayloadField("port", coerce=int, required=True, doc="TCP port."),
-    PayloadField("protocol", default="http", doc="http/https/socks4/socks5."),
-    PayloadField("username"),
-    PayloadField("password", secret=True),
-    *(PayloadField(name) for name in LOCATION_FIELDS),
-)
 
 
 @dataclass
@@ -36,16 +29,21 @@ class ProxyResource(Resource):
     """Typed proxy resource; ``payload`` merges these fields with custom keys."""
 
     kind: str = "proxy"
-    payload_fields = PROXY_FIELDS
-    host: str | None = None
-    port: int | None = None
-    protocol: str | None = None
-    username: str | None = None
-    password: str | None = None
-    country: str | None = None
-    province: str | None = None
-    city: str | None = None
-    district: str | None = None
+    host: Annotated[
+        str | None, PayloadField(required=True, doc="Proxy host name or IP.")
+    ] = None
+    port: Annotated[
+        int | None, PayloadField(coerce=int, required=True, doc="TCP port.")
+    ] = None
+    protocol: Annotated[
+        str | None, PayloadField(default="http", doc="http/https/socks4/socks5.")
+    ] = None
+    username: Annotated[str | None, PayloadField()] = None
+    password: Annotated[str | None, PayloadField(secret=True)] = None
+    country: Annotated[str | None, PayloadField()] = None
+    province: Annotated[str | None, PayloadField()] = None
+    city: Annotated[str | None, PayloadField()] = None
+    district: Annotated[str | None, PayloadField()] = None
 
 
 def parse_endpoint(target: str) -> tuple[str, int]:
@@ -60,7 +58,7 @@ def parse_endpoint(target: str) -> tuple[str, int]:
     return rest, 80
 
 
-class ProxyType(ResourceType):
+class ProxyAdapter(ResourceAdapter):
     kind = "proxy"
     default_concurrency = 1
     resource_class = ProxyResource
@@ -349,6 +347,24 @@ class ProxyType(ResourceType):
     async def on_request_check(
         self, resource: Resource, req: AcquireRequest
     ) -> CheckVerdict:
-        # Base implementation already PASSes; proxies are validated on acquire
-        # via the selected candidate's short-lived check cache in the pool.
-        return CheckVerdict.PASS
+        if req.probe is None:
+            # Opt-in per-target check only: without ``probe`` proxies keep the
+            # lifecycle validation behavior, so the default path is unchanged.
+            return CheckVerdict.PASS
+        payload = resource.payload
+        host = payload.get("host") or getattr(resource, "host", None)
+        port = payload.get("port") or getattr(resource, "port", None)
+        protocol = (payload.get("protocol") or "http").lower()
+        if not host or not port:
+            return CheckVerdict.FAIL
+        auth = None
+        username = payload.get("username")
+        if username is not None:
+            auth = (str(username), str(payload.get("password") or ""))
+        try:
+            ok, _, _ = await self._probe(
+                protocol, str(host), int(port), req.probe, auth, self.timeout
+            )
+        except Exception:
+            return CheckVerdict.FAIL
+        return CheckVerdict.PASS if ok else CheckVerdict.FAIL

@@ -36,7 +36,7 @@ async def test_expires_in_auto_suspends(make_pool):
 
 
 async def test_expires_in_quota_policy(make_pool):
-    pool = make_pool(expires_in=120, meta={"expire_policy": "quota"})
+    pool = make_pool(expires_in=120, expire_policy="quota")
     [rid] = await seed(pool, n=1)
     res = await pool.get(rid)
     await pool.storage.set_state(
@@ -52,8 +52,7 @@ async def test_expires_in_quota_policy(make_pool):
 @pytest.mark.parametrize(
     "knob",
     [
-        {"total_quota": 1},
-        {"target_quota": {"site1": 1, "site2": 0}},
+        {"quota_limit": 1},
     ],
 )
 async def test_quota_exhausts_and_top_up_recovers(make_pool, knob):
