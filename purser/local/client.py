@@ -12,12 +12,20 @@ import itertools
 import os
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from multiprocessing.connection import Client
 from typing import Any
 
-from purser.core.resource import AcquireRequest, Resource, UsageOutcome
+from purser.core.resource import (
+    AcquireRequest,
+    Concurrency,
+    HealthStats,
+    Quota,
+    Resource,
+    SiteFailure,
+    UsageOutcome,
+)
 from purser.core.state import ResourceState
 from purser.errors import ConfigError
 from purser.local.errors import (
@@ -36,25 +44,89 @@ _DEFAULT_RESPONSE_TIMEOUT = 300.0
 _ACQUIRE_RESPONSE_GRACE = 10.0
 
 
-def _resource_from_dict(data: Any) -> Resource | None:
+def _config_payload(config: Any, overrides: Mapping[str, Any]) -> dict[str, Any]:
+    """Flatten a PoolConfig/dict plus keyword overrides for the IPC hop."""
+
+    data: dict[str, Any] = {}
+    if config is not None:
+        if hasattr(config, "to_dict"):
+            data.update(config.to_dict())
+        elif isinstance(config, Mapping):
+            data.update(config)
+        else:
+            raise ConfigError("config must be an object or PoolConfig")
+    data.update(overrides)
+    return data
+
+
+def _build_dataclass(cls: Any, raw: Any) -> Any:
+    if not isinstance(raw, dict):
+        return None
+    fields = getattr(cls, "__dataclass_fields__", {})
+    return cls(**{key: value for key, value in raw.items() if key in fields})
+
+
+def _optional_dataclass(cls: Any, raw: Any) -> Any:
+    return None if raw is None else _build_dataclass(cls, raw)
+
+
+def _resource_from_dict(
+    data: Any,
+    cls: type[Resource] | None = None,
+) -> Resource | None:
     if not isinstance(data, dict):
         return None
     try:
         state = ResourceState(str(data.get("state", ResourceState.NEW.value)))
     except ValueError:
         state = ResourceState.NEW
-    return Resource(
-        id=str(data["id"]),
-        kind=str(data["kind"]),
-        payload=data.get("payload") or {},
-        state=state,
-        version=int(data.get("version", 0)),
-        tags=frozenset(data.get("tags") or ()),
-    )
+    site_failures = data.get("site_failures")
+    schedule_window = data.get("schedule_window")
+    kwargs: dict[str, Any] = {
+        "id": str(data["id"]),
+        "kind": str(data["kind"]),
+        "payload": dict(data.get("payload") or {}),
+        "state": state,
+        "version": int(data.get("version", 0)),
+        "tags": frozenset(data.get("tags") or ()),
+        "concurrency": _build_dataclass(Concurrency, data.get("concurrency"))
+        or Concurrency(),
+        "health": _build_dataclass(HealthStats, data.get("health")) or HealthStats(),
+        "site_failures": {
+            str(name): _build_dataclass(SiteFailure, item)
+            for name, item in (site_failures.items() if isinstance(site_failures, dict) else ())
+            if item is not None
+        },
+        "quota": _optional_dataclass(Quota, data.get("quota")),
+        "usage_quota": data.get("usage_quota"),
+        "used_count": int(data.get("used_count", 0)),
+        "expires_at": data.get("expires_at"),
+        "next_available_at": data.get("next_available_at"),
+        "mutex_group": data.get("mutex_group"),
+        "schedule_window": (
+            tuple(schedule_window)
+            if isinstance(schedule_window, (list, tuple)) and schedule_window
+            else None
+        ),
+        "meta": dict(data.get("meta") or {}),
+    }
+    if cls is None or cls is Resource:
+        return Resource(**kwargs)
+    try:
+        return cls(**kwargs)
+    except TypeError:
+        # A custom subclass may require extra positional fields that are not
+        # part of the wire shape; fall back to the generic snapshot.
+        return Resource(**kwargs)
 
 
 class RemoteLease:
-    """A lease owned by the scheduler process and used by a worker process."""
+    """A lease owned by the scheduler process and used by a worker process.
+
+    The scheduler renews the lease independently; ``expires_at`` here is the
+    value returned by the last acquire/renew, so :meth:`expired` is advisory
+    unless you renew the snapshot yourself.
+    """
 
     __slots__ = (
         "_client",
@@ -78,7 +150,12 @@ class RemoteLease:
         "_replayed",
     )
 
-    def __init__(self, client: LocalSchedulerClient, data: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        client: LocalSchedulerClient,
+        data: dict[str, Any],
+        resource_cls: type[Resource] | None = None,
+    ) -> None:
         self._client = client
         self._token = str(data["token"])
         self._pool = str(data["pool"])
@@ -95,7 +172,7 @@ class RemoteLease:
         self._target = data.get("target")
         self._outcome = UsageOutcome(str(data.get("outcome", UsageOutcome.OK.value)))
         self._payload = data.get("payload")
-        self._resource = _resource_from_dict(data.get("resource"))
+        self._resource = _resource_from_dict(data.get("resource"), resource_cls)
         self._released = False
         self._replayed = bool(data.get("replayed"))
 
@@ -236,7 +313,12 @@ class LocalSchedulerClient:
     children detect the PID change and reconnect lazily.
     """
 
-    def __init__(self, address: SchedulerAddress) -> None:
+    def __init__(
+        self,
+        address: SchedulerAddress,
+        *,
+        resource_types: dict[str, type[Resource]] | None = None,
+    ) -> None:
         if address.protocol != 1:
             raise ConfigError(f"unsupported scheduler protocol {address.protocol}")
         self.address = address
@@ -247,6 +329,28 @@ class LocalSchedulerClient:
         self._ids_lock = threading.Lock()
         self._pid = os.getpid()
         self._closed = False
+        self._resource_types = dict(resource_types or {})
+
+    def register_resource_type(self, kind: str, cls: type[Resource]) -> None:
+        """Restore ``cls`` for resources of ``kind`` acquired by this client."""
+
+        if not kind:
+            raise ConfigError("resource kind must be non-empty")
+        if not isinstance(cls, type) or not issubclass(cls, Resource):
+            raise ConfigError("resource type must be a Resource subclass")
+        self._resource_types[str(kind)] = cls
+
+    def _resource_cls_for(
+        self,
+        lease: dict[str, Any] | None,
+        resource_cls: type[Resource] | None,
+    ) -> type[Resource] | None:
+        if resource_cls is not None:
+            return resource_cls
+        resource = (lease or {}).get("resource")
+        if isinstance(resource, dict):
+            return self._resource_types.get(str(resource.get("kind", "")))
+        return None
 
     # -- transport --------------------------------------------------------
     def _ensure_pid(self) -> None:
@@ -316,6 +420,7 @@ class LocalSchedulerClient:
             raise remote_error(
                 str(error.get("code", "purser_error")),
                 str(error.get("message", "scheduler operation failed")),
+                error.get("details"),
             )
         result = response.get("result")
         if not isinstance(result, dict):
@@ -330,6 +435,7 @@ class LocalSchedulerClient:
         *,
         timeout: float | None = None,
         idempotency_key: str | None = None,
+        resource_cls: type[Resource] | None = None,
         **kwargs: Any,
     ) -> RemoteLease:
         request = _request_payload(req)
@@ -351,7 +457,7 @@ class LocalSchedulerClient:
         lease = result.get("lease")
         if not isinstance(lease, dict):
             raise SchedulerProtocolError("scheduler did not return a lease")
-        return RemoteLease(self, lease)
+        return RemoteLease(self, lease, self._resource_cls_for(lease, resource_cls))
 
     def release(
         self,
@@ -367,11 +473,16 @@ class LocalSchedulerClient:
             outcome = lease.outcome
         if used is None and isinstance(lease, RemoteLease):
             used = lease.used
+        if outcome is not None and not isinstance(outcome, UsageOutcome):
+            try:
+                outcome = UsageOutcome(outcome)
+            except ValueError as exc:
+                raise ConfigError(f"unknown usage outcome {outcome!r}") from exc
         result = self._request(
             "release",
             pool=pool,
             token=token,
-            outcome=None if outcome is None else UsageOutcome(outcome).value,
+            outcome=None if outcome is None else outcome.value,
             used=used,
             idempotency_key=idempotency_key,
             timeout=30.0,
@@ -412,15 +523,40 @@ class LocalSchedulerClient:
         name: str,
         kind: str,
         *,
-        config: dict[str, Any] | None = None,
+        config: Any = None,
+        profile: Any = None,
+        **overrides: Any,
     ) -> dict[str, Any]:
         result = self._request(
-            "create_pool", name=name, kind=kind, config=config or {}, timeout=30.0
+            "create_pool",
+            name=name,
+            kind=kind,
+            config=_config_payload(config, overrides),
+            profile=profile,
+            timeout=30.0,
         )
         pool = result.get("pool")
         if not isinstance(pool, dict):
             raise SchedulerProtocolError("scheduler did not return pool stats")
         return pool
+
+    def update_pool(
+        self,
+        name: str,
+        *,
+        config: Any = None,
+        **overrides: Any,
+    ) -> dict[str, Any]:
+        result = self._request(
+            "update_pool",
+            name=name,
+            config=_config_payload(config, overrides),
+            timeout=30.0,
+        )
+        updated = result.get("config")
+        if not isinstance(updated, dict):
+            raise SchedulerProtocolError("scheduler did not return the new config")
+        return updated
 
     def delete_pool(self, name: str, *, force: bool = False) -> dict[str, Any]:
         return self._request("delete_pool", name=name, force=force, timeout=30.0)

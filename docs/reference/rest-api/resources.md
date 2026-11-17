@@ -59,6 +59,7 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/resources \
 - `on_import` 逐条同步验活，结果写入导入报告的 `validation`。
 - `batch` 交给后台验活任务，任务 id 即报告中的 `batch_id`。
 - `dedup_key` 默认 `"id"`；`fail_fast=true` 遇到首条错误即中断。
+- `records` 中可带资源调度保留键：`max_slots`、`usage_quota`、`quota_limit`、`expires_at`、`next_available_at`、`mutex_group`、`schedule_window`、`priority`、`preference`、`source`。
 
 ## 更新
 
@@ -73,11 +74,13 @@ curl -X PUT http://127.0.0.1:8000/pools/proxies/resources/r1 \
     "expires_at": 1767225600,
     "mutex_group": "account-a",
     "schedule_window": ["08:00", "20:00"],
+    "priority": 10,
+    "preference": 0.5,
     "reason": "rotate credentials"
   }'
 ```
 
-忙时（有活跃租约）修改 `max_slots` 等会返回 `409`。`payload` / `tags` 为整体替换语义。`schedule_window` 必须传 `["HH:MM", "HH:MM"]`；开始时间晚于结束时间表示跨夜窗口；传 `null` 清除。
+忙时（有活跃租约）修改 `max_slots` 等会返回 `409`。`payload` / `tags` 为整体替换语义。`schedule_window` 必须传 `["HH:MM", "HH:MM"]`；开始时间晚于结束时间表示跨夜窗口；传 `null` 清除。`priority`（`static_priority` 分配器）与 `preference`（偏好加分）同样支持省略保持、传 `null` 清除；导入记录中也接受这两个字段。
 
 ## 删除
 

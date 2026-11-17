@@ -57,8 +57,35 @@ async def main():
 asyncio.run(main())
 ```
 
-> `lease.resource` 是本进程 acquire 时加载的类型化快照；需要最新状态，或租约由其他进程
-> 重建（此时 `lease.resource is None`），请用 `await pool.require(lease.resource_id)`。
+> `lease.resource` 是本进程 acquire 时加载的类型化快照；需要最新状态，请用
+> `await pool.require(lease.resource_id)`。跨进程租约默认是通用 `Resource`，
+> 通过 `connect(..., resource_types=...)` 或 `LocalSchedulerClient(..., resource_types=...)`
+> 注册类型后才会恢复为子类实例。
+
+### 同机多进程：`connect()`
+
+调度进程持有唯一的 `Purser`，业务进程用 `connect()` 拿到与 `ResourcePool` 同形的异步门面
+（IPC 调用跑在线程池里，不阻塞事件循环）：
+
+```python
+from purser import AcquireRequest, LocalScheduler, connect
+
+sched = LocalScheduler(adapters=[MyAdapter()]).start()
+sched.create_pool("proxies", "proxy")
+sched.import_resources("proxies", [{"host": "1.2.3.4", "port": 8080}])
+
+pool = connect("proxies", sched.address)   # 或省略地址，读 PURSER_LOCAL_SCHEDULER
+async with pool.lease(AcquireRequest(consumer="worker")) as lease:
+    print(lease.resource_id, lease.payload)
+```
+
+`connect(..., resource_types={"proxy": ProxyResource})` 后，跨进程的 `lease.resource` 会恢复为
+类型化对象（未注册时是通用 `Resource`）。所有租约对象都满足 `LeaseView` 协议
+（`token` / `pool` / `resource_id` / `payload` / `resource` / `used` / `outcome` / `expired()`），
+异步、同步、远端三种视图可以共用同一段只读代码。
+
+`release(..., outcome=...)` 同时接受 `UsageOutcome` 与字符串值（如 `"banned"`）。异常对象带
+`code` 与 `retryable`，可直接用 `from purser import is_retryable` 驱动重试。
 
 > `import_resources`、查询、状态变更等管理面操作可以在 `start()` 之前执行（适合离线预装数据）；
 > 但 `acquire()` / `lease()` / `acquire_many()` 必须先 `await ps.start()`，否则抛
@@ -139,6 +166,8 @@ ps = Purser(storage="sqlite", coordination="redis",
             redis_url="redis://localhost:6379")
 pool = ps.create_pool("proxies", "proxy")
 ```
+
+池级调度参数可直接按需传字段（`ps.create_pool("proxies", "proxy", lease_ttl=120)`），也可选 `profile="validated"` 等场景预设；显式字段始终覆盖预设，完整合并顺序见[配置](docs/reference/configuration.md)。
 
 **存储层（主张：绝不能丢）**：资源基本信息、重要状态、槽位计数、`version` CAS、审计。`sqlite` 用 `resources` / `resource_tags` 两表持久化，payload 密文字段 AES-GCM 落库，单机“重启不丢”；`mysql` 按同一契约实现（`pip install "purser[mysql]"`，aiomysql 懒连接），适合已有 MySQL 基建的多实例存储。**协调层（运行期租约权威，丢失需分级处理）**：在途租约、心跳、等待唤醒、校验缓存，`memory` 单进程、`redis` 跨实例（`redis.asyncio` + 每资源哈希 + token 索引，强制 RESP2 兼容 Redis < 6，连接/操作带 5s 超时 fail-closed，断连抛 `BackendUnavailable`）。两个平面独立取值，行为套件按 存储 × 协调 组合运行；异常重启后 `start()` 会做对账：槽位计数按协调端**当前存活租约之和**对齐（既支持全孤儿归零，也支持“部分租约存活、其余为孤儿”的部分孤儿收敛），资源基本信息不受影响；迟到 release（token 已不在协调端）绝不触碰存储槽位，避免误扣新持有者。注意：**多实例下协调记录丢失会让其他实例看不到在途租约，可能重复占用同一资源**，因此 Redis 必须开启持久化，不能当纯缓存使用；详见 [数据平面与丢失语义](docs/design/data-planes.md)。
 

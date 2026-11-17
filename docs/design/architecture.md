@@ -90,7 +90,7 @@ flowchart TB
 purser/
   __init__.py            # 公共导出
   facade.py              # Purser / 资源池的编排
-  config.py              # PoolConfig / Weights
+  config.py              # PoolConfig / 字段 schema / 场景预设
   sync.py                # SyncPurser / SyncPool / SyncLease
   authority.py           # 进程内权威/单例约束
   binding.py             # worker 绑定

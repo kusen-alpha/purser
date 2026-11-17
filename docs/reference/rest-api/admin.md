@@ -12,6 +12,7 @@
 | `GET` | `/audit` | 读 | 审计分页 |
 | `GET` | `/audit/verify` | 读 | 校验哈希链 |
 | `GET` | `/adapters` | 读 | 已注册适配器及字段 |
+| `GET` | `/config/schema` | 读 | 池配置与资源调度字段 schema |
 | `GET` | `/backup` | admin | 全量导出（含明文密钥） |
 | `POST` | `/restore` | 写 | 导入备份；支持 `Idempotency-Key` |
 
@@ -54,6 +55,14 @@ curl http://127.0.0.1:8000/adapters
 ```
 
 返回每个已注册 `kind` 的资源类、默认并发度与 `PayloadField` 字段（名称、类型、required、secret、default、doc），控制台据此渲染表单。
+
+## 配置 schema
+
+```bash
+curl http://127.0.0.1:8000/config/schema
+```
+
+返回 `profiles`、`immutable`、`fields` 与 `resource_fields`：每个字段带类型、分组、标签、可选值、范围、是否可空、是否可热更新、默认值与说明。控制台的建池弹窗和资源调度字段直接由此渲染，不再维护另一份硬编码表单。字段语义见[配置参考](../configuration.md)。
 
 ## 备份
 

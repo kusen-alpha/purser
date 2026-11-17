@@ -35,7 +35,7 @@ Purser(
 | `bundle_gc_interval` | `30.0` | `bundle_gc` 崩溃回收扫批周期（秒） |
 | `fairness_ttl` | `300.0` | 公平计数/组合保活标记 TTL（秒）；开启 `bundle_fairness` 后接管标记 TTL |
 
-`storage` / `coordination` 只是**默认值**：建池时传字典配置会合并这两个默认值，而传入完整的 `PoolConfig` 实例时以实例自身字段为准。SQLite 场景下未显式给 `secret_key` 时会从 `sqlite_path` 派生或加载 key 文件；MySQL + `secret_fields` 若只有临时密钥会拒绝启动，避免其他实例无法解密。
+`storage` / `coordination` 只是**默认值**：建池时按“实例默认值 → `profile` → `config` → 关键字参数”合并；传入完整的 `PoolConfig` 实例时以实例自身字段为准，不能再同时指定 `profile`。SQLite 场景下未显式给 `secret_key` 时会从 `sqlite_path` 派生或加载 key 文件；MySQL + `secret_fields` 若只有临时密钥会拒绝启动，避免其他实例无法解密。字段、预设与合并规则见[配置](../configuration.md)。
 
 ## 生命周期
 
@@ -57,12 +57,19 @@ await ps.close()      # 幂等；关闭池、事件总线与审计
 
 | 方法 | 行为 |
 | --- | --- |
-| `create_pool(name, kind, *, config=None, **overrides)` | 新建池；同名已存在抛 `PoolExists`。`config` 可为 `PoolConfig` 或字典，`overrides` 再覆盖 |
-| `pool(name, kind=None, *, config=None, **overrides)` | 已存在则返回；否则用给定 `kind` 创建。缺 `kind` 且不存在时抛 `PoolNotFound` |
+| `create_pool(name, kind, *, config=None, profile=None, **overrides)` | 新建池；同名已存在抛 `PoolExists`。`config` 可为 `PoolConfig` 或字典，`profile` 为可选场景预设，`overrides` 最后覆盖 |
+| `pool(name, kind=None, *, config=None, profile=None, **overrides)` | 已存在则返回；否则用给定 `kind` 创建。缺 `kind` 且不存在时抛 `PoolNotFound` |
 | `get_pool(name)` | 不存在返回 `None` |
 | `require_pool(name)` | 不存在抛 `PoolNotFound` |
 | `pool_names()` | 返回已注册池名列表 |
 | `delete_pool(name, *, force=False, operator="system")` | 删除池；有活跃租约时始终拒绝。仅当 `force=True` 才允许删除仍有资源的池，并先 flush 两个后端。返回 `{"pool", "removed", "forced"}` |
+
+最基础的建池只需要直接字段，不必构造 `PoolConfig`；需要常见默认值时再加可选预设：
+
+```python
+pool = ps.create_pool("proxies", "proxy", lease_ttl=120)
+pool = ps.create_pool("accounts", "account", profile="validated")
+```
 
 建池时 `max_slots` 未指定则取资源适配器的 `default_concurrency`；`secret_fields` 为空则继承资源适配器的声明。两者都经 `adapter.defaults()` 这一单一来源合并（`PoolConfig.default_for(kind, adapter=...)` 与之同源）。存储与协调后端的组装规则见[StorageBackend / Coordination](backends.md)。
 

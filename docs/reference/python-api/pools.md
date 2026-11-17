@@ -22,7 +22,7 @@ report = await pool.import_resources(
 | `import_validate` | 池配置 | `none` / `on_import` / `batch`，见[导入与验活](../../guides/import-and-validate.md) |
 | `batch_id` | 自动生成 | 批次标识；同时写入每个资源的 `meta["batch_id"]` |
 
-`dict` 记录中与 payload 字段并列的保留键会被拆出并应用到调度字段：`max_slots`、`usage_quota`、`quota_limit`、`expires_at`、`next_available_at`、`mutex_group`、`schedule_window`、`source`。未显式给 `max_slots` 时使用池配置值；`expires_in`、`usage_quota`、`quota_limit` 等池默认值只在记录未提供时补齐。
+`dict` 记录中与 payload 字段并列的保留键会被拆出并应用到调度字段：`max_slots`、`usage_quota`、`quota_limit`、`expires_at`、`next_available_at`、`mutex_group`、`schedule_window`、`priority`、`preference`、`source`。`priority` 用于 `static_priority` 分配器，`preference` 用于偏好加分。未显式给 `max_slots` 时使用池配置值；`expires_in`、`usage_quota`、`quota_limit` 等池默认值只在记录未提供时补齐。
 
 重复导入同一 id 是**更新**而不是替换：
 
@@ -76,7 +76,7 @@ async for resource in pool.iter_resources(states=None, tags=None, search=None, b
 | `stats()` | `PoolStats` 快照（见下表） |
 | `describe(resource, secret=False)` | 面向 UI/日志的摘要；默认把整个 payload 掩码为 `***` |
 
-`PoolStats` 字段：`name` / `kind` / `total` / `counts` / `allocatable` / `active_leases` / `waiting` / `avg_health` / `config`。`avg_health` 只统计有验活样本的资源，不受分页上限影响；没有样本时为 `None`。
+`PoolStats` 字段：`name` / `kind` / `profile` / `total` / `counts` / `allocatable` / `active_leases` / `waiting` / `avg_health` / `config`。`profile` 只记录创建时选择的具名预设；实际生效值始终以 `config` 为准。`avg_health` 只统计有验活样本的资源，不受分页上限影响；没有样本时为 `None`。
 
 ## 运维动作
 
@@ -119,13 +119,15 @@ updated = await pool.update_resource(
     next_available_at=None,           # None 清空
     mutex_group="account-group",
     schedule_window=["08:00", "20:00"],
+    priority=10,                      # static_priority 分配器使用
+    preference=0.5,                   # 偏好加分；None 清空
     operator="alice", reason="rotate endpoint",
 )
 ```
 
 - 资源有活跃租约时拒绝修改（`BadState`）。
 - `payload` / `tags` / `max_slots` 是整体替换；未传则保持。
-- `usage_quota` / `quota_limit` / `expires_at` / `next_available_at` / `mutex_group` / `schedule_window` 支持“省略保持、传 `None` 清空”。
+- `usage_quota` / `quota_limit` / `expires_at` / `next_available_at` / `mutex_group` / `schedule_window` / `priority` / `preference` 支持“省略保持、传 `None` 清空”。
 - `schedule_window` 必须是两个 `HH:MM` 字符串，支持跨夜窗口。
 - 迁移资源用 `move_resource(rid, target_pool, reason=...)`：资源必须空闲、目标池 kind 相同、目标池不能已有同 id。
 
@@ -172,6 +174,6 @@ cancelled = pool.cancel_validate_job(job_id)
 
 ## 重配置与关闭
 
-- `reconfigure(**updates)` 实时更新池参数并重建分配器、验活门限、心跳节奏与调度间隔，返回新的 `PoolConfig`。`storage` / `coordination` 不可在运行期修改，传入会抛 `ConfigError`。
+- `reconfigure(**updates)` 实时更新池参数并重建分配器、验活门限、心跳节奏与调度间隔，返回新的 `PoolConfig`。`storage` / `coordination` / `secret_fields` / `event_queue_size` / `schema_version` 不可在运行期修改，传入会抛 `ConfigError`。
 - `close()` 停止该池的 reaper、后台任务与等待队列，并以 `PoolExhausted` 唤醒所有在途等待者；关闭后池不能再分配资源。
 - `Purser.close()` 会依次关闭其所有池。

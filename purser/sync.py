@@ -35,7 +35,12 @@ from purser.core.bundle import BundleLease
 from purser.core.resource import Lease, Resource, UsageOutcome
 from purser.core.views import PoolStats, UsageReport
 from purser.errors import IsolationConflict
-from purser.facade import ImportReport, Purser, ResourcePool
+from purser.facade import (
+    ImportReport,
+    Purser,
+    ResourcePool,
+    coerce_usage_outcome,
+)
 from purser.isolation import PICKLE_MESSAGE
 
 logger = logging.getLogger("purser.sync")
@@ -136,7 +141,7 @@ class SyncLease:
         return self._lease.outcome
 
     @outcome.setter
-    def outcome(self, value: UsageOutcome) -> None:
+    def outcome(self, value: UsageOutcome | str) -> None:
         self._write("outcome", value)
 
     @property
@@ -208,7 +213,8 @@ class SyncBatchLease:
     def __iter__(self) -> Iterator[SyncLease]:
         return iter(self._leases)
 
-    def release_all(self, outcome: UsageOutcome = UsageOutcome.OK) -> None:
+    def release_all(self, outcome: UsageOutcome | str = UsageOutcome.OK) -> None:
+        outcome = coerce_usage_outcome(outcome) or UsageOutcome.OK
         first_error: BaseException | None = None
         remaining: list[SyncLease] = []
         for lease in self._leases:
@@ -397,6 +403,10 @@ class SyncPool:
     @property
     def kind(self) -> str:
         return self._pool.cfg.kind
+
+    @property
+    def profile(self) -> str | None:
+        return self._pool.profile
 
     @property
     def config(self) -> Any:
@@ -623,9 +633,10 @@ class SyncPool:
         self,
         lease: SyncLease | Lease,
         *,
-        outcome: UsageOutcome | None = None,
+        outcome: UsageOutcome | str | None = None,
         used: int | None = None,
     ) -> bool:
+        outcome = coerce_usage_outcome(outcome)
         authoritative = self._resolve(lease)
         result = self._owner._submit(
             lambda: self._pool.release(
@@ -641,9 +652,10 @@ class SyncPool:
         self,
         consumer: str,
         *,
-        outcome: UsageOutcome = UsageOutcome.OK,
+        outcome: UsageOutcome | str = UsageOutcome.OK,
         operator: str = "system",
     ) -> list[Lease]:
+        outcome = coerce_usage_outcome(outcome) or UsageOutcome.OK
         return self._snapshot_call(
             lambda: self._pool.release_consumer(
                 consumer, outcome=outcome, operator=operator
@@ -1236,6 +1248,7 @@ class SyncPurser:
         overrides: dict[str, Any],
         *,
         get_only: bool,
+        profile: Any = None,
     ) -> ResourcePool:
         ps = self._ps
         if get_only:
@@ -1247,7 +1260,9 @@ class SyncPurser:
                 return existing
         try:
             assert kind is not None
-            pool = ps.create_pool(name, kind, config=config, **overrides)
+            pool = ps.create_pool(
+                name, kind, config=config, profile=profile, **overrides
+            )
         except BaseException:
             raise
         if ps.started:
@@ -1273,13 +1288,20 @@ class SyncPurser:
         kind: str,
         *,
         config: Any = None,
+        profile: Any = None,
         **overrides: Any,
     ) -> SyncPool:
         copied_config = copy.deepcopy(config)
+        copied_profile = copy.deepcopy(profile)
         copied_overrides = {key: copy.deepcopy(value) for key, value in overrides.items()}
         pool = self._submit(
             lambda: self._create_pool_async(
-                name, kind, copied_config, copied_overrides, get_only=False
+                name,
+                kind,
+                copied_config,
+                copied_overrides,
+                get_only=False,
+                profile=copied_profile,
             )
         )
         return self._remember_pool(pool)
@@ -1290,16 +1312,23 @@ class SyncPurser:
         kind: str | None = None,
         *,
         config: Any = None,
+        profile: Any = None,
         **overrides: Any,
     ) -> SyncPool:
         cached = self._cached_pool(name)
         if cached is not None:
             return cached
         copied_config = copy.deepcopy(config)
+        copied_profile = copy.deepcopy(profile)
         copied_overrides = {key: copy.deepcopy(value) for key, value in overrides.items()}
         pool = self._submit(
             lambda: self._create_pool_async(
-                name, kind, copied_config, copied_overrides, get_only=True
+                name,
+                kind,
+                copied_config,
+                copied_overrides,
+                get_only=True,
+                profile=copied_profile,
             )
         )
         return self._remember_pool(pool)

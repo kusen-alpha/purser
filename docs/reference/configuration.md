@@ -25,6 +25,36 @@
 
 创建池时传入，或通过 `PATCH /pools/{pool}` 热更新（不可变项除外）。
 
+### 直接字段、映射与场景预设
+
+最基础的接入不需要先构造 `PoolConfig`，也不需要学习预设：
+
+```python
+pool = ps.create_pool("proxies", "proxy", lease_ttl=120, max_slots=4)
+pool = ps.create_pool("accounts", "account", config={"lease_ttl": 120})
+```
+
+需要一套常见默认值时，再按名称选择预设；预设只是起点，显式 `config` 与关键字参数始终覆盖它：
+
+```python
+pool = ps.create_pool("proxies", "proxy", profile="basic", lease_ttl=120)
+```
+
+合并顺序固定为：实例默认值（`storage` / `coordination`）→ `profile` → `config` → 关键字参数。
+预设包括 `basic`、`validated`、`shared`、`long_running`、`quota`，完整定义见
+`purser.POOL_PROFILES`。纯 Python 侧也可以用映射一步构造：
+
+```python
+from purser import PoolConfig
+
+cfg = PoolConfig.from_dict({"kind": "proxy", "profile": "basic", "lease_ttl": 120})
+```
+
+REST 与浏览器控制台使用同一份契约：`GET /config/schema` 返回字段、分组、可空性、可修改性和预设；
+`POST /pools` 接受 `profile` 与 `config`，`PATCH /pools/{pool}` 中字段缺省表示不变、`null` 表示清空
+（仅限可空字段）。创建后不可修改的字段为 `storage`、`coordination`、`secret_fields`、
+`event_queue_size` 与 `schema_version`。
+
 ### 调度与分配
 
 | 字段 | 默认 | 说明 |

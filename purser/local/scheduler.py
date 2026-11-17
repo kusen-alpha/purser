@@ -211,9 +211,22 @@ class LocalScheduler:
         name: str,
         kind: str,
         *,
-        config: dict[str, Any] | None = None,
+        config: Any = None,
+        profile: Any = None,
+        **overrides: Any,
     ) -> dict[str, Any]:
-        return self.client.create_pool(name, kind, config=config)
+        return self.client.create_pool(
+            name, kind, config=config, profile=profile, **overrides
+        )
+
+    def update_pool(
+        self,
+        name: str,
+        *,
+        config: Any = None,
+        **overrides: Any,
+    ) -> dict[str, Any]:
+        return self.client.update_pool(name, config=config, **overrides)
 
     def delete_pool(self, name: str, *, force: bool = False) -> dict[str, Any]:
         return self.client.delete_pool(name, force=force)

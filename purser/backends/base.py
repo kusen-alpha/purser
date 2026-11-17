@@ -49,6 +49,7 @@ class ResourcePatch:
     payload: dict[str, Any] | None = None
     concurrency: Concurrency | None = None
     meta_patch: dict[str, Any] | None = None
+    meta_clear: frozenset[str] = frozenset()
     # Fields explicitly reset to ``None``; ``None`` alone means "unchanged"
     # everywhere else on this patch, so clearing needs its own marker.
     clear_fields: frozenset[str] = frozenset()
@@ -96,6 +97,9 @@ class ResourcePatch:
             resource.payload = self.payload
         if self.concurrency is not None:
             resource.concurrency = self.concurrency
+        if self.meta_clear:
+            for name in self.meta_clear:
+                resource.meta.pop(name, None)
         if self.meta_patch:
             resource.meta.update(self.meta_patch)
         resource.mark_updated()

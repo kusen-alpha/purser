@@ -172,3 +172,12 @@ def test_cmd_lease_and_release_handlers():
     assert calls[1][0] == "delete"
     assert calls[1][1].endswith("/leases/tok")
     assert calls[1][2].get("outcome") == "ok"
+
+
+def test_client_ignores_bracketed_ipv6_no_proxy(monkeypatch):
+    # httpx 0.28 parses each NO_PROXY entry as a URL; "[::1]" raises InvalidURL
+    # at Client construction unless trust_env is off.
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,[::1]")
+    monkeypatch.setenv("no_proxy", "localhost,127.0.0.1,[::1]")
+    with cli._client("http://127.0.0.1:1") as client:
+        assert str(client.base_url) == "http://127.0.0.1:1"

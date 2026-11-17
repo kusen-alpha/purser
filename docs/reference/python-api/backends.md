@@ -23,7 +23,7 @@ pool3 = ps.create_pool("other", "proxy",
 ```
 
 - `Purser(storage=..., coordination=...)` 只是建池时的默认值。
-- 传 `PoolConfig` 实例时以实例字段为准；传字典时字典覆盖默认值。
+- 建池按“实例默认值 → `profile` → `config` → 关键字参数”合并；传 `PoolConfig` 实例时以实例字段为准（不能再同时传 `profile`）。
 - `storage` 可选 `memory` / `sqlite` / `mysql`；`coordination` 可选 `memory` / `redis`。
 - `storage="sqlite"` 必须提供 `sqlite_path`，否则抛 `ConfigError`，不会静默退回内存。
 - MySQL 需要 `pip install "purser[mysql]"`；aiomysql 懒加载，不装不影响其他后端。

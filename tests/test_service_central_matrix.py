@@ -104,7 +104,9 @@ def _service(shape: tuple[str, str], tmp_path: Path):
             if proc.poll() is not None:
                 break
             try:
-                if httpx.get(f"{base}/healthz", timeout=0.5).status_code == 200:
+                if httpx.get(
+                    f"{base}/healthz", timeout=0.5, trust_env=False
+                ).status_code == 200:
                     ready = True
                     break
             except httpx.HTTPError:
@@ -139,7 +141,9 @@ def test_service_owns_one_shared_resource_set(shape, tmp_path):
     pool_url = f"/pools/{pool}"
 
     with _service(shape, tmp_path) as base:
-        with httpx.Client(base_url=base, headers=_auth(), timeout=30.0) as client:
+        with httpx.Client(
+            base_url=base, headers=_auth(), timeout=30.0, trust_env=False
+        ) as client:
             try:
                 status = client.get("/service").json()
                 assert (status["storage"], status["coordination"]) == shape
@@ -203,7 +207,10 @@ def test_service_owns_one_shared_resource_set(shape, tmp_path):
 
                 def wait_for_slot() -> None:
                     with httpx.Client(
-                        base_url=base, headers=_auth(), timeout=30.0
+                        base_url=base,
+                        headers=_auth(),
+                        timeout=30.0,
+                        trust_env=False,
                     ) as waiter:
                         response = waiter.post(
                             f"{pool_url}/leases",

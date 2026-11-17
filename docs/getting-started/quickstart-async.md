@@ -90,6 +90,6 @@ python examples/quickstart.py
 
 - `acquire()` / `lease()` / `acquire_many()` 要求池已启动，否则抛 `NotStarted`。
 - 池内资源全部是 `NEW` 时不会自动验活，`acquire()` 立即抛带提示的 `PoolExhausted`。
-- 租约默认 TTL 60 秒，心跳按 TTL/3 续约；可用 `PoolConfig(lease_ttl=...)` 调整。
+- 租约默认 TTL 60 秒，心跳按 TTL/3 续约；建池时直接传 `lease_ttl=...`，或事后 `pool.reconfigure(lease_ttl=...)`。需要常见默认值时再加 `profile="validated"` 等可选预设，见[配置](../reference/configuration.md)。
 
 继续阅读：[租约生命周期](../guides/lease-lifecycle.md)、[导入与验活](../guides/import-and-validate.md)。

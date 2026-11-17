@@ -142,6 +142,29 @@ def test_in_process_data_plane_and_idempotency():
         assert sched.pool_names() == []
 
 
+def test_create_pool_profile_and_hot_update():
+    with _scheduler() as sched:
+        stats = sched.create_pool(
+            "p",
+            "fakecheck",
+            profile="basic",
+            config={"requalify_on_release": False, "lease_ttl": 12},
+            max_slots=2,
+        )
+        assert stats["profile"] == "basic"
+        cfg = sched.client.update_pool("p", max_slots=None, lease_ttl=20)
+        assert cfg["max_slots"] is None
+        assert cfg["lease_ttl"] == 20
+        assert cfg["import_validate"] == "on_import"
+        assert sched.stats("p")["profile"] == "basic"
+
+        embedded = sched.create_pool(
+            "q", "fakecheck", config={"profile": "validated", "lease_ttl": 15}
+        )
+        assert embedded["profile"] == "validated"
+        assert embedded["config"]["background_validate_sample"] == 1.0
+
+
 def test_release_wakes_blocked_acquire():
     with _scheduler() as sched:
         _seed(sched)

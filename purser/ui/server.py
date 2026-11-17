@@ -18,9 +18,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from purser import Purser, ResourcePool, __version__
-from purser.config import Weights
+from purser.config import config_schema_payload, parse_pool_config
 from purser.core.bundle import bundle_request_from_dict
-from purser.core.quarantine import QuarantinePolicy
 from purser.core.resource import AcquireRequest, Resource, UsageOutcome
 from purser.core.state import ResourceState
 from purser.core.views import PoolStats, UsageReport, ValidateJobView
@@ -144,67 +143,18 @@ def _coerce(
     return out
 
 
-def _clean_pool_config(raw: Any) -> dict[str, Any]:
-    """Validate and normalize a PoolConfig patch before it hits the dataclass.
+def _clean_pool_config(
+    raw: Any,
+    *,
+    mode: str = "create",
+    base: Any = None,
+) -> dict[str, Any]:
+    """Single pool-config parser shared with Python and the local scheduler."""
 
-    Immutable knobs are filtered by the caller so a round-tripped config (the
-    exact dict returned by ``stats()``) is still accepted when unchanged.
-    """
-
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise HTTPException(status_code=422, detail="config must be an object")
-    data = dict(raw)
-    data.pop("kind", None)  # supplied separately at create time
-    if "secret_fields" in data:
-        secret_fields = data["secret_fields"]
-        if not isinstance(secret_fields, (list, tuple)) or any(
-            not isinstance(name, str) or not name for name in secret_fields
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail="secret_fields must be a list of non-empty strings",
-            )
-        data["secret_fields"] = tuple(secret_fields)
-    if isinstance(data.get("weights"), dict):
-        unknown = set(data["weights"]) - set(Weights.__dataclass_fields__)
-        if unknown:
-            raise HTTPException(
-                status_code=422,
-                detail=f"unknown weights field(s): {', '.join(sorted(unknown))}",
-            )
-        try:
-            data["weights"] = Weights.from_dict(data["weights"])
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=f"bad weights: {exc}") from exc
-    quarantine = data.get("quarantine")
-    if isinstance(quarantine, dict):
-        allowed = {
-            name
-            for name in QuarantinePolicy.__dataclass_fields__
-            if name != "rng"
-        }
-        unknown = set(quarantine) - allowed
-        if unknown:
-            raise HTTPException(
-                status_code=422,
-                detail=f"unknown quarantine field(s): {', '.join(sorted(unknown))}",
-            )
-        data["quarantine"] = QuarantinePolicy(**quarantine)
-    for key in ("meta",):
-        if key in data and data[key] is not None and not isinstance(data[key], dict):
-            raise HTTPException(status_code=422, detail=f"{key} must be an object")
-    quota_limit = data.get("quota_limit")
-    if quota_limit is not None and (
-        isinstance(quota_limit, bool)
-        or not isinstance(quota_limit, int)
-        or quota_limit <= 0
-    ):
-        raise HTTPException(
-            status_code=422, detail="quota_limit must be a positive integer"
-        )
-    return data
+    try:
+        return parse_pool_config(raw, mode=mode, base=base)
+    except ConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _optional_epoch(value: Any, name: str) -> float | None:
@@ -275,7 +225,14 @@ def _pool_specs(ps: Purser) -> list[dict[str, Any]]:
             continue
         config = pool.cfg.to_dict()
         config.pop("kind", None)
-        out.append({"name": name, "kind": pool.cfg.kind, "config": config})
+        entry: dict[str, Any] = {
+            "name": name,
+            "kind": pool.cfg.kind,
+            "config": config,
+        }
+        if pool.profile:
+            entry["profile"] = pool.profile
+        out.append(entry)
     return out
 
 
@@ -320,6 +277,7 @@ def load_pools(ps: Purser) -> None:
                 name,
                 kind,
                 config=_clean_pool_config(spec.get("config") or {}),
+                profile=spec.get("profile"),
             )
         except Exception:
             logger.exception("failed to restore pool %r from %s", name, path)
@@ -574,6 +532,13 @@ def create_app(
         require(request, write=False)
         return {"ok": ps.audit.verify(), "entries": len(ps.audit)}
 
+    @app.get("/config/schema", response_model=None)
+    async def config_schema(request: Request) -> dict[str, Any]:
+        """Pool/resource scheduling schema; the console renders from this."""
+
+        require(request, write=False)
+        return config_schema_payload()
+
     @app.get("/adapters", response_model=None)
     async def list_adapters(request: Request) -> dict[str, Any]:
         """Describe registered resource adapters so the console can render forms."""
@@ -631,9 +596,18 @@ def create_app(
             kind = body.get("kind")
             if not name or not kind:
                 raise HTTPException(status_code=422, detail="name and kind required")
-            config = _clean_pool_config(body.get("config") or {})
+            raw_config = body.get("config") or {}
+            profile = body.get("profile")
+            if isinstance(raw_config, dict):
+                raw_config = dict(raw_config)
+                embedded = raw_config.pop("profile", None)
+                if profile is None:
+                    profile = embedded
+            config = _clean_pool_config(raw_config)
             try:
-                pool = ps.create_pool(name, kind, config=config)
+                pool = ps.create_pool(
+                    name, kind, config=config, profile=profile
+                )
             except PoolExists:
                 raise HTTPException(
                     status_code=409, detail=f"pool {name!r} already exists"
@@ -641,7 +615,10 @@ def create_app(
             except (PurserError, TypeError) as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             save_pools(ps)
-            return {"pool": name, "kind": pool.cfg.kind}
+            payload = {"pool": name, "kind": pool.cfg.kind}
+            if pool.profile:
+                payload["profile"] = pool.profile
+            return payload
 
         return await idempotent(idempotency_key, do)
 
@@ -658,28 +635,10 @@ def create_app(
     ) -> dict[str, Any]:
         operator, _ = require(request, write=True)
         pool = pool_of(pool_name)
-        overrides = _clean_pool_config(body.get("config") or body)
-        # Accept a round-tripped config (unchanged immutable knobs) but make
-        # real attempts to change them explicit instead of silently dropping.
-        immutable_keys = (
-            "storage",
-            "coordination",
-            "secret_fields",
-            "event_queue_size",
-            "schema_version",
-        )
-        for key in immutable_keys:
-            if key in overrides and overrides[key] == getattr(pool.cfg, key):
-                overrides.pop(key)
-        immutable = sorted(
-            set(overrides)
-            & {"secret_fields", "event_queue_size", "schema_version"}
-        )
-        if immutable:
-            raise HTTPException(
-                status_code=422,
-                detail=f"cannot change {', '.join(immutable)} at runtime",
-            )
+        raw = body["config"] if "config" in body else body
+        # Unchanged immutable knobs from a stats() round-trip are dropped by
+        # the parser; a real change raises ConfigError -> 422.
+        overrides = _clean_pool_config(raw, mode="patch", base=pool.cfg)
         try:
             cfg = pool.reconfigure(**overrides)
         except (PurserError, TypeError, ValueError) as exc:
@@ -1030,6 +989,20 @@ def create_app(
                     status_code=422, detail="schedule_window must be [start, end]"
                 )
             extra["schedule_window"] = window
+        if "priority" in body:
+            value = body["priority"]
+            extra["priority"] = (
+                None
+                if value is None
+                else _coerce(value, name="priority", cast=int)
+            )
+        if "preference" in body:
+            value = body["preference"]
+            extra["preference"] = (
+                None
+                if value is None
+                else _coerce(value, name="preference", cast=float)
+            )
         try:
             updated = await pool.update_resource(
                 rid,

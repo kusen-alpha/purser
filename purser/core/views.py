@@ -12,6 +12,7 @@ from typing import Any, Literal, TypedDict
 class PoolStats(TypedDict):
     name: str
     kind: str
+    profile: str | None
     total: int
     counts: dict[str, int]
     allocatable: int

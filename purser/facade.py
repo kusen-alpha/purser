@@ -28,6 +28,7 @@ from collections.abc import (
     Callable,
     Iterable,
     Iterator,
+    Mapping,
     Sequence,
 )
 from dataclasses import dataclass, field, replace
@@ -44,7 +45,13 @@ from purser.backends.coordination import MemoryCoordination, RedisCoordination
 from purser.backends.memory import MemoryStorage
 from purser.backends.sqlite import SqliteStorage
 from purser.binding import make_binding
-from purser.config import MAINTENANCE_NAMES, PoolConfig, Weights, apply_adapter_defaults
+from purser.config import (
+    IMMUTABLE_POOL_FIELDS,
+    MAINTENANCE_NAMES,
+    PoolConfig,
+    apply_adapter_defaults,
+    resolve_pool_config,
+)
 from purser.core.allocator import AllocationContext, Allocator, make_allocator
 from purser.core.audit import AuditLog
 from purser.core.bundle import (
@@ -63,7 +70,6 @@ from purser.core.bundle_store import (
 from purser.core.events import EventBus
 from purser.core.health import HealthReport, ProbeGuard, ValidationGate
 from purser.core.lease import LeaseManager
-from purser.core.quarantine import QuarantinePolicy
 from purser.core.resource import (
     AcquireRequest,
     CheckVerdict,
@@ -153,6 +159,19 @@ def _now() -> float:
     return time.time()
 
 
+def coerce_usage_outcome(
+    value: UsageOutcome | str | None,
+) -> UsageOutcome | None:
+    """Accept the enum or its wire value; reject everything else."""
+
+    if value is None or isinstance(value, UsageOutcome):
+        return value
+    try:
+        return UsageOutcome(value)
+    except ValueError as exc:
+        raise ConfigError(f"unknown usage outcome {value!r}") from exc
+
+
 _MISSING = object()
 
 
@@ -177,6 +196,8 @@ _IMPORT_RESERVED = (
     "next_available_at",
     "mutex_group",
     "schedule_window",
+    "priority",
+    "preference",
     "source",
 )
 
@@ -245,6 +266,22 @@ def _apply_import_fields(resource: Resource, data: dict[str, Any]) -> None:
         resource.mutex_group = str(raw) if raw else None
     if "schedule_window" in data:
         resource.schedule_window = _schedule_window(data["schedule_window"])
+    if "priority" in data:
+        raw = data["priority"]
+        if raw is None:
+            resource.meta.pop("priority", None)
+        else:
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                raise ConfigError("priority must be an integer or null")
+            resource.meta["priority"] = raw
+    if "preference" in data:
+        raw = data["preference"]
+        if raw is None:
+            resource.meta.pop("preference", None)
+        else:
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise ConfigError("preference must be a number or null")
+            resource.meta["preference"] = float(raw)
     source = data.get("source")
     if source:
         resource.meta["source"] = str(source)
@@ -310,7 +347,11 @@ class BatchLease:
     def __iter__(self) -> Iterator[Lease]:
         return iter(self.leases)
 
-    async def release_all(self, pool: ResourcePool, outcome: UsageOutcome = UsageOutcome.OK) -> None:
+    async def release_all(
+        self,
+        pool: ResourcePool,
+        outcome: UsageOutcome | str = UsageOutcome.OK,
+    ) -> None:
         for lease in self.leases:
             await pool.release(lease, outcome=outcome)
         self.leases.clear()
@@ -337,11 +378,14 @@ class ResourcePool:
         cfg: PoolConfig,
         storage: StorageBackend,
         coordination: Coordination,
+        profile: str | None = None,
     ) -> None:
         self.name = name
         self.purser = purser
         self.adapter = adapter
         self.cfg = cfg
+        # The profile is creation-time provenance only; ``cfg`` is the truth.
+        self.profile = profile
         self.storage = storage
         self._coordination = coordination
         self._authority = make_authority(
@@ -355,7 +399,8 @@ class ResourcePool:
         self._leases = LeaseManager(
             on_expire=self._on_lease_expired,
             on_lost=self._on_lease_lost,
-            heartbeat_interval=cfg.heartbeat_interval or max(1.0, cfg.lease_ttl / 3.0),
+            heartbeat_interval=cfg.heartbeat_interval
+            or max(0.01, cfg.lease_ttl / 3.0),
         )
         self._validate_gate = ValidationGate(
             stale_after=cfg.stale_after,
@@ -568,12 +613,17 @@ class ResourcePool:
         gate, heartbeat cadence and scheduler intervals from the new config.
         """
 
-        immutable = {"storage", "coordination"} & set(updates)
+        immutable = IMMUTABLE_POOL_FIELDS & set(updates)
         if immutable:
             fields = ", ".join(sorted(immutable))
             raise ConfigError(f"cannot change {fields} at runtime")
         self._ensure_process()
-        cfg = self.cfg.with_overrides(**updates)
+        try:
+            cfg = self.cfg.with_overrides(**updates)
+        except ConfigError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"invalid pool config override: {exc}") from exc
         self.cfg = cfg
         self._allocator = make_allocator(cfg.allocator)
         self._validate_gate = ValidationGate(
@@ -583,7 +633,7 @@ class ResourcePool:
         )
         self._validate_sem = asyncio.Semaphore(cfg.validate_concurrency)
         self._leases.heartbeat_interval = cfg.heartbeat_interval or max(
-            1.0, cfg.lease_ttl / 3.0
+            0.01, cfg.lease_ttl / 3.0
         )
         self._register_scheduler()
         return cfg
@@ -981,6 +1031,7 @@ class ResourcePool:
         return {
             "name": self.name,
             "kind": self.cfg.kind,
+            "profile": self.profile,
             "total": sum(counts.values()),
             "counts": counts,
             "allocatable": counts[ResourceState.IDLE.value]
@@ -1845,13 +1896,12 @@ class ResourcePool:
         self,
         lease: Lease,
         *,
-        outcome: UsageOutcome | None = None,
+        outcome: UsageOutcome | str | None = None,
         used: int | None = None,
     ) -> bool:
         if used is not None and used < 0:
             raise ConfigError("used must be >= 0")
-        if outcome is not None and not isinstance(outcome, UsageOutcome):
-            raise ConfigError("outcome must be a UsageOutcome")
+        outcome = coerce_usage_outcome(outcome)
         before = await self.storage.get(self.name, lease.resource_id)
         before_state = before.state if before is not None else None
         if before is not None:
@@ -1959,15 +2009,14 @@ class ResourcePool:
         self,
         consumer: str,
         *,
-        outcome: UsageOutcome = UsageOutcome.OK,
+        outcome: UsageOutcome | str = UsageOutcome.OK,
         operator: str = "system",
     ) -> list[Lease]:
         """Return every live lease held by ``consumer`` (logout / teardown)."""
 
         if not consumer:
             raise ConfigError("consumer must be non-empty")
-        if not isinstance(outcome, UsageOutcome):
-            raise ConfigError("outcome must be a UsageOutcome")
+        outcome = coerce_usage_outcome(outcome) or UsageOutcome.OK
         released: list[Lease] = []
         for lease in await self._coordination.active(self.name):
             if lease.consumer != consumer:
@@ -2721,14 +2770,17 @@ class ResourcePool:
         next_available_at: Any = _MISSING,
         mutex_group: Any = _MISSING,
         schedule_window: Any = _MISSING,
+        priority: Any = _MISSING,
+        preference: Any = _MISSING,
         operator: str = "system",
         reason: str,
     ) -> Resource:
         """O2: mutate metadata/payload/slots; busy resources are rejected.
 
         ``usage_quota`` / ``quota_limit`` / ``expires_at`` /
-        ``next_available_at`` / ``mutex_group`` / ``schedule_window`` accept
-        ``None`` to clear the value and ``_MISSING`` (omitted) to keep it.
+        ``next_available_at`` / ``mutex_group`` / ``schedule_window`` /
+        ``priority`` / ``preference`` accept ``None`` to clear the value and
+        ``_MISSING`` (omitted) to keep it.
         """
 
         resource = await self.require(rid)
@@ -2776,6 +2828,30 @@ class ResourcePool:
                 clear.add("schedule_window")
             else:
                 extra["schedule_window"] = _schedule_window(schedule_window)
+        meta_patch = {
+            **resource.meta,
+            "updated_by": operator,
+            "update_reason": reason,
+        }
+        meta_clear: set[str] = set()
+        if priority is not _MISSING:
+            if priority is None:
+                meta_patch.pop("priority", None)
+                meta_clear.add("priority")
+            else:
+                if isinstance(priority, bool) or not isinstance(priority, int):
+                    raise ConfigError("priority must be an integer or null")
+                meta_patch["priority"] = priority
+        if preference is not _MISSING:
+            if preference is None:
+                meta_patch.pop("preference", None)
+                meta_clear.add("preference")
+            else:
+                if isinstance(preference, bool) or not isinstance(
+                    preference, (int, float)
+                ):
+                    raise ConfigError("preference must be a number or null")
+                meta_patch["preference"] = float(preference)
         patch = ResourcePatch(
             payload=payload if payload is not None else dict(resource.payload),
             tags=tags if tags is not None else resource.tags,
@@ -2784,7 +2860,8 @@ class ResourcePool:
                 if max_slots is not None
                 else resource.concurrency
             ),
-            meta_patch={**resource.meta, "updated_by": operator, "update_reason": reason},
+            meta_patch=meta_patch,
+            meta_clear=frozenset(meta_clear),
             clear_fields=frozenset(clear),
             **extra,
         )
@@ -3354,23 +3431,40 @@ class Purser:
         name: str,
         kind: str,
         *,
-        config: PoolConfig | dict[str, Any] | None = None,
+        config: PoolConfig | Mapping[str, Any] | None = None,
+        profile: str | Mapping[str, Any] | None = None,
         **overrides: Any,
     ) -> ResourcePool:
+        """Create a pool.
+
+        Quick starts need no config object::
+
+            await ps.create_pool("proxies", "proxy", lease_ttl=120)
+            await ps.create_pool("proxies", "proxy", profile="validated")
+
+        ``defaults`` (instance storage/coordination) → ``profile`` → ``config``
+        → keyword ``overrides``; later sources win.
+        """
+
         self._ensure_process()
         if name in self._pools:
             raise PoolExists(f"pool {name!r} already exists")
         adapter = self.adapters.get(kind)
-        if isinstance(config, PoolConfig):
-            cfg = config
-        else:
-            defaults = {
-                "storage": self.storage_kind,
-                "coordination": self.coordination_kind,
-            }
-            cfg = PoolConfig(kind=kind, **{**defaults, **(config or {})})
-        if overrides:
-            cfg = cfg.with_overrides(**overrides)
+        selected_profile = profile
+        if selected_profile is None and isinstance(config, Mapping):
+            selected_profile = config.get("profile")
+        profile_label = selected_profile if isinstance(selected_profile, str) else None
+        defaults = {
+            "storage": self.storage_kind,
+            "coordination": self.coordination_kind,
+        }
+        cfg = resolve_pool_config(
+            kind,
+            profile=profile,
+            config=config,
+            overrides=overrides,
+            defaults=defaults,
+        )
         cfg = apply_adapter_defaults(cfg, adapter)
         entries = self._pool_isolation_entries(cfg, adapter)
         self._isolation.claim_many(entries)
@@ -3380,7 +3474,15 @@ class Purser:
         try:
             storage = self._make_storage(cfg)
             coordination = self._make_coordination(cfg)
-            pool = ResourcePool(name, self, adapter, cfg, storage, coordination)
+            pool = ResourcePool(
+                name,
+                self,
+                adapter,
+                cfg,
+                storage,
+                coordination,
+                profile=profile_label,
+            )
         except BaseException:
             self._isolation.release_many(keys)
             raise
@@ -3392,6 +3494,7 @@ class Purser:
             operator="system", action="create_pool", pool=name,
             detail={
                 "kind": kind,
+                "profile": profile_label,
                 "storage": cfg.storage,
                 "coordination": cfg.coordination,
             },
@@ -3404,7 +3507,8 @@ class Purser:
         name: str,
         kind: str | None = None,
         *,
-        config: PoolConfig | dict[str, Any] | None = None,
+        config: PoolConfig | Mapping[str, Any] | None = None,
+        profile: str | Mapping[str, Any] | None = None,
         **overrides: Any,
     ) -> ResourcePool:
         """Get an existing pool, or create it (convenience for quick starts)."""
@@ -3415,7 +3519,9 @@ class Purser:
             return existing
         if kind is None:
             raise PoolNotFound(f"pool {name!r} does not exist and no kind given")
-        return self.create_pool(name, kind, config=config, **overrides)
+        return self.create_pool(
+            name, kind, config=config, profile=profile, **overrides
+        )
 
     def get_pool(self, name: str) -> ResourcePool | None:
         return self._pools.get(name)
@@ -4157,16 +4263,6 @@ class Purser:
                     for key, value in config.items()
                     if key not in ("kind", "storage", "coordination", "schema_version")
                 }
-                if isinstance(config.get("weights"), dict):
-                    config["weights"] = Weights.from_dict(config["weights"])
-                if isinstance(config.get("quarantine"), dict):
-                    quarantine = config["quarantine"]
-                    allowed = set(QuarantinePolicy.__dataclass_fields__) - {"rng"}
-                    config["quarantine"] = QuarantinePolicy(
-                        **{k: v for k, v in quarantine.items() if k in allowed}
-                    )
-                if isinstance(config.get("secret_fields"), list):
-                    config["secret_fields"] = tuple(config["secret_fields"])
                 try:
                     pool = self.create_pool(name, kind, config=config)
                 except Exception as exc:

@@ -88,13 +88,15 @@ def test_console_served_and_endpoints_exist(client: TestClient):
         'id="metricBody"',
         'id="metricMeta"',
         'id="poolAdvanced"',
-        'id="poolDeploy"',
-        'id="cfgStorage"',
-        'id="cfgCoordination"',
-        'id="cfgSecrets"',
-        'id="cfgWHealth"',
-        'id="cfgQBase"',
-        'id="cfgQuotaLimit"',
+        'id="poolAdvancedFields"',
+        'id="poolProfile"',
+        'id="poolProfileWrap"',
+        'id="poolName"',
+        'id="poolKind"',
+        "loadConfigSchema",
+        "renderPoolConfigForm",
+        "collectPoolConfig",
+        '"/config/schema"',
         'id="maintTask"',
         'qs.set("tail"',
         "EventSource",
@@ -143,6 +145,7 @@ def test_console_fetch_targets_registered(client: TestClient):
         ("POST", "/restore"),
         ("GET", "/reports/usage"),
         ("GET", "/adapters"),
+        ("GET", "/config/schema"),
         ("GET", "/pools"),
         ("POST", "/pools"),
         ("PATCH", "/pools/{pool_name}"),
@@ -635,7 +638,7 @@ def test_sse_stream_emits_published_events():
 
     def consume() -> None:
         try:
-            with httpx.Client(base_url=base, timeout=10.0) as client:
+            with httpx.Client(base_url=base, timeout=10.0, trust_env=False) as client:
                 with client.stream("GET", "/pools/ui-sse/events") as resp:
                     assert resp.headers["content-type"].startswith("text/event-stream")
                     for line in resp.iter_lines():
@@ -649,7 +652,7 @@ def test_sse_stream_emits_published_events():
             stop.set()
 
     try:
-        with httpx.Client(base_url=base) as client:
+        with httpx.Client(base_url=base, trust_env=False) as client:
             client.post("/pools", json={"name": "ui-sse", "kind": "uifake"})
             thread = threading.Thread(target=consume, daemon=True)
             thread.start()

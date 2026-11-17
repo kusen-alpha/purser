@@ -17,29 +17,9 @@ from concurrent.futures import Future
 from multiprocessing.connection import Listener
 from typing import Any
 
-from purser.config import Weights
-from purser.core.quarantine import QuarantinePolicy
+from purser.config import PoolConfig, parse_pool_config
 from purser.core.resource import AcquireRequest, UsageOutcome
-from purser.errors import (
-    BadPayload,
-    BadState,
-    ConfigError,
-    InvalidTransition,
-    LeaseConflict,
-    LeaseExpired,
-    LeaseLimitReached,
-    LeaseLostError,
-    LeaseRevokedError,
-    NoSuitableResource,
-    NotStarted,
-    PoolEmpty,
-    PoolExhausted,
-    PoolExists,
-    PoolNotFound,
-    PurserError,
-    ResourceNotFound,
-    VersionConflict,
-)
+from purser.errors import ConfigError, LeaseConflict, PurserError
 from purser.local.errors import SchedulerProtocolError
 from purser.local.protocol import (
     SchedulerAddress,
@@ -280,6 +260,8 @@ class _Service:
                 result = {"pools": self._purser.pool_names()}
             elif op == "create_pool":
                 result = {"pool": self._create_pool(request)}
+            elif op == "update_pool":
+                result = self._update_pool(request)
             elif op == "delete_pool":
                 result = self._purser.delete_pool(
                     str(request["name"]), force=bool(request.get("force", False))
@@ -307,7 +289,13 @@ class _Service:
             return {
                 "id": request_id,
                 "ok": False,
-                "error": {"code": _error_code(exc), "message": str(exc)},
+                "error": {
+                    "code": _error_code(exc),
+                    "message": str(exc),
+                    "details": (
+                        exc.details() if isinstance(exc, PurserError) else None
+                    ),
+                },
             }
 
     # -- operations -------------------------------------------------------
@@ -328,13 +316,33 @@ class _Service:
     def _create_pool(self, request: dict[str, Any]) -> dict[str, Any]:
         name = str(request["name"])
         kind = str(request["kind"])
+        raw_config = request.get("config") or {}
+        if not isinstance(raw_config, dict):
+            raise ConfigError("config must be an object")
+        config = dict(raw_config)
+        profile = request.get("profile")
+        embedded = config.pop("profile", None)
+        if profile is None:
+            profile = embedded
+        pool = self._purser.create_pool(
+            name,
+            kind,
+            config=_clean_pool_config(config),
+            profile=profile,
+        )
+        return self._pool_stats(pool)
+
+    def _update_pool(self, request: dict[str, Any]) -> dict[str, Any]:
+        pool = self._purser.require_pool(str(request["name"]))
         config = request.get("config") or {}
         if not isinstance(config, dict):
             raise ConfigError("config must be an object")
-        pool = self._purser.create_pool(
-            name, kind, config=_clean_pool_config(config)
-        )
-        return self._pool_stats(pool)
+        base = pool.config
+        if not isinstance(base, PoolConfig):
+            base = PoolConfig.from_dict(base)
+        updates = parse_pool_config(config, mode="patch", base=base)
+        cfg = pool.reconfigure(**updates)
+        return {"pool": self._pool_stats(pool), "config": cfg.to_dict()}
 
     def _stats(self, name: str) -> dict[str, Any]:
         return self._pool_stats(self._purser.require_pool(name))
@@ -407,12 +415,21 @@ class _Service:
         idem_key = f"release:{pool_name}:{key}" if key else None
 
         def run() -> dict[str, Any]:
-            outcome = request.get("outcome")
+            raw_outcome = request.get("outcome")
             used = request.get("used")
+            if raw_outcome is None:
+                outcome = None
+            else:
+                try:
+                    outcome = UsageOutcome(str(raw_outcome))
+                except ValueError as exc:
+                    raise ConfigError(
+                        f"unknown usage outcome {raw_outcome!r}"
+                    ) from exc
             result = self._release_token(
                 pool_name,
                 token,
-                None if outcome is None else UsageOutcome(str(outcome)),
+                outcome,
                 None if used is None else int(used),
             )
             with self._lock:
@@ -537,15 +554,9 @@ def _acquire_request(raw: dict[str, Any]) -> AcquireRequest:
 
 
 def _clean_pool_config(raw: dict[str, Any]) -> dict[str, Any]:
-    data = dict(raw)
-    data.pop("kind", None)
-    if "secret_fields" in data and isinstance(data["secret_fields"], list):
-        data["secret_fields"] = tuple(data["secret_fields"])
-    if isinstance(data.get("weights"), dict):
-        data["weights"] = Weights.from_dict(data["weights"])
-    if isinstance(data.get("quarantine"), dict):
-        data["quarantine"] = QuarantinePolicy(**data["quarantine"])
-    return data
+    """Single parser shared with REST and direct Python construction."""
+
+    return parse_pool_config(raw, mode="create")
 
 
 def _lease_payload(lease: SyncLease) -> dict[str, Any]:
@@ -571,44 +582,11 @@ def _lease_payload(lease: SyncLease) -> dict[str, Any]:
 
 
 def _error_code(exc: BaseException) -> str:
-    if isinstance(exc, PoolNotFound):
-        return "pool_not_found"
-    if isinstance(exc, PoolExists):
-        return "pool_exists"
-    if isinstance(exc, ResourceNotFound):
-        return "resource_not_found"
-    if isinstance(exc, PoolEmpty):
-        return "pool_empty"
-    if isinstance(exc, PoolExhausted):
-        return "pool_exhausted"
-    if isinstance(exc, NoSuitableResource):
-        return "no_suitable_resource"
-    if isinstance(exc, LeaseExpired):
-        return "lease_expired"
-    if isinstance(exc, LeaseRevokedError):
-        return "lease_revoked"
-    if isinstance(exc, LeaseLostError):
-        return "lease_lost"
-    if isinstance(exc, LeaseLimitReached):
-        return "lease_limit"
-    if isinstance(exc, LeaseConflict):
-        return "lease_conflict"
-    if isinstance(exc, InvalidTransition):
-        return "invalid_transition"
-    if isinstance(exc, BadState):
-        return "bad_state"
-    if isinstance(exc, BadPayload):
-        return "bad_payload"
-    if isinstance(exc, VersionConflict):
-        return "version_conflict"
-    if isinstance(exc, NotStarted):
-        return "not_started"
-    if isinstance(exc, ConfigError):
-        return "config_error"
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        return code
     if isinstance(exc, TimeoutError):
         return "scheduler_timeout"
-    if isinstance(exc, PurserError):
-        return "purser_error"
     if isinstance(exc, (TypeError, ValueError)):
         return "config_error"
     return "internal_error"

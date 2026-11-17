@@ -36,7 +36,7 @@ with LocalScheduler(
     sqlite_path="/var/lib/purser/purser.db",
     adapters=[MyResourceAdapter()],
 ) as sched:
-    sched.create_pool("workers", "my-resource", config={"lease_ttl": 120})
+    sched.create_pool("workers", "my-resource", lease_ttl=120)
     sched.import_resources("workers", [{"id": "r1"}, {"id": "r2"}])
     print(sched.stats("workers"))
 
@@ -112,16 +112,32 @@ def worker(address):
 
 | 方法 | 说明 |
 | --- | --- |
-| `acquire(pool, req=None, *, timeout=None, idempotency_key=None)` | 返回 `RemoteLease` |
-| `release(pool, lease_or_token, *, outcome=None, used=None)` | 幂等归还 |
+| `acquire(pool, req=None, *, timeout=None, idempotency_key=None, resource_cls=None)` | 返回 `RemoteLease`；`resource_cls` 让 `lease.resource` 恢复为类型化对象 |
+| `release(pool, lease_or_token, *, outcome=None, used=None)` | 幂等归还；`outcome` 接受枚举或字符串值 |
 | `renew(pool, lease_or_token)` | 返回新的 `expires_at` |
 | `lease(pool, req=None)` | 上下文管理器，退出时自动归还 |
+| `register_resource_type(kind, cls)` | 按资源 kind 注册反序列化类型（等价于构造参数 `resource_types=`） |
 | `health()` / `pool_names()` / `stats(pool)` | 观测 |
-| `create_pool(name, kind, config=None)` / `delete_pool(name, force=False)` | 池管理 |
+| `create_pool(name, kind, *, config=None, profile=None, **overrides)` / `update_pool(name, *, config=None, **overrides)` / `delete_pool(name, force=False)` | 池管理；与 Python/REST 共用同一配置契约 |
 | `import_resources(pool, records, ...)` / `generate(pool, specs)` | 导入与内建生成 |
 | `shutdown()` / `close()` | 关闭调度进程 / 仅断开客户端 |
 
-`RemoteLease` 暴露 `token` / `resource_id` / `consumer` / `slots` / `expires_at` / `payload` / `resource` / `replayed` 等属性，并支持 `with` 与显式 `release()`。它是一次**快照**，不随调度进程状态自动刷新。
+`RemoteLease` 暴露 `token` / `resource_id` / `consumer` / `slots` / `expires_at` / `payload` / `resource` / `replayed` 等属性，并支持 `with` 与显式 `release()`。它是一次**快照**：调度进程会自动续租，但 worker 手里的 `expires_at` 只在 `acquire()` / `renew()` 时刷新，因此 `expired()` 仅供本地参考。
+
+### 异步门面 `connect()`
+
+需要 `async`/`await` 时，用 `connect(pool, address)` 得到与 `ResourcePool` 同形的远端池，IPC 调用跑在线程池里：
+
+```python
+from purser import AcquireRequest, connect
+
+async with connect("workers", sched.address) as pool:
+    async with pool.lease(AcquireRequest(consumer="w1")) as lease:
+        print(lease.resource_id, lease.payload)
+    print(await pool.stats())
+```
+
+`connect(..., resource_types={"proxy": ProxyResource})` 会在该池上注册类型化反序列化；`RemotePool` 同样提供 `acquire` / `release` / `renew` / `stats` / `import_resources` / `generate`。
 
 > IPC 客户端只覆盖数据面与基础池管理。强制撤销、封禁、立即验活等管理操作没有对应方法；需要时在调度进程内调用，或改用 `purser serve` 的 REST API。
 
@@ -132,7 +148,9 @@ def worker(address):
 | `SchedulerUnavailable` | 无法连接、调度进程已关闭、启动超时 |
 | `SchedulerTimeout` | 等待响应超时 |
 | `SchedulerProtocolError` | 地址格式错误、响应 id 不匹配、消息格式非法 |
-| 远程业务异常 | 调度进程把 `PoolExhausted` / `LeaseConflict` 等原样抛回 worker |
+| 远程业务异常 | 调度进程按异常类的 `code` 原样重建：`PoolExhausted` / `ResourceBusy` / `BackendUnavailable` / `QuotaExceeded` 等 |
+
+`PurserError` 及其子类都带 `code` 与 `retryable`；worker 侧可直接 `from purser import is_retryable` 判断是否值得重试。`NoSuitableResource` 等异常还会通过 IPC 保留 `target` / `checked` 等结构化细节。
 
 `acquire` 的响应超时会按请求的 `timeout` 加 10 秒宽限；未设置时默认 300 秒。导入/生成单次上限 120 秒，超大导入请分批。
 

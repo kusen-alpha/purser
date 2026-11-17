@@ -388,130 +388,14 @@
         <label class="field"><span>资源类型</span><select id="poolKind" onchange="updatePoolKindHint()"></select><small id="poolKindHint"></small></label>
       </div>
       <div class="hint" id="poolKindNote">资源池类型决定可添加的资源字段，创建后不可修改。</div>
-      <details class="adv" id="poolDeploy">
-        <summary>部署（仅创建时）</summary>
-        <div class="formgrid">
-          <label class="field"><span>storage</span>
-            <select id="cfgStorage">
-              <option value="">默认（服务级）</option>
-              <option value="memory">memory</option>
-              <option value="sqlite">sqlite</option>
-              <option value="mysql">mysql</option>
-            </select>
-          </label>
-          <label class="field"><span>coordination</span>
-            <select id="cfgCoordination">
-              <option value="">默认（服务级）</option>
-              <option value="memory">memory</option>
-              <option value="redis">redis</option>
-            </select>
-          </label>
-          <label class="field"><span>secret_fields（逗号分隔）</span><input id="cfgSecrets" placeholder="留空沿用类型定义"></label>
-        </div>
-        <div class="hint">storage / coordination / secret_fields 创建后不可修改；多实例部署请选择 sqlite/mysql + redis。</div>
-      </details>
+      <label class="field" id="poolProfileWrap" style="margin-top:10px"><span>场景预设 profile（仅创建时）</span>
+        <select id="poolProfile" onchange="updateProfileHint()"><option value="">自定义 / 不套用</option></select>
+        <small id="poolProfileHint">预设只是起点；下方显式字段会覆盖同名预设值。</small>
+      </label>
       <details class="adv" id="poolAdvanced">
         <summary>调度与运行参数</summary>
-        <div class="formgrid">
-          <label class="field"><span>allocator</span>
-            <select id="cfgAllocator">
-              <option value="">默认</option>
-              <option value="health_weighted">health_weighted</option>
-              <option value="round_robin">round_robin</option>
-              <option value="least_loaded">least_loaded</option>
-              <option value="static_priority">static_priority</option>
-            </select>
-          </label>
-          <label class="field"><span>scheduler</span>
-            <select id="cfgScheduler">
-              <option value="">默认</option>
-              <option value="priority_quota">priority_quota</option>
-            </select>
-          </label>
-          <label class="field"><span>max_slots（每资源）</span><input id="cfgMaxSlots" type="number" min="1" placeholder="默认"></label>
-          <label class="field"><span>lease_ttl（秒）</span><input id="cfgLeaseTtl" type="number" min="0.1" step="0.5" placeholder="60"></label>
-          <label class="field"><span>usage_quota</span><input id="cfgUsageQuota" type="number" min="0" placeholder="不限"></label>
-          <label class="field"><span>expires_in（秒）</span><input id="cfgExpiresIn" type="number" min="0" placeholder="不过期"></label>
-          <label class="field"><span>cooldown_after_release（秒）</span><input id="cfgCooldown" type="number" min="0" step="0.5" placeholder="0"></label>
-          <label class="field"><span>unban_mode</span>
-            <select id="cfgUnbanMode">
-              <option value="">默认</option>
-              <option value="manual_only">manual_only</option>
-              <option value="auto_after_ttl">auto_after_ttl</option>
-              <option value="mixed">mixed</option>
-            </select>
-          </label>
-          <label class="field"><span>import_validate</span>
-            <select id="cfgImportValidate">
-              <option value="">默认</option>
-              <option value="none">none</option>
-              <option value="on_import">on_import</option>
-              <option value="batch">batch</option>
-            </select>
-          </label>
-          <label class="field"><span>affinity_weight</span><input id="cfgAffinity" type="number" min="0" step="0.1" placeholder="0"></label>
-          <label class="field"><span>top_k</span><input id="cfgTopK" type="number" min="1" placeholder="8"></label>
-          <label class="field"><span>wait_timeout（秒）</span><input id="cfgWaitTimeout" type="number" min="0" step="1" placeholder="30"></label>
-        </div>
-
-        <div class="block-h">分配权重 weights</div>
-        <div class="formgrid">
-          <label class="field"><span>health</span><input id="cfgWHealth" type="number" step="0.05" min="0" placeholder="1.0"></label>
-          <label class="field"><span>age</span><input id="cfgWAge" type="number" step="0.05" min="0" placeholder="0.15"></label>
-          <label class="field"><span>load</span><input id="cfgWLoad" type="number" step="0.05" min="0" placeholder="0.30"></label>
-          <label class="field"><span>preference</span><input id="cfgWPref" type="number" step="0.05" min="0" placeholder="0.0"></label>
-          <label class="field"><span>jitter</span><input id="cfgWJitter" type="number" step="0.01" min="0" placeholder="0.05"></label>
-        </div>
-
-        <div class="block-h">隔离与封禁</div>
-        <div class="formgrid">
-          <label class="field"><span>unban_after（秒）</span><input id="cfgUnbanAfter" type="number" min="0" step="60" placeholder="86400"></label>
-          <label class="field"><span>quarantine.base（秒）</span><input id="cfgQBase" type="number" min="0" step="1" placeholder="30"></label>
-          <label class="field"><span>quarantine.cap（秒）</span><input id="cfgQCap" type="number" min="0" step="1" placeholder="1800"></label>
-          <label class="field"><span>quarantine.jitter（秒）</span><input id="cfgQJitter" type="number" min="0" step="1" placeholder="10"></label>
-          <label class="field"><span>quarantine.max_failures</span><input id="cfgQMax" type="number" min="1" placeholder="3"></label>
-          <label class="field"><span>quarantine.trial_hours</span><input id="cfgQTrial" type="number" min="0" step="1" placeholder="24"></label>
-        </div>
-
-        <div class="block-h">租约与心跳</div>
-        <div class="formgrid">
-          <label class="field"><span>heartbeat_interval（秒）</span><input id="cfgHeartbeat" type="number" min="0.1" step="0.5" placeholder="ttl/3"></label>
-          <label class="field"><span>max_lease_duration（秒）</span><input id="cfgMaxLease" type="number" min="0.1" step="1" placeholder="不限"></label>
-          <label class="check" style="align-self:end"><input id="cfgCooldownConsumer" type="checkbox"> 冷却仅限制该 consumer</label>
-        </div>
-
-        <div class="block-h">验活与后台任务</div>
-        <div class="formgrid">
-          <label class="field"><span>stale_after（秒）</span><input id="cfgStaleAfter" type="number" min="0" step="1" placeholder="30"></label>
-          <label class="field"><span>background_interval（秒）</span><input id="cfgBgInterval" type="number" min="1" step="1" placeholder="30"></label>
-          <label class="field"><span>background_validate_sample</span><input id="cfgBgSample" type="number" min="0.01" max="1" step="0.05" placeholder="1.0"></label>
-          <label class="field"><span>validate_timeout（秒）</span><input id="cfgValidateTimeout" type="number" min="0" step="1" placeholder="20"></label>
-          <label class="field"><span>validate_concurrency</span><input id="cfgValidateConc" type="number" min="1" placeholder="8"></label>
-        </div>
-
-        <div class="block-h">站点故障与保留</div>
-        <div class="formgrid">
-          <label class="field"><span>site_failure_ttl（秒）</span><input id="cfgSiteTtl" type="number" min="0" step="1" placeholder="300"></label>
-          <label class="field"><span>site_failure_max</span><input id="cfgSiteMax" type="number" min="1" placeholder="16"></label>
-          <label class="field"><span>check_cache_ttl（秒）</span><input id="cfgCheckTtl" type="number" min="0" step="0.5" placeholder="2"></label>
-          <label class="field"><span>archive_retention（秒）</span><input id="cfgArchiveRet" type="number" min="0" step="3600" placeholder="2592000"></label>
-          <label class="field"><span>lost_retention（秒）</span><input id="cfgLostRet" type="number" min="0" step="600" placeholder="14400"></label>
-          <label class="field"><span>expired_retention（秒）</span><input id="cfgExpireRetention" type="number" min="0" step="3600" placeholder="不启用"></label>
-          <label class="field"><span>timezone</span><input id="cfgTimezone" placeholder="Asia/Shanghai"></label>
-        </div>
-
-        <div class="formgrid" style="margin-top:10px">
-          <label class="field"><span>quota_limit（每资源周期配额）</span><input id="cfgQuotaLimit" type="number" min="1" step="1" placeholder="不限"></label>
-          <label class="field"><span>expire_policy</span>
-            <select id="cfgExpirePolicy">
-              <option value="">默认（suspended）</option>
-              <option value="suspended">suspended</option>
-              <option value="quota">quota（按配额耗尽处理）</option>
-            </select>
-          </label>
-          <label class="field"><span>meta（JSON 对象）</span><textarea id="cfgMeta" placeholder='{"team":"data"}' style="min-height:60px"></textarea></label>
-        </div>
-        <div class="hint">留空表示沿用默认值；JSON 填空字符串表示不修改，填 null 表示清空。storage / coordination 创建后不可热更新。</div>
+        <div id="poolAdvancedFields"></div>
+        <div class="hint">字段来自 /config/schema；创建后不可修改的字段会锁定。编辑时留空表示保持原值，勾选“清除”可将可空字段置空。</div>
       </details>
       <div id="poolMaint" style="display:none">
         <div class="block-h">维护任务</div>
@@ -555,7 +439,11 @@
         <div class="formgrid">
           <label class="field"><span>max_slots</span><input id="addMaxSlots" type="number" min="1" placeholder="继承资源池"></label>
           <label class="field"><span>usage_quota</span><input id="addUsageQuota" type="number" min="0" placeholder="不限"></label>
+          <label class="field"><span>quota_limit</span><input id="addQuotaLimit" type="number" min="1" placeholder="不限"></label>
           <label class="field"><span>expires_at</span><input id="addExpiresAt" type="datetime-local"></label>
+          <label class="field"><span>next_available_at</span><input id="addNextAvailable" type="datetime-local"></label>
+          <label class="field"><span>priority</span><input id="addPriority" type="number" step="1" placeholder="static_priority 排序"></label>
+          <label class="field"><span>preference</span><input id="addPreference" type="number" step="0.1" placeholder="偏好加分"></label>
           <label class="field"><span>mutex_group</span><input id="addMutex" placeholder="同组互斥"></label>
           <label class="field"><span>可用时段开始</span><input id="addWindowStart" type="time"></label>
           <label class="field"><span>可用时段结束</span><input id="addWindowEnd" type="time"></label>
@@ -710,7 +598,10 @@ const OUTCOME_LABEL = {
   timeout:"超时", network_error:"网络错误", quota_exhausted:"配额耗尽", preempted:"被抢占"
 };
 const ADMIN_TARGETS = ["idle", "suspended", "quota_exhausted", "validating", "archived"];
-const ADD_RESERVED = ["max_slots", "usage_quota", "expires_at", "mutex_group", "schedule_window", "source"];
+const ADD_RESERVED = [
+  "max_slots", "usage_quota", "quota_limit", "expires_at", "next_available_at",
+  "mutex_group", "schedule_window", "priority", "preference", "source"
+];
 const POOL_RELOAD_MS = 15000;
 
 let currentPool = null;
@@ -718,6 +609,7 @@ let currentKind = null;
 let poolStats = {};
 let POOLS = [];
 let ADAPTERS = [];
+let CONFIG_SCHEMA = null;
 let ev = null;
 let evPollTimer = null;
 let evCursor = 0;
@@ -806,13 +698,13 @@ function flash(msg, kind){
 function saveKey(){
   localStorage.setItem("purser_key", document.getElementById("apiKey").value.trim());
   flash("密钥已保存", "okk");
-  loadAdapters().then(loadPools).then(loadService).catch(e => flash(e.message));
+  loadConfigSchema().then(loadAdapters).then(loadPools).then(loadService).catch(e => flash(e.message));
 }
 function logout(){
   localStorage.removeItem("purser_key");
   document.getElementById("apiKey").value = "";
   flash("已清除密钥", "okk");
-  loadAdapters().then(loadPools).then(loadService).catch(e => flash(e.message));
+  loadConfigSchema().then(loadAdapters).then(loadPools).then(loadService).catch(e => flash(e.message));
 }
 
 function showModal(id){
@@ -1158,134 +1050,258 @@ async function selectPool(name){
   await loadAll();
   connectEvents(name);
 }
-const POOL_CFG_SELECTS = {
-  cfgAllocator:"allocator",
-  cfgScheduler:"scheduler",
-  cfgUnbanMode:"unban_mode",
-  cfgImportValidate:"import_validate",
-  cfgExpirePolicy:"expire_policy"
+const CFG_GROUP_LABEL = {
+  deployment:"部署", scheduling:"调度", lifecycle:"生命周期", lease:"租约",
+  validation:"验活", quota:"配额与冷却", advanced:"高级", resilience:"站点与缓存",
+  maintenance:"维护任务"
 };
-const POOL_CFG_NUMBERS = {
-  cfgMaxSlots:"max_slots",
-  cfgLeaseTtl:"lease_ttl",
-  cfgUsageQuota:"usage_quota",
-  cfgExpiresIn:"expires_in",
-  cfgCooldown:"cooldown_after_release",
-  cfgAffinity:"affinity_weight",
-  cfgTopK:"top_k",
-  cfgWaitTimeout:"wait_timeout",
-  cfgUnbanAfter:"unban_after",
-  cfgHeartbeat:"heartbeat_interval",
-  cfgMaxLease:"max_lease_duration",
-  cfgStaleAfter:"stale_after",
-  cfgBgInterval:"background_interval",
-  cfgBgSample:"background_validate_sample",
-  cfgValidateTimeout:"validate_timeout",
-  cfgValidateConc:"validate_concurrency",
-  cfgSiteTtl:"site_failure_ttl",
-  cfgSiteMax:"site_failure_max",
-  cfgCheckTtl:"check_cache_ttl",
-  cfgQuotaLimit:"quota_limit",
-  cfgArchiveRet:"archive_retention",
-  cfgLostRet:"lost_retention",
-  cfgExpireRetention:"expired_retention"
-};
-const POOL_WEIGHT_NUMBERS = {
-  cfgWHealth:"health",
-  cfgWAge:"age",
-  cfgWLoad:"load",
-  cfgWPref:"preference",
-  cfgWJitter:"jitter"
-};
-const POOL_QUARANTINE_NUMBERS = {
-  cfgQBase:"base",
-  cfgQCap:"cap",
-  cfgQJitter:"jitter",
-  cfgQMax:"max_failures",
-  cfgQTrial:"trial_hours"
-};
-const POOL_INT_KEYS = new Set([
-  "max_slots","usage_quota","quota_limit","top_k","validate_concurrency",
-  "site_failure_max","quarantine.max_failures"
-]);
-function readPoolNumber(id, key, out, intKey){
-  const raw = document.getElementById(id).value.trim();
-  if(raw === "") return false;
-  const n = Number(raw);
-  if(!Number.isFinite(n)) throw new Error(`${intKey || key} 必须是数字`);
-  out[key] = POOL_INT_KEYS.has(intKey || key) ? Math.trunc(n) : n;
-  return true;
-}
-function readPoolJson(id, key, out){
-  const raw = document.getElementById(id).value.trim();
-  if(raw === "") return;
-  let value;
-  try{ value = JSON.parse(raw); }catch(e){ throw new Error(`${key} 不是合法 JSON`); }
-  if(value !== null && (typeof value !== "object" || Array.isArray(value))){
-    throw new Error(`${key} 必须是 JSON 对象或 null`);
+function cfgLookup(cfg, path){
+  let value = cfg;
+  for(const part of String(path).split(".")){
+    if(value === null || value === undefined) return undefined;
+    value = value[part];
   }
-  out[key] = value;
+  return value;
+}
+function cfgSet(out, path, value){
+  const parts = String(path).split(".");
+  let target = out;
+  for(let i = 0; i < parts.length - 1; i++){
+    const key = parts[i];
+    if(!target[key] || typeof target[key] !== "object") target[key] = {};
+    target = target[key];
+  }
+  target[parts[parts.length - 1]] = value;
+}
+function cfgFieldDef(path){
+  if(!CONFIG_SCHEMA) return null;
+  let fields = CONFIG_SCHEMA.fields || [];
+  let def = null;
+  for(const part of String(path).split(".")){
+    def = (fields || []).find(field => field.name === part);
+    if(!def) return null;
+    fields = def.fields || [];
+  }
+  return def;
+}
+function cfgClearFor(box, path){
+  return Array.from(box.querySelectorAll("[data-cfg-clear]"))
+    .find(el => el.dataset.cfgClear === path) || null;
+}
+function renderPoolConfigField(field, parent){
+  if(field.fields && field.fields.length){
+    const wrap = document.createElement("div");
+    wrap.style.gridColumn = "1 / -1";
+    wrap.innerHTML = `<div class="block-h" style="margin-top:4px">${esc(field.label || field.name)}</div><div class="formgrid"></div>`;
+    const grid = wrap.querySelector(".formgrid");
+    for(const child of field.fields){
+      if(child.hidden) continue;
+      grid.appendChild(renderPoolConfigField(child, field.name));
+    }
+    return wrap;
+  }
+  const path = parent ? `${parent}.${field.name}` : field.name;
+  const immutable = field.mutable === false
+    || ((CONFIG_SCHEMA && CONFIG_SCHEMA.immutable) || []).includes(path);
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  const label = document.createElement("span");
+  label.textContent = (field.label || field.name) + (field.unit ? `（${field.unit}）` : "");
+  wrap.appendChild(label);
+
+  let control;
+  if(field.type === "bool"){
+    control = document.createElement("select");
+    control.dataset.cfgField = path;
+    for(const [value, text] of [["", "默认 / 不变"], ["true", "启用"], ["false", "禁用"]]){
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      control.appendChild(opt);
+    }
+  }else if(field.type === "enum"){
+    control = document.createElement("select");
+    control.dataset.cfgField = path;
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "默认 / 不变";
+    control.appendChild(blank);
+    for(const choice of field.choices || []){
+      const opt = document.createElement("option");
+      opt.value = String(choice);
+      opt.textContent = String(choice);
+      control.appendChild(opt);
+    }
+  }else if(field.type === "object" || field.type === "map"){
+    control = document.createElement("textarea");
+    control.dataset.cfgField = path;
+    control.dataset.cfgJson = "1";
+    control.style.minHeight = "60px";
+    control.placeholder = field.type === "map" ? '{"task_name": 60}' : '{"team":"data"}';
+  }else if(field.type === "array"){
+    control = document.createElement("input");
+    control.type = "text";
+    control.dataset.cfgField = path;
+    control.dataset.cfgArray = "1";
+    control.placeholder = "逗号分隔";
+  }else{
+    control = document.createElement("input");
+    control.type = (field.type === "int" || field.type === "float") ? "number" : "text";
+    control.dataset.cfgField = path;
+    if(control.type === "number"){
+      if(field.min !== null && field.min !== undefined) control.min = field.min;
+      if(field.max !== null && field.max !== undefined) control.max = field.max;
+      control.step = field.type === "int" ? "1" : "any";
+    }
+    if(field.nullable) control.placeholder = "留空不变";
+  }
+  if(immutable) control.dataset.cfgImmutable = "1";
+  if(field.doc) control.title = field.doc;
+  wrap.appendChild(control);
+
+  if(field.nullable){
+    const clear = document.createElement("label");
+    clear.className = "check";
+    clear.style.marginTop = "4px";
+    clear.hidden = true;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.dataset.cfgClear = path;
+    clear.appendChild(box);
+    clear.appendChild(document.createTextNode(" 清除"));
+    wrap.appendChild(clear);
+  }
+  return wrap;
+}
+function renderPoolConfigForm(){
+  const box = document.getElementById("poolAdvancedFields");
+  if(!box) return;
+  box.innerHTML = "";
+  if(!CONFIG_SCHEMA || !Array.isArray(CONFIG_SCHEMA.fields)){
+    box.innerHTML = '<div class="hint">配置 schema 尚未加载</div>';
+    return;
+  }
+  const groups = new Map();
+  for(const field of CONFIG_SCHEMA.fields){
+    if(field.hidden) continue;
+    if(!groups.has(field.group)) groups.set(field.group, []);
+    groups.get(field.group).push(field);
+  }
+  for(const [group, fields] of groups){
+    const section = document.createElement("div");
+    section.innerHTML = `<div class="block-h">${esc(CFG_GROUP_LABEL[group] || group)}</div><div class="formgrid"></div>`;
+    const grid = section.querySelector(".formgrid");
+    for(const field of fields) grid.appendChild(renderPoolConfigField(field, null));
+    box.appendChild(section);
+  }
+}
+function applyPoolConfigMode(){
+  const box = document.getElementById("poolAdvancedFields");
+  if(box){
+    box.querySelectorAll("[data-cfg-immutable]").forEach(el => {
+      el.disabled = !!poolCfgEditing;
+    });
+    box.querySelectorAll("[data-cfg-clear]").forEach(el => {
+      const label = el.closest("label");
+      if(label) label.hidden = !poolCfgEditing;
+      if(!poolCfgEditing) el.checked = false;
+    });
+  }
+  const profile = document.getElementById("poolProfileWrap");
+  if(profile) profile.style.display = poolCfgEditing ? "none" : "";
+}
+function renderPoolProfileOptions(){
+  const sel = document.getElementById("poolProfile");
+  if(!sel) return;
+  sel.innerHTML = '<option value="">自定义 / 不套用</option>';
+  for(const profile of (CONFIG_SCHEMA && CONFIG_SCHEMA.profiles) || []){
+    const opt = document.createElement("option");
+    opt.value = profile.name;
+    opt.textContent = profile.name;
+    sel.appendChild(opt);
+  }
+  updateProfileHint();
+}
+function updateProfileHint(){
+  const sel = document.getElementById("poolProfile");
+  const hint = document.getElementById("poolProfileHint");
+  if(!sel || !hint) return;
+  const profile = ((CONFIG_SCHEMA && CONFIG_SCHEMA.profiles) || [])
+    .find(item => item.name === sel.value);
+  hint.textContent = profile
+    ? `预设默认：${JSON.stringify(profile.defaults)}`
+    : "预设只是起点；下方显式字段会覆盖同名预设值。";
+}
+async function loadConfigSchema(){
+  CONFIG_SCHEMA = await api("/config/schema");
+  renderPoolConfigForm();
+  renderPoolProfileOptions();
 }
 function collectPoolConfig(){
   const cfg = {};
-  for(const [id, key] of Object.entries(POOL_CFG_SELECTS)){
-    const value = document.getElementById(id).value;
-    if(value) cfg[key] = value;
-  }
-  for(const [id, key] of Object.entries(POOL_CFG_NUMBERS)){
-    readPoolNumber(id, key, cfg);
-  }
-  const weights = {};
-  for(const [id, key] of Object.entries(POOL_WEIGHT_NUMBERS)){
-    readPoolNumber(id, key, weights, `weights.${key}`);
-  }
-  if(Object.keys(weights).length) cfg.weights = weights;
-  const quarantine = {};
-  for(const [id, key] of Object.entries(POOL_QUARANTINE_NUMBERS)){
-    readPoolNumber(id, key, quarantine, `quarantine.${key}`);
-  }
-  if(Object.keys(quarantine).length) cfg.quarantine = quarantine;
-  readPoolJson("cfgMeta", "meta", cfg);
-  if(cfg.meta === null) cfg.meta = {};
-  const timezone = document.getElementById("cfgTimezone").value.trim();
-  if(timezone) cfg.timezone = timezone;
-  cfg.cooldown_consumer_only = document.getElementById("cfgCooldownConsumer").checked;
-  if(!poolCfgEditing){
-    const storage = document.getElementById("cfgStorage").value;
-    if(storage) cfg.storage = storage;
-    const coordination = document.getElementById("cfgCoordination").value;
-    if(coordination) cfg.coordination = coordination;
-    const secrets = document.getElementById("cfgSecrets").value
-      .split(",").map(s => s.trim()).filter(Boolean);
-    if(secrets.length) cfg.secret_fields = secrets;
-  }
+  const box = document.getElementById("poolAdvancedFields");
+  if(!box) return cfg;
+  box.querySelectorAll("[data-cfg-clear]").forEach(clear => {
+    const label = clear.closest("label");
+    if(clear.checked && label && !label.hidden) cfgSet(cfg, clear.dataset.cfgClear, null);
+  });
+  box.querySelectorAll("[data-cfg-field]").forEach(el => {
+    if(el.disabled) return;
+    const path = el.dataset.cfgField;
+    const clear = cfgClearFor(box, path);
+    if(clear && clear.checked && !clear.closest("label").hidden) return;
+    const raw = String(el.value ?? "").trim();
+    if(raw === "") return;
+    const def = cfgFieldDef(path);
+    if(def && def.type === "bool"){
+      cfgSet(cfg, path, raw === "true");
+      return;
+    }
+    if(el.dataset.cfgArray){
+      cfgSet(cfg, path, raw.split(/[,，]/).map(part => part.trim()).filter(Boolean));
+      return;
+    }
+    if(el.dataset.cfgJson){
+      let parsed;
+      try{ parsed = JSON.parse(raw); }catch(e){ throw new Error(`${path} 不是合法 JSON`); }
+      if(parsed !== null && (typeof parsed !== "object" || Array.isArray(parsed))){
+        throw new Error(`${path} 必须是 JSON 对象`);
+      }
+      cfgSet(cfg, path, parsed === null ? {} : parsed);
+      return;
+    }
+    if(def && def.type === "int"){
+      const n = Number(raw);
+      if(!Number.isFinite(n)) throw new Error(`${def.label || path} 必须是数字`);
+      cfgSet(cfg, path, Math.trunc(n));
+    }else if(def && def.type === "float"){
+      const n = Number(raw);
+      if(!Number.isFinite(n)) throw new Error(`${def.label || path} 必须是数字`);
+      cfgSet(cfg, path, n);
+    }else{
+      cfgSet(cfg, path, raw);
+    }
+  });
   return cfg;
 }
 function fillPoolConfig(cfg){
-  for(const [id, key] of Object.entries(POOL_CFG_SELECTS)){
-    document.getElementById(id).value = cfg[key] === undefined ? "" : String(cfg[key]);
-  }
-  for(const [id, key] of Object.entries(POOL_CFG_NUMBERS)){
-    const v = cfg[key];
-    document.getElementById(id).value = v === null || v === undefined ? "" : String(v);
-  }
-  const weights = cfg.weights || {};
-  for(const [id, key] of Object.entries(POOL_WEIGHT_NUMBERS)){
-    const v = weights[key];
-    document.getElementById(id).value = v === null || v === undefined ? "" : String(v);
-  }
-  const quarantine = cfg.quarantine || {};
-  for(const [id, key] of Object.entries(POOL_QUARANTINE_NUMBERS)){
-    const v = quarantine[key];
-    document.getElementById(id).value = v === null || v === undefined ? "" : String(v);
-  }
-  document.getElementById("cfgStorage").value = cfg.storage || "";
-  document.getElementById("cfgCoordination").value = cfg.coordination || "";
-  document.getElementById("cfgSecrets").value = (cfg.secret_fields || []).join(", ");
-  document.getElementById("cfgCooldownConsumer").checked = !!cfg.cooldown_consumer_only;
-  document.getElementById("cfgTimezone").value = cfg.timezone || "";
-  document.getElementById("cfgMeta").value = cfg.meta
-    ? JSON.stringify(cfg.meta, null, 2) : "";
+  const box = document.getElementById("poolAdvancedFields");
+  if(!box) return;
+  box.querySelectorAll("[data-cfg-field]").forEach(el => {
+    const value = cfgLookup(cfg, el.dataset.cfgField);
+    if(el.dataset.cfgArray){
+      el.value = value === null || value === undefined
+        ? "" : (Array.isArray(value) ? value.join(", ") : String(value));
+    }else if(el.dataset.cfgJson){
+      el.value = value === null || value === undefined ? "" : JSON.stringify(value, null, 2);
+    }else if(el.type === "checkbox"){
+      el.checked = !!value;
+    }else{
+      el.value = value === null || value === undefined ? "" : String(value);
+    }
+  });
+  box.querySelectorAll("[data-cfg-clear]").forEach(el => { el.checked = false; });
+  applyPoolConfigMode();
 }
 function openPoolModal(){
   poolCfgEditing = false;
@@ -1298,10 +1314,9 @@ function openPoolModal(){
   document.getElementById("poolMaint").style.display = "none";
   document.getElementById("poolSubmitBtn").textContent = "创建";
   document.getElementById("poolAdvanced").open = false;
-  document.getElementById("poolDeploy").open = false;
-  for(const id of ["cfgStorage", "cfgCoordination", "cfgSecrets"]){
-    document.getElementById(id).disabled = false;
-  }
+  const profile = document.getElementById("poolProfile");
+  if(profile) profile.value = "";
+  updateProfileHint();
   renderPoolKindOptions();
   fillPoolConfig({});
   showModal("poolModal");
@@ -1322,10 +1337,6 @@ function openPoolSettings(){
   document.getElementById("poolMaint").style.display = "";
   document.getElementById("poolSubmitBtn").textContent = "保存配置";
   fillPoolConfig(stat.config || {});
-  for(const id of ["cfgStorage", "cfgCoordination", "cfgSecrets"]){
-    document.getElementById(id).disabled = true;
-  }
-  document.getElementById("poolDeploy").open = false;
   document.getElementById("poolAdvanced").open = true;
   showModal("poolModal");
 }
@@ -1347,6 +1358,8 @@ async function submitPool(){
       await loadAll();
     }else{
       const body = {name, kind};
+      const profile = document.getElementById("poolProfile").value;
+      if(profile) body.profile = profile;
       if(Object.keys(config).length) body.config = config;
       await api("/pools", {method:"POST", body: JSON.stringify(body)});
       flash(`资源池 ${name} 已创建`, "okk");
@@ -2116,8 +2129,20 @@ function collectAddScheduling(rec){
     if(n < 0) throw new Error("usage_quota 必须 >= 0");
     sched.usage_quota = n;
   }
+  const quotaLimit = numOrNull(document.getElementById("addQuotaLimit").value);
+  if(quotaLimit !== null){
+    const n = Math.trunc(quotaLimit);
+    if(n < 1) throw new Error("quota_limit 必须 >= 1");
+    sched.quota_limit = n;
+  }
   const expires = localInputToEpoch(document.getElementById("addExpiresAt").value);
   if(expires !== null) sched.expires_at = expires;
+  const nextAvailable = localInputToEpoch(document.getElementById("addNextAvailable").value);
+  if(nextAvailable !== null) sched.next_available_at = nextAvailable;
+  const priority = numOrNull(document.getElementById("addPriority").value);
+  if(priority !== null) sched.priority = Math.trunc(priority);
+  const preference = numOrNull(document.getElementById("addPreference").value);
+  if(preference !== null) sched.preference = preference;
   const mutex = document.getElementById("addMutex").value.trim();
   if(mutex) sched.mutex_group = mutex;
   const start = document.getElementById("addWindowStart").value.trim();
@@ -2317,6 +2342,8 @@ function renderDetail(){
         <label class="field"><span>quota_limit</span><input id="editQuotaLimit" type="number" min="1" placeholder="留空不变" value="${d.quota && d.quota.limit !== null && d.quota.limit !== undefined ? esc(d.quota.limit) : ""}"></label>
         <label class="field"><span>expires_at</span><input id="editExpires" type="datetime-local" value="${esc(epochToLocalInput(d.expires_at))}"></label>
         <label class="field"><span>下次可用时间</span><input id="editNextAvailable" type="datetime-local" value="${esc(epochToLocalInput(d.next_available_at))}"></label>
+        <label class="field"><span>priority</span><input id="editPriority" type="number" step="1" value="${d.meta && d.meta.priority !== undefined ? esc(d.meta.priority) : ""}" placeholder="留空不变"></label>
+        <label class="field"><span>preference</span><input id="editPreference" type="number" step="0.1" value="${d.meta && d.meta.preference !== undefined ? esc(d.meta.preference) : ""}" placeholder="留空不变"></label>
         <label class="field"><span>mutex_group</span><input id="editMutex" value="${esc(d.mutex_group || "")}" placeholder="留空不变"></label>
         <label class="field"><span>可用时段开始</span><input id="editWinStart" type="time" value="${esc(Array.isArray(d.schedule_window) ? d.schedule_window[0] : "")}"></label>
         <label class="field"><span>可用时段结束</span><input id="editWinEnd" type="time" value="${esc(Array.isArray(d.schedule_window) ? d.schedule_window[1] : "")}"></label>
@@ -2326,6 +2353,8 @@ function renderDetail(){
         <label class="check" style="margin-top:0"><input id="editClearQuotaLimit" type="checkbox"> 清除 quota_limit</label>
         <label class="check" style="margin-top:0"><input id="editClearExpires" type="checkbox"> 清除过期时间</label>
         <label class="check" style="margin-top:0"><input id="editClearNextAvailable" type="checkbox"> 清除下次可用</label>
+        <label class="check" style="margin-top:0"><input id="editClearPriority" type="checkbox"> 清除优先级</label>
+        <label class="check" style="margin-top:0"><input id="editClearPreference" type="checkbox"> 清除偏好加分</label>
         <label class="check" style="margin-top:0"><input id="editClearMutex" type="checkbox"> 清除互斥组</label>
         <label class="check" style="margin-top:0"><input id="editClearWindow" type="checkbox"> 清除时段</label>
       </div>
@@ -2510,6 +2539,20 @@ async function saveEdit(){
     body.mutex_group = null;
   }else if(mutexRaw){
     body.mutex_group = mutexRaw;
+  }
+
+  if(document.getElementById("editClearPriority").checked){
+    body.priority = null;
+  }else{
+    const priority = numOrNull(document.getElementById("editPriority").value);
+    if(priority !== null) body.priority = Math.trunc(priority);
+  }
+
+  if(document.getElementById("editClearPreference").checked){
+    body.preference = null;
+  }else{
+    const preference = numOrNull(document.getElementById("editPreference").value);
+    if(preference !== null) body.preference = preference;
   }
 
   if(document.getElementById("editClearWindow").checked){
@@ -2715,6 +2758,7 @@ document.addEventListener("keydown", (e) => { if(e.key === "Escape") closeAllMod
 (async function init(){
   document.getElementById("apiKey").value = token();
   try{
+    await loadConfigSchema();
     await loadAdapters();
     await loadPools();
   }catch(e){ flash(e.message); }

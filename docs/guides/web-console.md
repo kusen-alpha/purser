@@ -44,13 +44,17 @@ purser serve --host 0.0.0.0 --port 8000
 
 ## 建池与改配置
 
-新建资源池时选择池名与**资源类型**。适配器决定资源表单字段，创建后不可修改。
+新建资源池时池名与**资源类型**必填，其余都可以留空。适配器决定资源表单字段，创建后不可修改。
 
-「部署（仅创建时）」中的 `storage`、`coordination`、`secret_fields` 只能在建池时指定；多实例部署应选 `sqlite`/`mysql` + `redis`。其余调度、隔离、验活、保留参数可在 **池设置** 中热更新。
+「场景预设 profile（仅创建时）」是可选起点（`basic` / `validated` / `shared` / `long_running` / `quota`），基础脚本不需要选择。预设与显式字段冲突时，显式字段覆盖预设。
+
+「调度与运行参数」由 `GET /config/schema` 动态生成，覆盖部署、分配、租约、隔离、验活与保留等全部池配置。`storage`、`coordination`、`secret_fields`、`event_queue_size`、`schema_version` 只能在建池时指定，编辑时会锁定；其余字段可在 **池设置** 中热更新。多实例部署应选 `sqlite`/`mysql` + `redis`。
+
+编辑池时，留空表示保持原值；可空字段勾选「清除」才置空。布尔字段是三态控件，未选择时不会覆盖 profile 或原值。
 
 !!! note "参数语义以配置参考为准"
 
-    弹窗里的占位符只是默认值提示，留空表示沿用服务级默认；`meta` 填空字符串表示不修改，填 `null` 表示清空。完整字段与热更新限制见 [配置参考](../reference/configuration.md)。
+    弹窗字段直接来自服务端 schema，占位符只是默认值提示；完整字段、预设与热更新限制见 [配置参考](../reference/configuration.md)。
 
 ## 添加资源
 
@@ -60,7 +64,7 @@ purser serve --host 0.0.0.0 --port 8000
 
 资源表单由服务端适配器 `schema` 生成：`required` 字段标红星，`secret` 字段默认掩码并可点「显示」；自定义适配器注册了什么字段，这里就出现什么字段。
 
-「调度属性」可覆盖单条资源的 `max_slots`、`usage_quota`、`expires_at`、`mutex_group` 与可用时段；「自定义字段 JSON」合并进资源载荷，已由表单填写的键以表单为准。
+「调度属性」可覆盖单条资源的 `max_slots`、`usage_quota`、`quota_limit`、`expires_at`、`next_available_at`、`mutex_group`、可用时段、`priority` 与 `preference`；`priority` 供 `static_priority` 分配器使用，`preference` 是偏好加分。编辑资源时同样可修改这两项并显式清除。「自定义字段 JSON」合并进资源载荷，已由表单填写的键以表单为准。
 
 默认勾选 **添加后立即验活**。对 `proxy` 类型会发起真实网络探测；导入大量资源并开启验活前，先确认出口网络可用，否则会成批进入隔离。
 

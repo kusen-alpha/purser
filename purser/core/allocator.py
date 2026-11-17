@@ -152,6 +152,16 @@ class StaticPriorityAllocator(Allocator):
             reverse=True,
         )
 
+    def pick(self, candidates: list[Resource], ctx: AllocationContext) -> Resource | None:
+        ranked = self.rank(candidates, ctx)
+        if not ranked:
+            return None
+        # Never cross a priority tier.  Ties inside the best tier use the same
+        # softmax as the other allocators to avoid deterministic starvation.
+        best = ranked[0][1]
+        tied = [(res, score) for res, score in ranked if score == best]
+        return self._weighted_pick(tied[: ctx.top_k], ctx)
+
 
 ALLOCATORS: dict[str, type[Allocator]] = {
     cls.name: cls

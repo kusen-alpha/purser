@@ -20,7 +20,13 @@ def _client(base: str) -> httpx.Client:
     key = os.environ.get("PURSER_API_KEY")
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    return httpx.Client(base_url=base, headers=headers, timeout=30.0)
+    try:
+        return httpx.Client(base_url=base, headers=headers, timeout=30.0)
+    except httpx.InvalidURL:
+        # httpx 0.28 parses NO_PROXY entries as URLs, so "[::1]" raises InvalidURL.
+        return httpx.Client(
+            base_url=base, headers=headers, timeout=30.0, trust_env=False
+        )
 
 
 def _fail(resp: httpx.Response) -> None:

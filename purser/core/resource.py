@@ -10,7 +10,15 @@ import uuid
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import InitVar, asdict, dataclass, field, replace
-from typing import Any, ClassVar, Optional, TypeVar, get_origin
+from typing import (
+    Any,
+    ClassVar,
+    Optional,
+    Protocol,
+    TypeVar,
+    get_origin,
+    runtime_checkable,
+)
 
 try:
     from zoneinfo import ZoneInfo
@@ -739,3 +747,33 @@ def describe_resource(resource: Resource, *, secret: bool = False) -> dict[str, 
         },
         "meta": dict(resource.meta),
     }
+
+
+@runtime_checkable
+class LeaseView(Protocol):
+    """Read-only surface shared by async, sync and remote lease objects.
+
+    ``Lease`` (embedded), ``SyncLease`` (loop-proxy) and ``RemoteLease``
+    (worker IPC) all satisfy this protocol, so callers that only need to read
+    a lease can be written once.  Renewal/release stay on the owning facade:
+    their signatures differ between the blocking and asyncio worlds.
+    """
+
+    token: str
+    pool: str
+    resource_id: str
+    consumer: str | None
+    slots: int
+    started_at: float
+    expires_at: float
+    heartbeat_at: float
+    priority: int
+    use_limit: int | None
+    used: int
+    trace_id: str | None
+    target: str | None
+    payload: dict[str, Any] | None
+    resource: Resource | None
+    outcome: UsageOutcome
+
+    def expired(self, now: float | None = None) -> bool: ...

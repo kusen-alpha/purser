@@ -4,6 +4,7 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| `GET` | `/config/schema` | 池配置与资源调度字段 schema；控制台据此渲染表单 |
 | `GET` | `/pools` | 所有池的统计概览 |
 | `POST` | `/pools` | 创建池；支持 `Idempotency-Key` |
 | `GET` | `/pools/{pool}` | 单池统计 |
@@ -21,15 +22,16 @@ curl -X POST http://127.0.0.1:8000/pools \
   -d '{
     "name": "proxies",
     "kind": "proxy",
+    "profile": "basic",
     "config": {"lease_ttl": 120, "max_slots": 2}
   }'
 ```
 
 ```json
-{"pool": "proxies", "kind": "proxy"}
+{"pool": "proxies", "kind": "proxy", "profile": "basic"}
 ```
 
-`kind` 必须是已注册适配器。池已存在返回 `409`。
+`kind` 必须是已注册适配器。池已存在返回 `409`。`profile` 可选，只是创建时的合并起点；显式 `config` 覆盖同名预设值，响应中未选预设时不返回 `profile` 字段。字段与预设定义见[配置参考](../configuration.md)，也可直接读取 `GET /config/schema`。
 
 ## 统计
 
@@ -39,6 +41,7 @@ curl -X POST http://127.0.0.1:8000/pools \
 {
   "name": "proxies",
   "kind": "proxy",
+  "profile": "basic",
   "total": 10,
   "counts": {"idle": 8, "active": 2},
   "allocatable": 8,
@@ -48,7 +51,7 @@ curl -X POST http://127.0.0.1:8000/pools \
 }
 ```
 
-`GET /pools` 返回 `{"pools": [PoolStats, ...]}`。
+响应还包含完整 `config`；`profile` 只记录创建时选择的具名预设，实际生效值以 `config` 为准。`GET /pools` 返回 `{"pools": [PoolStats, ...]}`。
 
 ## 热更新配置
 
@@ -58,13 +61,23 @@ curl -X PATCH http://127.0.0.1:8000/pools/proxies \
   -d '{"config": {"lease_ttl": 180, "weights": {"health": 1.0, "load": 0.5}}}'
 ```
 
+字段语义为三态：**省略表示保持不变**，`null` 表示清空（仅限可空字段），显式值表示设置。例如清除 `max_slots` 并更新租约时间：
+
+```bash
+curl -X PATCH http://127.0.0.1:8000/pools/proxies \
+  -H "Content-Type: application/json" \
+  -d '{"config": {"max_slots": null, "lease_ttl": 180}}'
+```
+
 即时重建分配器、校验门、心跳与调度参数。以下键不可在运行时修改，尝试修改返回 `422`：
 
+- `storage`
+- `coordination`
 - `secret_fields`
 - `event_queue_size`
 - `schema_version`
 
-`storage` / `coordination` 属于部署层配置：修改会返回 `422`；原样回传当前值会被忽略。
+把统计响应里的 `config` 原样回传时，未变化的不可变字段会被忽略；只有真正改值才报错。`profile` 只在创建时生效，PATCH 不接受预设切换。
 
 ## 删除池
 

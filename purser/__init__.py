@@ -11,7 +11,9 @@ Quick start::
     from purser import AcquireRequest, Purser
 
     ps = Purser()
-    pool = ps.create_pool("proxies", "proxy")
+    pool = ps.create_pool("proxies", "proxy", lease_ttl=120)
+    # Or start from a named scenario and override only what differs:
+    # pool = ps.create_pool("proxies", "proxy", profile="basic", lease_ttl=120)
     await pool.import_resources([{"host": "1.2.3.4", "port": 8080}])
     async with ps:
         async with pool.lease(AcquireRequest(consumer="crawler-a")) as proxy:
@@ -42,7 +44,7 @@ from purser.backends.coordination import MemoryCoordination, RedisCoordination
 from purser.backends.memory import MemoryStorage
 from purser.backends.mysql import MySqlStorage
 from purser.backends.sqlite import SqliteStorage
-from purser.config import PoolConfig, Weights
+from purser.config import POOL_PROFILES, PoolConfig, Weights
 from purser.core.bundle import (
     BundleFairness,
     BundleLease,
@@ -55,6 +57,7 @@ from purser.core.resource import (
     AcquireRequest,
     CheckVerdict,
     Lease,
+    LeaseView,
     PayloadField,
     Resource,
     UsageOutcome,
@@ -98,6 +101,8 @@ from purser.errors import (
     ResourceBusy,
     ResourceNotFound,
     VersionConflict,
+    error_by_code,
+    is_retryable,
 )
 from purser.facade import (
     BatchLease,
@@ -106,6 +111,7 @@ from purser.facade import (
     ResourcePool,
 )
 from purser.local import LocalScheduler, SchedulerAddress
+from purser.remote import RemotePool, connect
 from purser.sync import (
     SyncBatchLease,
     SyncLease,
@@ -137,7 +143,10 @@ __all__ = [
     "SyncSubscription",
     "LocalScheduler",
     "SchedulerAddress",
+    "RemotePool",
+    "connect",
     "PoolConfig",
+    "POOL_PROFILES",
     "Weights",
     "MemoryStorage",
     "SqliteStorage",
@@ -147,6 +156,7 @@ __all__ = [
     "Resource",
     "PayloadField",
     "Lease",
+    "LeaseView",
     "AcquireRequest",
     "CheckVerdict",
     "HealthReport",
@@ -193,4 +203,6 @@ __all__ = [
     "BadPayload",
     "VersionConflict",
     "BackendUnavailable",
+    "error_by_code",
+    "is_retryable",
 ]
