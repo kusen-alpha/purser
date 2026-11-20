@@ -185,8 +185,8 @@ async def test_redis_namespace_mismatch_rejected(tmp_path):
         # A different pool name is a different resource set and stays free.
         await make_binding("q", "sqlite", "redis", s2, second).claim()
     finally:
-        s1.close()
-        s2.close()
+        await s1.close()
+        await s2.close()
 
 
 async def test_sqlite_pool_pins_are_per_pool(tmp_path):
@@ -458,8 +458,8 @@ async def test_reverse_marker_claim_release_and_token_isolation(tmp_path):
         await third.release()
     finally:
         await first.release()
-        storage_a.close()
-        storage_b.close()
+        await storage_a.close()
+        await storage_b.close()
         await client.aclose()
 
 
@@ -472,7 +472,7 @@ async def test_reverse_marker_treats_hardlink_as_same_storage(tmp_path):
     try:
         os.link(original, alias)
     except OSError:
-        storage_a.close()
+        await storage_a.close()
         await client.aclose()
         pytest.skip("hardlinks are not supported on this filesystem")
     storage_b = SqliteStorage(path=str(alias))
@@ -491,8 +491,8 @@ async def test_reverse_marker_treats_hardlink_as_same_storage(tmp_path):
         assert await client.exists(_marker_key("p")) == 0
     finally:
         await first.release()
-        storage_a.close()
-        storage_b.close()
+        await storage_a.close()
+        await storage_b.close()
         await client.aclose()
 
 
@@ -511,8 +511,8 @@ async def test_reverse_marker_skipped_by_escape_hatch(tmp_path, monkeypatch):
     finally:
         await first.release()
         await second.release()
-        storage_a.close()
-        storage_b.close()
+        await storage_a.close()
+        await storage_b.close()
         await client.aclose()
 
 

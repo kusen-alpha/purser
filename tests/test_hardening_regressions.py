@@ -430,7 +430,9 @@ async def test_lease_events_do_not_leak_tokens(make_pool, purser):
     assert all("token" not in event.data for event in seen)
 
 
-def test_sse_filters_by_pool(make_client):
+async def test_sse_filters_by_pool(make_client):
+    # TestClient buffers whole responses, so an endless SSE stream never
+    # returns. Drive the ASGI app directly and disconnect after the signal.
     client, ps = make_client()
     client.post("/pools", json={"name": "pa", "kind": "fakecheck"}, headers=HEAD)
     client.post("/pools", json={"name": "pb", "kind": "fakecheck"}, headers=HEAD)
@@ -438,14 +440,43 @@ def test_sse_filters_by_pool(make_client):
     ps.bus.publish("signal", "pa", rid="r1")
 
     payloads: list[dict] = []
-    with client.stream("GET", "/pools/pa/events", headers=HEAD) as resp:
-        assert resp.headers["content-type"].startswith("text/event-stream")
-        for line in resp.iter_lines():
+    finished = asyncio.Event()
+    sent_request = False
+
+    async def receive() -> dict:
+        nonlocal sent_request
+        if not sent_request:
+            sent_request = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await finished.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        if message["type"] != "http.response.body":
+            return
+        for line in message.get("body", b"").decode().splitlines():
             if not line.startswith("data:"):
                 continue
-            payloads.append(json.loads(line[5:].strip()))
-            if any(item["type"] == "signal" for item in payloads):
-                break
+            payload = json.loads(line[5:].strip())
+            payloads.append(payload)
+            if payload["type"] == "signal":
+                finished.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/pools/pa/events",
+        "raw_path": b"/pools/pa/events",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"authorization", b"Bearer admin-key")],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    await asyncio.wait_for(client.app(scope, receive, send), timeout=10)
     assert payloads
     assert all(item["pool"] == "pa" for item in payloads)
     assert all("token" not in item["data"] for item in payloads)

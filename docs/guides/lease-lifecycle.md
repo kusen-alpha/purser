@@ -53,6 +53,8 @@ async with pool.lease(AcquireRequest(consumer="crawler-a", tags=["http"])) as le
 
 退出时自动按 `lease.outcome` 归还。`lease.resource` 是 acquire 时加载的类型化快照；需要最新状态或租约由其他进程重建时，用 `await pool.require(lease.resource_id)`。
 
+块内抛异常时仍按 `lease.outcome` 归还，默认是 `UsageOutcome.OK`——消费者异常不自动等同于资源故障。若异常本身说明资源不可用，请在 `except` 中显式设置 `lease.outcome = UsageOutcome.TIMEOUT / NETWORK_ERROR / BANNED`，或改用手动路径自定义 `release(outcome=...)`。
+
 ## 手动路径
 
 ```python
@@ -127,7 +129,7 @@ for lease in list(await pool.leases("r42")):
 | --- | --- |
 | `NotStarted` | 池未启动 |
 | `PoolEmpty` | 池内没有资源，立即失败 |
-| `PoolExhausted` | 等待超时；池内资源全部为 `NEW` 时也会立即抛出 |
+| `PoolExhausted` | 等待超时；资源停在 `NEW` 且无验活任务时也会立即抛出（`VALIDATING` 期间会等待） |
 | `ResourceBusy` | 定向获取超时 |
 | `LeaseConflict` | token 不匹配或并发状态冲突 |
 | `LeaseExpired` / `LeaseLostError` | 租约已过期或在持有期间丢失 |

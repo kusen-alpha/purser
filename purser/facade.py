@@ -1388,15 +1388,13 @@ class ResourcePool:
 
     async def acquire(self, req: AcquireRequest | None = None, **kwargs: Any) -> Lease:
         await self._ensure_started("acquire")
-        # Work on a copy: kwargs and the generated trace id are per-call, so a
-        # reusable request must not accumulate them between acquisitions.
-        request = replace(req) if req is not None else AcquireRequest()
         unknown = set(kwargs) - set(AcquireRequest.__dataclass_fields__)
         if unknown:
             fields = ", ".join(sorted(unknown))
             raise TypeError(f"acquire() got unexpected keyword argument(s): {fields}")
-        for key, value in kwargs.items():
-            setattr(request, key, value)
+        # Rebuild through the constructor so __post_init__ validation applies to
+        # keyword fields too, and a reusable request is never mutated.
+        request = replace(req, **kwargs) if req is not None else AcquireRequest(**kwargs)
         timeout = request.timeout if request.timeout is not None else self.cfg.wait_timeout
         request.ensure_trace()
         self.purser.metrics.inc(f"pool.{self.name}.acquire_total")
@@ -1416,31 +1414,166 @@ class ResourcePool:
         total = sum(counts.values())
         if total == 0:
             raise PoolEmpty(f"pool {self.name} has no allocatable resources")
-        if counts.get(ResourceState.NEW, 0) == total:
-            raise PoolExhausted(
-                f"pool {self.name} has {total} resource(s) but all are in NEW "
-                "(not validated); import with import_validate='on_import'|'batch' "
-                "or call validate_now()"
-            )
-        if timeout <= 0:
-            raise PoolExhausted(f"pool {self.name} could not satisfy request immediately")
+        new = counts.get(ResourceState.NEW, 0)
+        validating = counts.get(ResourceState.VALIDATING, 0)
+        if new + validating == total:
+            job = self._active_validate_job()
+            if validating == 0 and job is None:
+                raise PoolExhausted(
+                    f"pool {self.name} has {total} resource(s) but none is validated "
+                    "(all in NEW); the pool was imported with import_validate='none'. "
+                    "Call await pool.validate_now(<id>) per resource, or re-import "
+                    "with import_validate='batch'."
+                )
+            if timeout <= 0:
+                raise PoolExhausted(self._validation_wait_message(counts, job))
+            # Validation is in progress; _on_validation_ok() wakes waiters.
+        elif timeout <= 0:
+            raise PoolExhausted(await self._exhausted_message(request, 0.0))
 
         handle = self._enqueue_waiter(request)
         current = asyncio.current_task()
         if current is not None:
             current.add_done_callback(lambda _task: handle.cancel_pending())
         try:
-            return await self._await_slot(handle, request, timeout, counts)
+            return await self._await_slot(handle, request, timeout)
         except asyncio.CancelledError:
             await self._abandon_wait_handle(handle)
             raise
+
+    def _active_validate_job(self) -> ValidateJobView | None:
+        for job in self.validate_jobs():
+            if job["status"] in ("running", "cancelling"):
+                return job
+        return None
+
+    def _validation_wait_message(
+        self, counts: dict[ResourceState, int], job: ValidateJobView | None
+    ) -> str:
+        new = counts.get(ResourceState.NEW, 0)
+        validating = counts.get(ResourceState.VALIDATING, 0)
+        message = (
+            f"pool {self.name} has {new + validating} unvalidated resource(s)"
+            f" (new={new}, validating={validating})"
+        )
+        if job is not None:
+            message += (
+                f"; validate job {job['id']} is {job['done']}/{job['total']} done"
+                f" ({job['status']})"
+            )
+        message += (
+            "; wait for validation, await pool.validate_jobs(), or raise"
+            " AcquireRequest.timeout / wait_timeout"
+        )
+        return message
+
+    async def _exhausted_message(
+        self, request: AcquireRequest, timeout: float
+    ) -> str:
+        counts = await self.counts()
+        state_hint = ", ".join(
+            f"{state.value}={n}" for state, n in counts.items() if n
+        )
+        filters = []
+        if request.tags:
+            filters.append(f"tags={sorted(request.tags)}")
+        if request.required_tag:
+            filters.append(f"required_tag={request.required_tag!r}")
+        filter_hint = f", {', '.join(filters)}" if filters else ""
+        message = (
+            f"pool {self.name} exhausted after {timeout:.1f}s"
+            f" (consumer={request.consumer!r}, slots={request.slots}{filter_hint},"
+            f" states: {state_hint})"
+        )
+        new = counts.get(ResourceState.NEW, 0)
+        validating = counts.get(ResourceState.VALIDATING, 0)
+        if new or validating:
+            message += (
+                f"; {new + validating} resource(s) not validated yet"
+                f" (new={new}, validating={validating})"
+            )
+        reasons, truncated = await self._skip_reasons(request)
+        if reasons:
+            detail = ", ".join(f"{reason}={n}" for reason, n in reasons.items())
+            message += f"; allocatable resources skipped: {detail}"
+            if truncated:
+                message += f" (first {self._SKIP_SCAN_LIMIT} scanned)"
+        return message
+
+    _SKIP_SCAN_LIMIT = 2000
+
+    async def _skip_reasons(
+        self, request: AcquireRequest
+    ) -> tuple[dict[str, int], bool]:
+        """Explain why allocatable resources did not match this request.
+
+        Mirrors ``_hard_filtered_candidates`` without side effects; only used
+        on the failure path so the extra scan never sits on the hot path.
+        """
+
+        now = _now()
+        reasons: dict[str, int] = {}
+        scanned = 0
+        truncated = False
+        async for resource in self.storage.scan(
+            self.name, states=set(ALLOCATABLE_STATES)
+        ):
+            if scanned >= self._SKIP_SCAN_LIMIT:
+                truncated = True
+                break
+            scanned += 1
+            reason = await self._skip_reason(resource, request, now)
+            reasons[reason] = reasons.get(reason, 0) + 1
+        return reasons, truncated
+
+    async def _skip_reason(
+        self, resource: Resource, request: AcquireRequest, now: float
+    ) -> str:
+        if resource.concurrency.available < request.slots:
+            return "slots"
+        if request.tags and not request.tags <= resource.tags:
+            return "tags"
+        if request.required_tag and request.required_tag not in resource.tags:
+            return "required_tag"
+        if not self._schedule_open(resource, now):
+            return "schedule_window"
+        if resource.expires_at is not None and resource.expires_at <= now:
+            return "expired"
+        if (
+            not request.ignore_cooldown
+            and resource.next_usable_at(now, request.consumer) > now
+        ):
+            return "cooldown"
+        if request.target and resource.site_failures.get(
+            request.target, SiteFailure(request.target, until=0)
+        ).active(now):
+            return "site_failure"
+        if (
+            resource.usage_quota is not None
+            and resource.used_count >= resource.usage_quota
+        ):
+            return "usage_quota"
+        if resource.quota is not None and resource.quota.exhausted:
+            return "quota"
+        if resource.mutex_group and request.consumer and await self._holds_group(
+            request.consumer, resource.mutex_group, resource.id
+        ):
+            return "mutex_group"
+        if (
+            request.consumer
+            and not request.allow_duplicate
+            and resource.id in self._consumer_holds.get(request.consumer, set())
+        ):
+            return "consumer_hold"
+        # Passed every filter but was not leased: lost a race or was rejected
+        # by the request-level check.
+        return "contention"
 
     async def _await_slot(
         self,
         handle: _WaitHandle,
         request: AcquireRequest,
         timeout: float,
-        counts: dict[ResourceState, int],
     ) -> Lease:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
@@ -1466,14 +1599,7 @@ class ResourcePool:
                     return lease
 
         handle.cancel_pending()
-        state_hint = ", ".join(
-            f"{state.value}={n}" for state, n in counts.items() if n
-        )
-        raise PoolExhausted(
-            f"pool {self.name} exhausted after {timeout:.1f}s"
-            f" (consumer={request.consumer!r}, slots={request.slots},"
-            f" states: {state_hint})"
-        )
+        raise PoolExhausted(await self._exhausted_message(request, timeout))
 
     async def _poll_wait_handle(
         self, handle: _WaitHandle, request: AcquireRequest
@@ -1604,6 +1730,19 @@ class ResourcePool:
                 lease = await self._commit(req, rid)
                 if lease is not None:
                     return lease
+            elif resource.state in (ResourceState.NEW, ResourceState.VALIDATING):
+                job = self._active_validate_job()
+                if resource.state is ResourceState.NEW and job is None:
+                    raise PoolExhausted(
+                        f"resource {rid} is NEW (never validated); call "
+                        f"await pool.validate_now({rid!r}) or re-import with "
+                        "import_validate='batch'"
+                    )
+                if deadline - time.monotonic() <= 0:
+                    raise PoolExhausted(
+                        f"resource {rid} is still {resource.state.value} after"
+                        f" {timeout:.1f}s; validation is in progress"
+                    )
             elif resource.state not in (ResourceState.ACTIVE, ResourceState.FULL, ResourceState.IDLE):
                 raise BadState(f"resource {rid} is {resource.state.value}")
             remaining = deadline - time.monotonic()

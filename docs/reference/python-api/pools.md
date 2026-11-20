@@ -19,7 +19,7 @@ report = await pool.import_resources(
 | `source` | `"manual"` | 写入 `meta["source"]`，用于批次与报表 |
 | `operator` | `"system"` | 审计操作者 |
 | `fail_fast` | `False` | 第一条生成错误后停止；默认收集到 `errors` 继续 |
-| `import_validate` | 池配置 | `none` / `on_import` / `batch`，见[导入与验活](../../guides/import-and-validate.md) |
+| `import_validate` | 池配置（默认 `batch`） | `none` / `on_import` / `batch`，见[导入与验活](../../guides/import-and-validate.md) |
 | `batch_id` | 自动生成 | 批次标识；同时写入每个资源的 `meta["batch_id"]` |
 
 `dict` 记录中与 payload 字段并列的保留键会被拆出并应用到调度字段：`max_slots`、`usage_quota`、`quota_limit`、`expires_at`、`next_available_at`、`mutex_group`、`schedule_window`、`priority`、`preference`、`source`。`priority` 用于 `static_priority` 分配器，`preference` 用于偏好加分。未显式给 `max_slots` 时使用池配置值；`expires_in`、`usage_quota`、`quota_limit` 等池默认值只在记录未提供时补齐。

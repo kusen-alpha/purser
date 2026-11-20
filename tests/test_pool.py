@@ -825,15 +825,74 @@ async def test_acquire_kwargs_stay_per_call(make_pool):
     await pool.release(lease)
 
 
-async def test_import_default_leaves_new_and_acquire_explains(make_pool):
+async def test_import_none_leaves_new_and_acquire_explains(make_pool):
     pool = make_pool()
-    await pool.import_resources([{"id": "new-1", "host": "127.0.0.1", "port": 1}])
+    await pool.import_resources(
+        [{"id": "new-1", "host": "127.0.0.1", "port": 1}],
+        import_validate="none",
+    )
     assert (await pool.counts())[ResourceState.NEW] == 1
 
     started = time.perf_counter()
-    with pytest.raises(PoolExhausted, match="all are in NEW"):
+    with pytest.raises(PoolExhausted, match="import_validate='none'"):
         await pool.acquire(AcquireRequest(consumer="c"))
     assert time.perf_counter() - started < 1.0
+
+
+async def test_import_default_validates_and_acquire_waits(make_pool):
+    pool = make_pool()
+    await pool.import_resources([{"id": "new-1", "host": "127.0.0.1", "port": 1}])
+
+    lease = await pool.acquire(AcquireRequest(consumer="c", timeout=5))
+    assert lease.resource_id == "new-1"
+    await pool.release(lease)
+
+
+async def test_directed_acquire_waits_for_validation(make_pool):
+    pool = make_pool()
+    await pool.import_resources([{"id": "new-1", "host": "127.0.0.1", "port": 1}])
+
+    lease = await pool.acquire(
+        AcquireRequest(consumer="c", resource_id="new-1", timeout=5)
+    )
+    assert lease.resource_id == "new-1"
+    await pool.release(lease)
+
+
+async def test_directed_acquire_new_without_job_is_actionable(make_pool):
+    pool = make_pool()
+    await pool.import_resources(
+        [{"id": "new-1", "host": "127.0.0.1", "port": 1}],
+        import_validate="none",
+    )
+
+    with pytest.raises(PoolExhausted, match="validate_now"):
+        await pool.acquire(
+            AcquireRequest(consumer="c", resource_id="new-1", timeout=1)
+        )
+
+
+async def test_acquire_kwargs_validate_like_request_fields(make_pool):
+    pool = make_pool()
+    await pool.import_resources(
+        [{"id": "r1", "host": "127.0.0.1", "port": 1, "tags": ["US"]}]
+    )
+
+    with pytest.raises(TypeError, match="tags must be an iterable"):
+        await pool.acquire(tags="US", timeout=0.1)
+
+
+async def test_exhausted_message_reports_skipped_filters(make_pool):
+    pool = make_pool()
+    await pool.import_resources(
+        [{"id": "r1", "host": "127.0.0.1", "port": 1, "tags": ["US"]}],
+        import_validate="on_import",
+    )
+
+    with pytest.raises(PoolExhausted, match=r"tags=\['EU'\].*skipped: tags=1"):
+        await pool.acquire(
+            AcquireRequest(consumer="c", tags=["EU"], timeout=0.1)
+        )
 
 
 async def test_stats_health_ignores_query_pagination(make_pool, monkeypatch):

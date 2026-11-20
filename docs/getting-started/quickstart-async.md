@@ -89,7 +89,7 @@ python examples/quickstart.py
 ## 常见边界
 
 - `acquire()` / `lease()` / `acquire_many()` 要求池已启动，否则抛 `NotStarted`。
-- 池内资源全部是 `NEW` 时不会自动验活，`acquire()` 立即抛带提示的 `PoolExhausted`。
+- 导入默认 `import_validate="batch"`：资源先后台验活，`acquire()` 会等待到请求超时；若显式用 `import_validate="none"`，资源停在 `NEW`，`acquire()` 立即抛带修复提示的 `PoolExhausted`。
 - 租约默认 TTL 60 秒，心跳按 TTL/3 续约；建池时直接传 `lease_ttl=...`，或事后 `pool.reconfigure(lease_ttl=...)`。需要常见默认值时再加 `profile="validated"` 等可选预设，见[配置](../reference/configuration.md)。
 
 继续阅读：[租约生命周期](../guides/lease-lifecycle.md)、[导入与验活](../guides/import-and-validate.md)。

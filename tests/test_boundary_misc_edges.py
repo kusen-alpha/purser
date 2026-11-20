@@ -68,7 +68,9 @@ async def test_started_pool_reaper_auto_returns_expired(storage_kind, coordinati
 async def test_recall_batch_retire(make_pool):
     pool = make_pool()
     await pool.import_resources(
-        [{"id": "r1", "host": "1.1.1.1", "port": 1}], batch_id="b-retire"
+        [{"id": "r1", "host": "1.1.1.1", "port": 1}],
+        batch_id="b-retire",
+        import_validate="on_import",
     )
     report = await pool.recall_batch(
         "b-retire", action="retire", operator="ops", reason="recall"
@@ -81,7 +83,9 @@ async def test_recall_batch_retire(make_pool):
 async def test_recall_batch_requalify(make_pool):
     pool = make_pool()
     await pool.import_resources(
-        [{"id": "r1", "host": "1.1.1.1", "port": 1}], batch_id="b-req"
+        [{"id": "r1", "host": "1.1.1.1", "port": 1}],
+        batch_id="b-req",
+        import_validate="on_import",
     )
     report = await pool.recall_batch(
         "b-req", action="requalify", operator="ops", reason="recall"
@@ -94,7 +98,9 @@ async def test_recall_batch_requalify(make_pool):
 async def test_recall_batch_isolate(make_pool):
     pool = make_pool()
     await pool.import_resources(
-        [{"id": "r1", "host": "1.1.1.1", "port": 1}], batch_id="b-iso"
+        [{"id": "r1", "host": "1.1.1.1", "port": 1}],
+        batch_id="b-iso",
+        import_validate="on_import",
     )
     report = await pool.recall_batch(
         "b-iso", action="isolate", operator="ops", reason="hold"

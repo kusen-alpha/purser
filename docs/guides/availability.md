@@ -78,8 +78,8 @@
 | 现象 | 含义 | 排查 |
 | --- | --- | --- |
 | `PoolEmpty` | 池里没有任何资源 | 先导入 |
-| `PoolExhausted`（立即） | 资源全部为 `NEW`，或 `slots` 超过池容量 | `validate_now` / 重新导入；检查 `max_slots` |
-| `PoolExhausted`（等待后） | 有候选但一直无槽位/冷却未到 | 看状态计数、租约、`next_available_at` |
+| `PoolExhausted`（立即） | 资源停在 `NEW` 且没有验活任务（显式 `none`），或 `slots` 超过池容量 | `validate_now` / 重新以 `batch` 导入；检查 `max_slots` |
+| `PoolExhausted`（等待后） | 有候选但一直无槽位/冷却未到/过滤条件不匹配 | 错误消息会列出跳过原因（`tags`、`cooldown`、`usage_quota` 等）；再看状态计数与租约 |
 | `ResourceBusy` | 定向获取的资源在 timeout 内不可用 | 换资源或增大 timeout |
 | `NoSuitableResource` | 有候选，但全被请求级校验拒绝 | 检查 `target`、站点失败与探针配置 |
 

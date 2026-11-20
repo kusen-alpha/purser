@@ -17,8 +17,10 @@ a file path persists across restarts.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import sqlite3
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Mapping, TypeVar, cast
@@ -48,11 +50,14 @@ from purser.errors import VersionConflict
 
 _RT = TypeVar("_RT")
 
+_CLOSE_DRAIN_TIMEOUT = 5.0
 
-async def _to_thread(func: Callable[..., _RT], *args: Any) -> _RT:
-    """Run a blocking callable in a thread (``_to_thread`` is 3.9+)."""
+logger = logging.getLogger(__name__)
 
-    return await asyncio.get_running_loop().run_in_executor(None, func, *args)
+
+def _consume_future_result(future: asyncio.Future[Any]) -> None:
+    if not future.cancelled():
+        future.exception()
 
 
 def _now() -> float:
@@ -73,6 +78,8 @@ class SqliteStorage(StorageBackend):
         self._codec = codec or SecretCodec()
         self.secret_fields = secret_fields
         self._lock = asyncio.Lock()
+        self._inflight = 0
+        self._inflight_lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA busy_timeout = 5000")
@@ -205,11 +212,42 @@ class SqliteStorage(StorageBackend):
                 time.sleep(0.05 * (attempt + 1))
         raise AssertionError("unreachable")  # pragma: no cover
 
+    # -- executor bookkeeping ---------------------------------------------
+
+    async def _run_blocking(self, func: Callable[..., _RT], *args: Any) -> _RT:
+        """Run ``func`` on the executor and track the actual worker lifetime.
+
+        Cancelling the awaiting task does not stop a thread that already
+        started; ``close`` waits for these counters instead of closing the
+        connection under a live reader (which crashes CPython).
+        """
+
+        with self._inflight_lock:
+            self._inflight += 1
+        loop = asyncio.get_running_loop()
+        try:
+            future = loop.run_in_executor(None, self._run_tracked, func, *args)
+        except BaseException:
+            self._drop_inflight()
+            raise
+        future.add_done_callback(_consume_future_result)
+        return await asyncio.shield(future)
+
+    def _run_tracked(self, func: Callable[..., _RT], *args: Any) -> _RT:
+        try:
+            return func(*args)
+        finally:
+            self._drop_inflight()
+
+    def _drop_inflight(self) -> None:
+        with self._inflight_lock:
+            self._inflight -= 1
+
     # -- contract ----------------------------------------------------------
 
     async def get(self, pool: str, rid: str) -> Resource | None:
         async with self._lock:
-            return await _to_thread(self._load_sync, pool, rid)
+            return await self._run_blocking(self._load_sync, pool, rid)
 
     async def put(
         self,
@@ -219,7 +257,7 @@ class SqliteStorage(StorageBackend):
         expected_version: int | None = None,
     ) -> Resource:
         async with self._lock:
-            return await _to_thread(
+            return await self._run_blocking(
                 self._retry_locked, self._put_sync, pool, resource, expected_version
             )
 
@@ -270,7 +308,7 @@ class SqliteStorage(StorageBackend):
 
     async def delete(self, pool: str, rid: str) -> bool:
         async with self._lock:
-            return await _to_thread(
+            return await self._run_blocking(
                 self._retry_locked, self._delete_sync, pool, rid
             )
 
@@ -294,7 +332,7 @@ class SqliteStorage(StorageBackend):
         offset: int = 0,
     ) -> list[Resource]:
         async with self._lock:
-            return await _to_thread(
+            return await self._run_blocking(
                 self._query_sync, pool, states, tags, limit, offset
             )
 
@@ -329,7 +367,7 @@ class SqliteStorage(StorageBackend):
 
     async def counts(self, pool: str) -> dict[ResourceState, int]:
         async with self._lock:
-            return await _to_thread(self._counts_sync, pool)
+            return await self._run_blocking(self._counts_sync, pool)
 
     def _counts_sync(self, pool: str) -> dict[ResourceState, int]:
         rows = self._conn.execute(
@@ -343,7 +381,7 @@ class SqliteStorage(StorageBackend):
 
     async def health_scores(self, pool: str) -> list[float]:
         async with self._lock:
-            return await _to_thread(self._health_scores_sync, pool)
+            return await self._run_blocking(self._health_scores_sync, pool)
 
     def _health_scores_sync(self, pool: str) -> list[float]:
         rows = self._conn.execute(
@@ -360,7 +398,7 @@ class SqliteStorage(StorageBackend):
         self, pool: str, rid: str, slots: int
     ) -> TransitionResult:
         async with self._lock:
-            return await _to_thread(
+            return await self._run_blocking(
                 self._retry_locked, self._transition_acquire_sync, pool, rid, slots
             )
 
@@ -405,7 +443,7 @@ class SqliteStorage(StorageBackend):
         self, pool: str, rid: str, slots: int
     ) -> TransitionResult:
         async with self._lock:
-            return await _to_thread(
+            return await self._run_blocking(
                 self._retry_locked, self._transition_release_sync, pool, rid, slots
             )
 
@@ -457,7 +495,7 @@ class SqliteStorage(StorageBackend):
 
     async def reset_usage(self, pool: str, rid: str, slots: int = 0) -> bool:
         async with self._lock:
-            return await _to_thread(
+            return await self._run_blocking(
                 self._retry_locked, self._reset_usage_sync, pool, rid, slots
             )
 
@@ -512,7 +550,7 @@ class SqliteStorage(StorageBackend):
         patch: ResourcePatch,
     ) -> bool:
         async with self._lock:
-            return await _to_thread(
+            return await self._run_blocking(
                 self._retry_locked,
                 self._set_state_sync,
                 pool,
@@ -550,7 +588,7 @@ class SqliteStorage(StorageBackend):
         self, pool: str, *, states: set[ResourceState] | None = None, batch: int = 50
     ) -> AsyncIterator[Resource]:
         async with self._lock:
-            resources = await _to_thread(self._scan_sync, pool, states)
+            resources = await self._run_blocking(self._scan_sync, pool, states)
         for resource in resources:
             yield resource
 
@@ -572,17 +610,33 @@ class SqliteStorage(StorageBackend):
 
     async def flush(self, pool: str) -> None:
         async with self._lock:
-            return await _to_thread(self._retry_locked, self._flush_sync, pool)
+            return await self._run_blocking(self._retry_locked, self._flush_sync, pool)
 
     def _flush_sync(self, pool: str) -> None:
         with self._conn:
             self._conn.execute("DELETE FROM resources WHERE pool = ?", (pool,))
             self._conn.execute("DELETE FROM resource_tags WHERE pool = ?", (pool,))
 
-    def close(self) -> None:
+    async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        deadline = time.monotonic() + _CLOSE_DRAIN_TIMEOUT
+        while True:
+            with self._inflight_lock:
+                inflight = self._inflight
+            if inflight == 0:
+                break
+            if time.monotonic() >= deadline:
+                # A worker still owns the connection. Leaking it is safer than
+                # closing under a live thread, which crashes the interpreter.
+                logger.warning(
+                    "sqlite storage closed with %d in-flight operation(s); "
+                    "leaving the connection open",
+                    inflight,
+                )
+                return
+            await asyncio.sleep(0.01)
         try:
             self._conn.close()
         except sqlite3.Error:

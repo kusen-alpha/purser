@@ -97,7 +97,8 @@ async with pool.lease(AcquireRequest(consumer="worker")) as lease:
 > `ProxyResource(payload={...})`。字段声明与规范化规则见 [Python API 契约](docs/reference/python-api/resources.md)。
 
 > 示例里的 IP 是占位符：`import_validate="on_import"` 会真实验活，请替换成可达代理；
-> 想离线完成流程，可参照 [examples/quickstart.py](examples/quickstart.py) 注册一个
+> 省略该参数时默认走 `batch`（后台验活，首次 `acquire()` 自动等待验活完成）。
+> 想完全离线完成流程，可参照 [examples/quickstart.py](examples/quickstart.py) 注册一个
 > `validate()` 恒为 OK 的自定义 `ResourceAdapter`。
 
 ## 服务模式（REST API + Web UI + CLI）
@@ -126,8 +127,9 @@ python -m purser.cli import proxies proxies.txt --import-validate none
 
 > `--import-validate` 三档：`batch`（默认，后台任务验活）、`on_import`（逐条同步验活，
 > 大批量导入会很慢）、`none`（只入库，资源停在 `NEW`，需再调用 `validate` 或重新以
-> `batch` 导入才会进入 `IDLE`）。`NEW` 资源不可被分配；当池内资源全部处于 `NEW` 时，
-> `acquire()` 会立即失败并提示验活方式，而不是一直等待到 `wait_timeout`。
+> `batch` 导入才会进入 `IDLE`）。`NEW` 资源不可被分配；导入默认 `batch`，因此 `acquire()`
+> 会等待后台验活完成。只有显式使用 `import_validate="none"` 且没有验活任务时，
+> `acquire()` 才会立即失败并提示验活方式，而不是一直等待到 `wait_timeout`。
 
 ## 部署与配置
 

@@ -39,7 +39,7 @@ lease = await pool.acquire(
 # 等价写法：await pool.acquire(consumer="crawler-a", timeout=10)
 ```
 
-- `acquire()` 复制传入的 `AcquireRequest`，`**kwargs` 只作用于本次调用；同一个请求对象可以安全复用。
+- `acquire()` 通过构造新请求合并 `**kwargs`，因此 `AcquireRequest.__post_init__` 的校验同样生效（例如 `tags` 传字符串会抛 `TypeError`）；同一个请求对象可以安全复用。
 - 未知 `kwargs` 抛 `TypeError`；`slots <= 0`、`use_limit < 0` 抛 `ConfigError`。
 - 同一 consumer 重复获取同一资源时，默认返回已有租约；`allow_duplicate=True` 才允许第二份租约。
 - 返回的 `Lease` 带唯一 `token`；归还必须 token 匹配。
@@ -49,11 +49,13 @@ lease = await pool.acquire(
 | 情况 | 异常 |
 | --- | --- |
 | 池内没有任何资源 | `PoolEmpty` |
-| 池内资源全部为 `NEW` | `PoolExhausted`（提示导入时验活或调用 `validate_now()`） |
-| 资源忙且等待超时 | `PoolExhausted` |
+| 资源停在 `NEW` 且没有进行中的验活任务（显式 `import_validate="none"`） | `PoolExhausted`（提示调用 `validate_now()` 或改用 `batch`） |
+| 资源正在验活（`VALIDATING` / 后台任务运行中） | 等待至 timeout；超时抛 `PoolExhausted` 并带任务进度 |
+| 资源忙且等待超时 | `PoolExhausted`（消息附带被跳过的过滤原因，如 `tags=1`、`cooldown=2`） |
 | `timeout <= 0` 且无法立即满足 | `PoolExhausted` |
 | 定向获取的资源不存在 | `ResourceNotFound` |
-| 定向获取的资源处于不可分配状态 | `BadState` |
+| 定向获取的资源处于不可分配状态（如 `QUARANTINED`） | `BadState` |
+| 定向获取的目标在 `NEW` / `VALIDATING` | 先等待验活；`NEW` 且无验活任务时立即抛 `PoolExhausted`（提示 `validate_now()`） |
 | 定向获取被占用且等待超时 | `ResourceBusy` |
 | 候选全部被请求级校验拒绝 | `NoSuitableResource` |
 | 池未启动 | `NotStarted` |

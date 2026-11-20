@@ -10,7 +10,7 @@
 | `on_import` | 逐条同步验活，结果写入报告 | 通过后进入 `IDLE` |
 | `batch` | 交给后台验活任务，立即返回 | 任务完成后依次进入 `IDLE` |
 
-省略时取池配置 `import_validate`（默认 `none`）。大批量导入优先用 `batch`；`on_import` 会显著延长导入时间。
+省略时取池配置 `import_validate`（默认 `batch`）：导入立即返回，后台验活完成后资源自动进入 `IDLE`；首次 `acquire()` 会等待验活（最长到请求的 `timeout` / 池的 `wait_timeout`）。`on_import` 会显著延长导入时间，适合必须“导入即可用”的小批量场景。
 
 ```mermaid
 flowchart TD
@@ -28,7 +28,9 @@ flowchart TD
 
 ## NEW 不可分配
 
-`NEW` 不会被任何后台路径自动推进。池内资源全部为 `NEW` 时，`acquire()` 立即抛带提示的 `PoolExhausted`，而不是一直等待到 `wait_timeout`。推进方式：
+`NEW` 不会被周期性维护任务自动推进；它只会在显式 `import_validate="batch"`（默认）或手动 `validate_now()` 时进入验活流程。默认的 `batch` 导入会立即创建后台验活任务，因此资源通常很快变为 `IDLE`；`acquire()` 在资源处于 `NEW`/`VALIDATING` 时会等待验活完成，直到请求超时。
+
+只有显式使用 `import_validate="none"` 时，资源才会长期停在 `NEW`。此时池内资源全部为 `NEW` 且没有进行中的验活任务，`acquire()` 会立即抛出带操作的 `PoolExhausted`，而不是空等到 `wait_timeout`。推进方式：
 
 ```python
 await pool.validate_now("r1", operator="alice")
@@ -38,7 +40,7 @@ await pool.validate_now("r1", operator="alice")
 
 !!! warning "导入成功不等于资源可用"
 
-    `none` 只完成入库。此时资源停在 `NEW`，既不参与分配，也不会被后台验活自动推进；忘记验活会表现为“池里有资源但一直获取不到”。
+    `none` 只完成入库。此时资源停在 `NEW`，既不参与分配，也不会被后台验活自动推进；忘记验活会表现为“池里有资源但一直获取不到”。除非确实要离线预装数据，否则使用默认的 `batch`。
 
 ## 嵌入式导入
 

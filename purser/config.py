@@ -312,7 +312,10 @@ class PoolConfig:
 
     wait_timeout: float = 30.0
     fail_open: bool = False
-    import_validate: str = "none"
+    # Default to background validation so an imported pool is usable without
+    # an extra call. ``none`` stays available as an explicit opt-out for
+    # callers that pre-load data offline and validate later.
+    import_validate: str = "batch"
     secret_fields: tuple[str, ...] = ()
     timezone: str = "Asia/Shanghai"
     schema_version: int = 1

@@ -65,7 +65,7 @@ async def test_sqlite_stores_encrypted_payload(tmp_path):
     assert "super-secret-value" not in blob
     loaded = await backend.get("spool", "acc-1")
     assert loaded.payload == {"username": "u", "password": "super-secret-value"}
-    backend.close()
+    await backend.close()
 
 
 def test_describe_masks_payload():

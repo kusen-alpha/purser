@@ -81,7 +81,7 @@ REST 与浏览器控制台使用同一份契约：`GET /config/schema` 返回字
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `import_validate` | `none` | `none` / `on_import` / `batch` |
+| `import_validate` | `batch` | `none` / `on_import` / `batch` |
 | `validate_timeout` | `20.0` | 单次验活超时 |
 | `validate_concurrency` | `8` | 验活并发 |
 | `background_interval` | `30.0` | 后台验活周期 |

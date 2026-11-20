@@ -35,10 +35,10 @@ def make_resource(
 
 
 @pytest.fixture
-def storage(tmp_path):
+async def storage(tmp_path):
     s = SqliteStorage(path=str(tmp_path / "repo.db"))
     yield s
-    s.close()
+    await s.close()
 
 
 async def test_persists_across_restart(tmp_path):
@@ -46,7 +46,7 @@ async def test_persists_across_restart(tmp_path):
     s1 = SqliteStorage(path=db)
     await s1.put(POOL, make_resource("a", tags={"us"}, max_slots=2))
     assert (await s1.transition_acquire(POOL, "a", 2)).ok
-    s1.close()
+    await s1.close()
 
     s2 = SqliteStorage(path=db)
     try:
@@ -58,7 +58,7 @@ async def test_persists_across_restart(tmp_path):
         assert result.ok and result.state is ResourceState.IDLE
         assert {r.id for r in await s2.query(POOL, tags=frozenset({"us"}))} == {"a"}
     finally:
-        s2.close()
+        await s2.close()
 
 
 async def test_purser_restart_reconciles_orphan_leases(tmp_path):
@@ -216,7 +216,7 @@ async def test_secret_at_rest(tmp_path):
         loaded = await storage.get(POOL, "a")
         assert loaded.payload["password"] == "hunter2"
     finally:
-        storage.close()
+        await storage.close()
 
 
 async def test_reset_usage_preserves_master_data(storage):
