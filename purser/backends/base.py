@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import random
 import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
@@ -201,12 +202,54 @@ class StorageBackend(ABC):
         self, pool: str, *, states: set[ResourceState] | None = None, batch: int = 50
     ) -> AsyncIterator[Resource]: ...
 
+    async def sample_allocatable(
+        self,
+        pool: str,
+        *,
+        states: set[ResourceState],
+        slots: int = 1,
+        tags: frozenset[str] | None = None,
+        required_tag: str | None = None,
+        limit: int = 256,
+        rng: random.Random | None = None,
+    ) -> list[Resource]:
+        """Return up to ``limit`` candidates for the acquisition hot path.
+
+        Backends may override this to avoid materializing the whole pool; the
+        default walks :meth:`scan` and stops after ``limit`` matches.  Callers
+        must treat a full ``limit`` result as a *sample*: more candidates may
+        exist, so they retry or fall back rather than concluding exhaustion.
+        Filters applied here (state, free slots, tags) are hard constraints;
+        scheduling-only filters stay in the lease service.
+        """
+
+        out: list[Resource] = []
+        async for resource in self.scan(pool, states=states):
+            if resource.state not in states:
+                continue
+            if resource.concurrency.available < slots:
+                continue
+            if tags and not tags <= resource.tags:
+                continue
+            if required_tag is not None and required_tag not in resource.tags:
+                continue
+            out.append(resource)
+            if len(out) >= limit:
+                break
+        return out
+
     @abstractmethod
     async def flush(self, pool: str) -> None: ...
 
 
 class Coordination(ABC):
-    """Transient lease / wake-up store.  Contents are rebuildable."""
+    """Transient lease / wake-up store.  Contents are rebuildable.
+
+    Lease liveness is judged from ``expires_at`` against wall clocks, so
+    instances sharing a coordination plane must run NTP-synchronised clocks;
+    the Redis key TTL is only a cleanup grace (``_lease_ttl``), not the
+    authority on whether a lease is still valid.
+    """
 
     @abstractmethod
     async def register_lease(self, pool: str, lease: Lease) -> None: ...
@@ -233,6 +276,16 @@ class Coordination(ABC):
 
     @abstractmethod
     async def close(self) -> None: ...
+
+    async def try_leader(self, pool: str, name: str, ttl: float) -> bool:
+        """Whether this instance may run the shared periodic task ``name``.
+
+        Default ``True``: an in-process coordination plane has no peer to
+        exclude.  Shared planes override this with a lease-based election so
+        one instance at a time performs cross-resource sweeps.
+        """
+
+        return True
 
     def _lease_ttl(self, lease: Lease) -> int:
         return max(1, int(lease.expires_at - _now()) + 5)

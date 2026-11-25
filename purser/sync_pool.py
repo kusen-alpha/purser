@@ -337,14 +337,15 @@ class SyncPool:
         *,
         outcome: UsageOutcome | str | None = None,
         used: int | None = None,
+        latency_ms: float | None = None,
     ) -> bool:
-        """Return a lease and optionally report its outcome and usage."""
+        """Return a lease and optionally report its outcome, usage and latency."""
 
         outcome = coerce_usage_outcome(outcome)
         authoritative = self._resolve(lease)
         result = self._owner._submit(
             lambda: self._pool.release(
-                authoritative, outcome=outcome, used=used
+                authoritative, outcome=outcome, used=used, latency_ms=latency_ms
             ),
             allow_closing=True,
         )

@@ -48,6 +48,7 @@ MAINTENANCE_NAMES: tuple[str, ...] = (
     "quarantine_gc",
     "archive_gc",
     "expire_gc",
+    "reconcile",
 )
 
 

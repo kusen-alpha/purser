@@ -101,12 +101,17 @@ class ReleaseService:
         *,
         outcome: UsageOutcome | str | None = None,
         used: int | None = None,
+        latency_ms: float | None = None,
     ) -> bool:
         if used is not None and used < 0:
             raise ConfigError("used must be >= 0")
+        if latency_ms is not None and latency_ms < 0:
+            raise ConfigError("latency_ms must be >= 0")
         outcome = coerce_usage_outcome(outcome)
         if lease.token in self._stateless_leases:
-            return await self._release_stateless(lease, outcome, used)
+            return await self._release_stateless(
+                lease, outcome, used, latency_ms=latency_ms
+            )
         before = await self.ctx.storage.get(self.ctx.name, lease.resource_id)
         before_state = before.state if before is not None else None
         if before is not None:
@@ -185,7 +190,9 @@ class ReleaseService:
             },
             trace_id=lease.trace_id,
         )
-        await self.usage.apply_outcome(lease.resource_id, outcome, used, lease)
+        await self.usage.apply_outcome(
+            lease.resource_id, outcome, used, lease, latency_ms=latency_ms
+        )
         self.ctx.purser.usage.record(
             ts=_now(),
             pool=self.ctx.name,
@@ -206,6 +213,8 @@ class ReleaseService:
         lease: Lease,
         outcome: UsageOutcome | None,
         used: int | None,
+        *,
+        latency_ms: float | None = None,
     ) -> bool:
         """Finish a stateless borrow: feedback only, no slot to return."""
 
@@ -229,7 +238,9 @@ class ReleaseService:
             },
             trace_id=lease.trace_id,
         )
-        await self.usage.apply_outcome(lease.resource_id, outcome, used, lease)
+        await self.usage.apply_outcome(
+            lease.resource_id, outcome, used, lease, latency_ms=latency_ms
+        )
         self.ctx.purser.usage.record(
             ts=_now(),
             pool=self.ctx.name,

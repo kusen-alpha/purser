@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import time
+import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import fields
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
@@ -21,6 +23,8 @@ from purser.errors import BackendUnavailable, ConfigError
 
 if TYPE_CHECKING:
     from redis import asyncio as aioredis
+
+logger = logging.getLogger(__name__)
 
 _REDIS_ERROR: type[BaseException] | None = None
 
@@ -59,6 +63,20 @@ _R = TypeVar("_R")
 # KEYS: ids set, token -> rid hash.  ARGV: token, lease-key prefix.
 # The lease key is derived inside the script so lookup + removal is one step;
 # all derived keys share the ``{pool}`` hash tag with KEYS.
+_RENEW_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('pexpire', KEYS[1], ARGV[2])
+end
+return 0
+"""
+
+_RENEW_LEASE_LUA = """
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then return 0 end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+return 1
+"""
+
 _UNREGISTER_LUA = """
 local rid = redis.call('HGET', KEYS[2], ARGV[1])
 if not rid then return nil end
@@ -147,6 +165,7 @@ class MemoryCoordination(Coordination):
 class RedisCoordination(Coordination):
     """Redis coordination: per-resource lease hashes plus a token index."""
 
+
     def __init__(
         self,
         client: aioredis.Redis | None = None,
@@ -168,6 +187,7 @@ class RedisCoordination(Coordination):
             socket_timeout=5.0,
         )
         self.key_prefix = key_prefix
+        self._leader_tokens: dict[str, str] = {}
 
     def _lease_key(self, pool: str, rid: str) -> str:
         return f"{self.key_prefix}:{{{pool}}}:lease:{rid}"
@@ -177,6 +197,24 @@ class RedisCoordination(Coordination):
 
     def _token_key(self, pool: str) -> str:
         return f"{self.key_prefix}:{{{pool}}}:leasetoken"
+
+    @_fail_closed
+    async def try_leader(self, pool: str, name: str, ttl: float) -> bool:
+        """SET NX lease per (pool, task): only one instance sweeps at a time."""
+
+        key = f"{self.key_prefix}:{{{pool}}}:leader:{name}"
+        token = self._leader_tokens.get(key)
+        if token is None:
+            token = uuid.uuid4().hex
+            self._leader_tokens[key] = token
+        ttl_ms = max(1, int(ttl * 1000))
+        if await self._client.set(key, token, nx=True, px=ttl_ms):
+            return True
+        renewed = await self._client.eval(_RENEW_LUA, 1, key, token, ttl_ms)
+        if renewed:
+            return True
+        # Another instance owns the lease; re-election happens on a later tick.
+        return False
 
     @_fail_closed
     async def register_lease(self, pool: str, lease: Lease) -> None:
@@ -225,11 +263,18 @@ class RedisCoordination(Coordination):
         lease = _decode_lease(raw.decode())
         lease.expires_at = expires_at
         lease.heartbeat_at = expires_at
-        await self._client.hset(key, token, _encode_lease(lease))
-        await self._client.pexpire(
-            key, max(1, int(expires_at - time.time()) + 5) * 1000
+        # Check-and-write: a concurrent release (possibly on another host)
+        # must not be undone by a renewal that read the lease before the
+        # removal landed.
+        renewed = await self._client.eval(
+            _RENEW_LEASE_LUA,
+            1,
+            key,
+            token,
+            _encode_lease(lease),
+            max(1, int(expires_at - time.time()) + 5) * 1000,
         )
-        return True
+        return bool(renewed)
 
     @_fail_closed
     async def active(self, pool: str) -> list[Lease]:

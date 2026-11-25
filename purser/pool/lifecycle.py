@@ -43,6 +43,7 @@ class LifecycleService:
             if pool.purser.maintenance_enabled:
                 await pool._scheduler.start()
             pool._task_registry.start(pool._lease.reap_loop())
+            pool._task_registry.start(pool._lease.serve_loop())
             if pool.purser.maintenance_enabled:
                 pool._task_registry.start(pool._validation.background_loop())
             await pool._reconcile_leases()

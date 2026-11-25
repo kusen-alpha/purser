@@ -37,6 +37,27 @@ STORAGE_COLUMNS: tuple[str, ...] = (
     "updated_at",
 )
 
+# Everything a candidate needs for filtering and ranking, minus the payload.
+SAMPLE_COLUMNS: tuple[str, ...] = (
+    "id",
+    "kind",
+    "state",
+    "version",
+    "max_slots",
+    "used_slots",
+    "tags",
+    "health",
+    "quota",
+    "site_failures",
+    "usage_quota",
+    "used_count",
+    "expires_at",
+    "next_available_at",
+    "mutex_group",
+    "schedule_window",
+    "meta",
+)
+
 
 class PayloadCodec(Protocol):
     """The subset of ``SecretCodec`` the row mapping depends on."""
@@ -126,13 +147,23 @@ def deserialize_row(
     *,
     codec: PayloadCodec,
     secret_fields: tuple[str, ...],
+    with_payload: bool = True,
 ) -> Resource:
-    """Rebuild a generic ``Resource`` from a stored row."""
+    """Rebuild a generic ``Resource`` from a stored row.
+
+    ``with_payload=False`` skips payload decryption and returns an empty
+    payload.  Candidate sampling uses this: filtering and ranking only touch
+    the non-secret columns, so the hot path never pays AES-GCM per row.
+    """
 
     def parse(raw: str, default: Any) -> Any:
         return json.loads(raw) if raw else default
 
-    payload = codec.decrypt_payload(parse(row["payload"], {}), secret_fields)
+    payload = (
+        codec.decrypt_payload(parse(row["payload"], {}), secret_fields)
+        if with_payload
+        else {}
+    )
     return Resource(
         id=row["id"],
         kind=row["kind"],

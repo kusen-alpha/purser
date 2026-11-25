@@ -36,7 +36,6 @@ from purser.errors import (
     ResourceNotFound,
 )
 from purser.facade._helpers import (
-    WAITER_POLL_INTERVAL,
     _now,
     _TokenBucket,
     _WaitHandle,
@@ -84,6 +83,10 @@ class LeaseService:
         self._degraded_tokens: set[str] = set()
         self._renew_cb: RenewFn | None = None
         self._revoker: RevokeFn | None = None
+        # One serving pass at a time.  The tick and the inline release path
+        # both drain the heap; without this lock a release could hand the heap
+        # head's slot to a later waiter while the head is mid-allocation.
+        self._serve_lock = asyncio.Lock()
         self.releases = ReleaseService(self)
 
     def bind(self, *, renew: RenewFn, revoker: RevokeFn) -> None:
@@ -114,6 +117,26 @@ class LeaseService:
                 raise
             except Exception:
                 logger.exception("reaper loop failed for pool %s", self.ctx.name)
+
+    _SERVE_INTERVAL = 0.1
+
+    async def serve_loop(self) -> None:
+        """One serving loop per pool; every waiter is granted here.
+
+        A merged loop means an acquire never allocates on its own tick: the
+        heap is drained in priority order by this task, so a burst of waiters
+        cannot stampede the storage plane, and a release on another instance
+        is picked up on the next tick instead of by a per-waiter full scan.
+        """
+
+        while True:
+            await asyncio.sleep(self._SERVE_INTERVAL)
+            try:
+                await self.serve_waiters()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("wake serving failed for pool %s", self.ctx.name)
 
     async def acquire(self, request: AcquireRequest) -> Lease:
         if request.idempotency_key is not None:
@@ -382,58 +405,24 @@ class LeaseService:
     ) -> Lease:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
-        # Redis has no push channel: the waiter itself re-checks shared
-        # storage so a release on another instance can wake it (V03).
-        poll = self.ctx.cfg.coordination == "redis"
+        # The pool's merged serve loop grants every waiter; a waiter only
+        # sleeps on its own future, so queue pressure stays O(waiters) here
+        # and O(1) storage work per serving tick.
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
                 break
-            window = min(WAITER_POLL_INTERVAL, remaining) if poll else remaining
             try:
                 return await asyncio.wait_for(
-                    asyncio.shield(handle.future), window
+                    asyncio.shield(handle.future), remaining
                 )
             except asyncio.TimeoutError:
-                if handle.future.done():
+                if handle.future.done():  # delivered right at the deadline
                     return cast(Lease, handle.future.result())
-                if not poll or loop.time() >= deadline:
-                    break
-                lease = await self._poll_wait_handle(handle, request)
-                if lease is not None:
-                    return lease
+                break
 
         handle.cancel_pending()
         raise PoolExhausted(await self._exhausted_message(request, timeout))
-
-    async def _poll_wait_handle(
-        self, handle: _WaitHandle, request: AcquireRequest
-    ) -> Lease | None:
-        if handle.cancelled or handle.future.done() or handle.serving:
-            return None
-        handle.serving = True
-        self.wait_queue.begin_poll()
-        try:
-            try:
-                lease = await self._try_allocate(request)
-            except (NoSuitableResource, PoolEmpty, BadState):
-                lease = None
-            except Exception:
-                # A close/cancel may win while the poll is in flight; let the
-                # completed future surface that outcome to the caller.
-                if handle.cancelled or handle.future.done():
-                    return None
-                raise
-            if lease is None:
-                return None
-            if handle.cancelled or handle.future.done():
-                await self._abandon_lease(lease)
-                return None
-            handle.future.set_result(lease)
-            return lease
-        finally:
-            self.wait_queue.end_poll()
-            handle.serving = False
 
     def _enqueue_waiter(self, req: AcquireRequest) -> _WaitHandle:
         loop = asyncio.get_running_loop()
@@ -444,17 +433,36 @@ class LeaseService:
             priority=0 if self.ctx.cfg.scheduler == "fifo" else req.priority,
             future=loop.create_future(),
             req=req,
+            enqueued_at=loop.time(),
         )
         heapq.heappush(self.wait_queue.heap, handle)
         return handle
 
     async def serve_waiters(self, limit: int = 64) -> int:
+        async with self._serve_lock:
+            return await self._serve_waiters_locked(limit)
+
+    # Waiting this many seconds is worth one priority point, capped so a
+    # starved waiter cannot outrank explicit priorities forever.
+    _AGING_STEP = 1.0
+    _AGING_CAP = 5
+
+    async def _serve_waiters_locked(self, limit: int) -> int:
         served = 0
         pending: list[_WaitHandle] = []
         current: _WaitHandle | None = None
+        self.wait_queue.begin_poll()  # close() waits for in-flight allocations
+        now = asyncio.get_running_loop().time()
+        batch: list[_WaitHandle] = []
+        while self.wait_queue.heap and len(batch) < limit:
+            batch.append(heapq.heappop(self.wait_queue.heap))
+        batch.sort(
+            key=lambda h: (-(h.priority + h.age_boost(
+                now, step=self._AGING_STEP, cap=self._AGING_CAP
+            )), h.seq)
+        )
         try:
-            while self.wait_queue.heap and served < limit:
-                handle = heapq.heappop(self.wait_queue.heap)
+            for handle in batch:
                 if handle.cancelled or handle.future.done():
                     continue
                 if handle.serving:
@@ -491,6 +499,7 @@ class LeaseService:
             for handle in pending:
                 if not handle.cancelled and not handle.future.done():
                     heapq.heappush(self.wait_queue.heap, handle)
+            self.wait_queue.end_poll()
         return served
 
     async def _abandon_lease(self, lease: Lease) -> None:
@@ -597,12 +606,13 @@ class LeaseService:
             top_k=self.ctx.cfg.top_k,
             rng=random.Random(f"{req.trace_id}:{self.wait_queue.seq}"),
         )
-        ranked = self.ctx.allocator.rank(candidates, ctx)
+        # Score once: the ranked list feeds both the pick and the fallback
+        # order, so allocators are never invoked twice per acquire.
+        ranked, first = self.ctx.allocator.rank_and_pick(candidates, ctx)
         if not ranked:
             raise NoSuitableResource(req.target, checked=0)
         # First try the allocator's weighted pick (top-K anti-herd); fall back
         # to the remaining candidates in ranked order if it is busy or rejected.
-        first = self.ctx.allocator.pick(candidates, ctx)
         ordered: list[Resource] = []
         if first is not None:
             ordered.append(first)
@@ -705,53 +715,111 @@ class LeaseService:
             r.id: history.get(r.id, 0.0) / max_score for r in candidates
         }
 
+    _CANDIDATE_BATCH = 64
+    _CANDIDATE_ROUNDS = 3
+
     async def _hard_filtered_candidates(self, req: AcquireRequest) -> list[Resource]:
         stateless = self.ctx.cfg.acquire_mode == "stateless"
         if not stateless and self._consumer_at_limit(req.consumer):
             return []
         now = _now()
+        limit = max(self._CANDIDATE_BATCH, self.ctx.cfg.top_k * 8)
+        # The same seed keeps one acquire deterministic while the sampling
+        # rounds walk different parts of a large allocatable index.
+        rng = random.Random(f"{req.trace_id}:{self.wait_queue.seq}")
         out: list[Resource] = []
-        async for resource in self.ctx.storage.scan(
-            self.ctx.name, states=set(ALLOCATABLE_STATES)
-        ):
-            if not stateless and resource.concurrency.available < req.slots:
-                continue
-            if req.tags and not req.tags <= resource.tags:
-                continue
-            if req.required_tag and req.required_tag not in resource.tags:
-                continue
-            if not self._is_schedule_open(resource, now):
-                continue
-            if resource.expires_at is not None and resource.expires_at <= now:
-                await self.on_expiration(resource)
-                continue
-            if not req.ignore_cooldown:
-                if resource.usable_at(now, req.consumer) > now:
+        seen: set[str] = set()
+        exhaustive = False
+        for _ in range(self._CANDIDATE_ROUNDS):
+            batch = await self.ctx.storage.sample_allocatable(
+                self.ctx.name,
+                states=set(ALLOCATABLE_STATES),
+                slots=req.slots,
+                tags=req.tags or None,
+                required_tag=req.required_tag,
+                limit=limit,
+                rng=rng,
+            )
+            fresh = 0
+            for resource in batch:
+                if resource.id in seen:
                     continue
-            if req.target and resource.site_failures.get(req.target, SiteFailure(req.target, until=0)).active(now):
-                continue
-            if resource.usage_quota is not None and resource.used_count >= resource.usage_quota:
-                continue
-            if resource.quota is not None and resource.quota.exhausted:
-                continue
-            if (
-                not stateless
-                and resource.mutex_group
-                and req.consumer
-                and await self._holds_group(
-                    req.consumer, resource.mutex_group, resource.id
-                )
+                seen.add(resource.id)
+                fresh += 1
+                if await self._candidate_passes(resource, req, now, stateless):
+                    out.append(resource)
+            if len(batch) < limit:
+                # The backend returned everything it has: filters are exact.
+                exhaustive = True
+                break
+            if len(out) >= max(self.ctx.cfg.top_k * 4, 16):
+                break
+            if fresh == 0:
+                break
+        if not out and not exhaustive:
+            # A large pool where sampling happened to miss every eligible
+            # resource: fall back to an exact scan on this slow path so we
+            # never report false exhaustion.
+            async for resource in self.ctx.storage.scan(
+                self.ctx.name, states=set(ALLOCATABLE_STATES)
             ):
-                continue
-            if (
-                not stateless
-                and req.consumer
-                and not req.allow_duplicate
-                and self.consumer_holds.get(req.consumer, set()) & {resource.id}
-            ):
-                continue
-            out.append(resource)
+                if resource.id in seen:
+                    continue
+                seen.add(resource.id)
+                if await self._candidate_passes(resource, req, now, stateless):
+                    out.append(resource)
+                    if len(out) >= limit:
+                        break
         return out
+
+    async def _candidate_passes(
+        self,
+        resource: Resource,
+        req: AcquireRequest,
+        now: float,
+        stateless: bool,
+    ) -> bool:
+        if not stateless and resource.concurrency.available < req.slots:
+            return False
+        if req.tags and not req.tags <= resource.tags:
+            return False
+        if req.required_tag and req.required_tag not in resource.tags:
+            return False
+        if not self._is_schedule_open(resource, now):
+            return False
+        if resource.expires_at is not None and resource.expires_at <= now:
+            await self.on_expiration(resource)
+            return False
+        if not req.ignore_cooldown and resource.usable_at(now, req.consumer) > now:
+            return False
+        if req.target and resource.site_failures.get(
+            req.target, SiteFailure(req.target, until=0)
+        ).active(now):
+            return False
+        if (
+            resource.usage_quota is not None
+            and resource.used_count >= resource.usage_quota
+        ):
+            return False
+        if resource.quota is not None and resource.quota.exhausted:
+            return False
+        if (
+            not stateless
+            and resource.mutex_group
+            and req.consumer
+            and await self._holds_group(
+                req.consumer, resource.mutex_group, resource.id
+            )
+        ):
+            return False
+        if (
+            not stateless
+            and req.consumer
+            and not req.allow_duplicate
+            and resource.id in self.consumer_holds.get(req.consumer, set())
+        ):
+            return False
+        return True
 
     async def _holds_group(self, consumer: str, group: str, except_rid: str) -> bool:
         for rid in self.consumer_holds.get(consumer, set()):
@@ -925,9 +993,7 @@ class LeaseService:
             self._stateless_leases.popitem(last=False)
 
     def _consumer_lease_count(self, consumer: str) -> int:
-        return sum(
-            1 for lease in self.ctx.leases.active() if lease.consumer == consumer
-        )
+        return self.ctx.leases.consumer_count(consumer)
 
     def _consumer_at_limit(self, consumer: str | None) -> bool:
         cap = self.ctx.cfg.max_leases_per_consumer
@@ -951,8 +1017,11 @@ class LeaseService:
         *,
         outcome: UsageOutcome | str | None = None,
         used: int | None = None,
+        latency_ms: float | None = None,
     ) -> bool:
-        return await self.releases.release(lease, outcome=outcome, used=used)
+        return await self.releases.release(
+            lease, outcome=outcome, used=used, latency_ms=latency_ms
+        )
 
     async def release_consumer(
         self,

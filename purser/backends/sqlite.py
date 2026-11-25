@@ -31,6 +31,7 @@ from purser.backends.base import (
     TransitionResult,
 )
 from purser.backends.serde import (
+    SAMPLE_COLUMNS,
     STORAGE_COLUMNS,
     decode_health,
     deserialize_row,
@@ -364,6 +365,129 @@ class SqliteStorage(StorageBackend):
         params.extend([limit, offset])
         rows = self._conn.execute(sql, params).fetchall()
         return [self._deserialize(row) for row in rows]
+
+    def _sample_where(
+        self,
+        pool: str,
+        states: set[ResourceState],
+        slots: int,
+        tags: frozenset[str] | None,
+        required_tag: str | None,
+    ) -> tuple[str, list[Any]]:
+        clauses = ["pool = ?"]
+        params: list[Any] = [pool]
+        placeholders = ", ".join("?" for _ in states)
+        clauses.append(f"state IN ({placeholders})")
+        params.extend(sorted(state.value for state in states))
+        clauses.append("used_slots + ? <= max_slots")
+        params.append(slots)
+        if tags:
+            placeholders = ", ".join("?" for _ in tags)
+            clauses.append(
+                "(SELECT COUNT(*) FROM resource_tags t "
+                "WHERE t.pool = resources.pool AND t.rid = resources.id "
+                f"AND t.tag IN ({placeholders})) = ?"
+            )
+            params.extend(sorted(tags))
+            params.append(len(tags))
+        if required_tag is not None:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM resource_tags t "
+                "WHERE t.pool = resources.pool AND t.rid = resources.id "
+                "AND t.tag = ?)"
+            )
+            params.append(required_tag)
+        return " AND ".join(clauses), params
+
+    async def sample_allocatable(
+        self,
+        pool: str,
+        *,
+        states: set[ResourceState],
+        slots: int = 1,
+        tags: frozenset[str] | None = None,
+        required_tag: str | None = None,
+        limit: int = 256,
+        rng: random.Random | None = None,
+    ) -> list[Resource]:
+        if limit <= 0:
+            return []
+        if not states or not set(states) <= set(ALLOCATABLE_STATES):
+            return await super().sample_allocatable(
+                pool,
+                states=states,
+                slots=slots,
+                tags=tags,
+                required_tag=required_tag,
+                limit=limit,
+                rng=rng,
+            )
+        async with self._lock:
+            return await self._run_blocking(
+                self._retry_locked,
+                self._sample_sync,
+                pool,
+                states,
+                slots,
+                tags,
+                required_tag,
+                limit,
+                rng or random,
+            )
+
+    def _sample_sync(
+        self,
+        pool: str,
+        states: set[ResourceState],
+        slots: int,
+        tags: frozenset[str] | None,
+        required_tag: str | None,
+        limit: int,
+        rng: random.Random,
+    ) -> list[Resource]:
+        where, params = self._sample_where(pool, states, slots, tags, required_tag)
+        total = int(
+            self._conn.execute(
+                f"SELECT COUNT(*) FROM resources WHERE {where}", params
+            ).fetchone()[0]
+        )
+        if total == 0:
+            return []
+        columns = ", ".join(SAMPLE_COLUMNS)
+        base = f"SELECT {columns} FROM resources WHERE {where}"
+        if total <= limit:
+            sql = f"{base} ORDER BY id LIMIT ?"
+            rows = self._retry_locked(
+                self._conn.execute, sql, (*params, limit)
+            ).fetchall()
+        else:
+            # Random keyed window instead of a full scan: pick a real id at a
+            # random offset (id-only index walk), then read the rows around it.
+            pivot_row = self._conn.execute(
+                f"SELECT id FROM resources WHERE {where} LIMIT 1 OFFSET ?",
+                (*params, rng.randrange(total)),
+            ).fetchone()
+            pivot = pivot_row[0] if pivot_row is not None else ""
+            rows = self._retry_locked(
+                self._conn.execute,
+                f"{base} AND id >= ? LIMIT ?",
+                (*params, pivot, limit),
+            ).fetchall()
+            if len(rows) < limit:
+                rows += self._retry_locked(
+                    self._conn.execute,
+                    f"{base} AND id < ? LIMIT ?",
+                    (*params, pivot, limit - len(rows)),
+                ).fetchall()
+        return [
+            deserialize_row(
+                cast(Mapping[str, Any], row),
+                codec=self._codec,
+                secret_fields=self.secret_fields,
+                with_payload=False,
+            )
+            for row in rows
+        ]
 
     async def counts(self, pool: str) -> dict[ResourceState, int]:
         async with self._lock:

@@ -32,6 +32,7 @@ class MaintenanceService:
         release: Callable[..., Awaitable[Any]],
         revoke: Callable[..., Awaitable[Any]],
         is_degraded: Callable[[str], bool],
+        reconcile: Callable[[], Awaitable[int]] | None = None,
     ) -> None:
         self.ctx = ctx
         self.state = state
@@ -42,6 +43,7 @@ class MaintenanceService:
         self._release = release
         self._revoke = revoke
         self._is_degraded = is_degraded
+        self._reconcile = reconcile
 
     async def drain(self) -> None:
         """O17: wait for in-flight leases, then kick whatever is left."""
@@ -86,10 +88,18 @@ class MaintenanceService:
             "quarantine_gc": self._maintenance_quarantine,
             "archive_gc": self._maintenance_archive,
             "expire_gc": self._maintenance_expire,
+            "reconcile": self._maintenance_reconcile,
         }.get(name)
         if runner is None:
             raise ConfigError(f"unknown maintenance task {name!r}")
         return await runner()
+
+    async def _maintenance_reconcile(self) -> dict[str, int]:
+        """Leader-elected slot reconciliation; see ``ResourcePool._reconcile_sweep``."""
+
+        if self._reconcile is None:
+            return {"reconcile": 0}
+        return {"reconcile": await self._reconcile()}
 
     async def _maintenance_quota_reset(self) -> dict[str, int]:
         moved = 0

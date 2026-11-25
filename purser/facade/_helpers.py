@@ -209,11 +209,20 @@ class _WaitHandle:
     req: AcquireRequest
     cancelled: bool = False
     serving: bool = False
+    enqueued_at: float = 0.0  # loop.time() when the waiter joined the heap
 
     def __lt__(self, other: _WaitHandle) -> bool:
         if self.priority != other.priority:
             return self.priority > other.priority  # higher priority first
         return self.seq < other.seq
+
+    def age_boost(self, now: float, *, step: float, cap: int) -> int:
+        """Priority points earned by waiting; bounds priority starvation."""
+
+        if step <= 0 or cap <= 0:
+            return 0
+        waited = max(0.0, now - self.enqueued_at)
+        return min(int(waited / step), cap)
 
     def cancel_pending(self) -> None:
         """Mark the waiter as gone and cancel its future so the fair queue

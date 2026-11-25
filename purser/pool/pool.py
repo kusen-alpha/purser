@@ -200,21 +200,22 @@ class ResourcePool:
             consumer_holds=self._lease.consumer_holds,
             validate_now=self._validation.validate_now,
             validation_fail=self._validation.on_failure,
-            serve_waiters=self._lease.serve_waiters,
+            serve_waiters=self._notify_waiters,
         )
         self._maintenance = MaintenanceService(
             self._ctx,
             self._state,
             admin=self._admin,
             validation=self._validation,
-            serve_waiters=self._lease.serve_waiters,
+            serve_waiters=self._notify_waiters,
             active_leases=self._leases.active,
             release=self.release,
             revoke=self.force_revoke,
             is_degraded=self._lease.is_degraded,
+            reconcile=self._reconcile_sweep,
         )
         self._lifecycle = LifecycleService(self)
-        self._validation.bind_waker(self._lease.serve_waiters)
+        self._validation.bind_waker(self._notify_waiters)
         self._lease.bind(renew=self._renew, revoker=self._admin.force_revoke)
         self._leases.on_expire = self._lease.on_expired
         self._leases.on_lost = self._lease.on_lost
@@ -248,6 +249,7 @@ class ResourcePool:
             "quarantine_gc": 15.0,
             "archive_gc": 3600.0,
             "expire_gc": 3600.0,
+            "reconcile": 60.0,
         }
         for name in MAINTENANCE_NAMES:
             interval = float(intervals.get(name, defaults[name]))
@@ -283,17 +285,39 @@ class ResourcePool:
     async def _drain(self) -> None:
         await self._maintenance.drain()
 
-    async def _reconcile_leases(self) -> None:
+    # A sweeper may only reset a slot once the resource has been quiet for this
+    # long: acquire bumps ``used_slots`` before the coordination lease exists,
+    # and a sweep in that window would hand the same slot out twice.
+    _RECONCILE_GRACE = 30.0
+    _RECONCILE_LEADER_TTL = 180.0
+
+    async def _reconcile_sweep(self) -> int:
+        """Periodic, leader-elected counterpart of the start-time reconcile."""
+
+        if not await self._coordination.try_leader(
+            self.name, "reconcile", self._RECONCILE_LEADER_TTL
+        ):
+            return 0
+        grace = min(self.cfg.lease_ttl, self._RECONCILE_GRACE)
+        return await self._reconcile_leases(grace=grace)
+
+    async def _reconcile_leases(self, *, grace: float = 0.0) -> int:
         """F2: align slot usage with the currently live coordination leases.
 
         Losing transient leases on an abnormal restart is acceptable; resource
         master data stays untouched.  Orphaned slots, whether fully orphaned or
         in excess of the surviving leases, are re-aligned to the live total so
-        a partial orphan cannot keep a resource busy forever.
+        a partial orphan cannot keep a resource busy forever.  ``grace``
+        skips resources touched within that window (see ``_RECONCILE_GRACE``).
         """
+        reset = 0
         states = set(ALLOCATABLE_STATES) | {ResourceState.FULL, ResourceState.DRAINING}
         async for resource in self.storage.scan(self.name, states=states):
             now = _now()
+            if grace > 0 and now - resource.updated_at < grace:
+                continue
+            # Lease liveness is the wall-clock verdict; hosts sharing a
+            # coordination plane must keep their clocks NTP-synchronised.
             live = [
                 lease
                 for lease in await self._coordination.leases_for(self.name, resource.id)
@@ -321,12 +345,14 @@ class ResourcePool:
                         used_before,
                         target,
                     )
+                reset += 1
                 self.purser.bus.publish(
                     "lease_reconciled",
                     self.name,
                     rid=resource.id,
                     data={"reason": "orphaned leases reset", "used_slots": target},
                 )
+        return reset
 
     def _spawn(self, coro: Any) -> asyncio.Task[Any]:
         """Track a fire-and-forget task so :meth:`close` can drain it."""
@@ -592,8 +618,13 @@ class ResourcePool:
             raise ConfigError("use_limit must be >= 0")
         return await self._lease.acquire(request)
 
-    async def _serve_waiters(self, limit: int = 64) -> int:
+    async def _notify_waiters(self, limit: int = 64) -> int:
+        """Serve this instance's waiter heap in priority order."""
+
         return await self._lease.serve_waiters(limit)
+
+    async def _serve_waiters(self, limit: int = 64) -> int:
+        return await self._notify_waiters(limit)
 
     async def _affinity_scores(
         self, consumer: str | None, candidates: list[Resource]
@@ -625,10 +656,17 @@ class ResourcePool:
         *,
         outcome: UsageOutcome | str | None = None,
         used: int | None = None,
+        latency_ms: float | None = None,
     ) -> bool:
-        """Return a lease and optionally report its outcome and usage."""
+        """Return a lease and optionally report its outcome, usage and latency.
 
-        return await self._lease.release(lease, outcome=outcome, used=used)
+        ``latency_ms`` on an OK outcome feeds the resource's health EWMA, so
+        real traffic reinforces (or corrects) probe-based scoring.
+        """
+
+        return await self._lease.release(
+            lease, outcome=outcome, used=used, latency_ms=latency_ms
+        )
 
     async def release_consumer(
         self,

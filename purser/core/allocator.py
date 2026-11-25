@@ -39,12 +39,31 @@ class Allocator(ABC):
     def rank(self, candidates: list[Resource], ctx: AllocationContext) -> list[tuple[Resource, float]]:
         """Return candidates sorted best-first with their raw scores."""
 
-    def pick(self, candidates: list[Resource], ctx: AllocationContext) -> Resource | None:
+    def rank_and_pick(
+        self, candidates: list[Resource], ctx: AllocationContext
+    ) -> tuple[list[tuple[Resource, float]], Resource | None]:
+        """Rank once and pick from that ranking (hot-path API).
+
+        Custom allocators that only override :meth:`pick` keep their policy;
+        built-ins override :meth:`pick_ranked` so scoring happens once.
+        """
+
         ranked = self.rank(candidates, ctx)
+        if type(self).pick is not Allocator.pick:
+            return ranked, self.pick(candidates, ctx)
+        return ranked, self.pick_ranked(ranked, ctx)
+
+    def pick_ranked(
+        self,
+        ranked: list[tuple[Resource, float]],
+        ctx: AllocationContext,
+    ) -> Resource | None:
         if not ranked:
             return None
-        top = ranked[: ctx.top_k]
-        return self._weighted_pick(top, ctx)
+        return self._weighted_pick(ranked[: ctx.top_k], ctx)
+
+    def pick(self, candidates: list[Resource], ctx: AllocationContext) -> Resource | None:
+        return self.pick_ranked(self.rank(candidates, ctx), ctx)
 
     @staticmethod
     def _weighted_pick(ranked: list[tuple[Resource, float]], ctx: AllocationContext) -> Resource:
@@ -110,11 +129,14 @@ class RoundRobinAllocator(Allocator):
         ordered = candidates[idx:] + candidates[:idx]
         return [(res, -i) for i, res in enumerate(ordered)]
 
-    def pick(self, candidates: list[Resource], ctx: AllocationContext) -> Resource | None:
-        ranked = self.rank(candidates, ctx)
+    def pick_ranked(
+        self,
+        ranked: list[tuple[Resource, float]],
+        ctx: AllocationContext,
+    ) -> Resource | None:
         if not ranked:
             return None
-        self._cursor = (self._cursor + 1) % len(candidates)
+        self._cursor = (self._cursor + 1) % len(ranked)
         return ranked[0][0]
 
 
@@ -149,8 +171,11 @@ class StaticPriorityAllocator(Allocator):
             reverse=True,
         )
 
-    def pick(self, candidates: list[Resource], ctx: AllocationContext) -> Resource | None:
-        ranked = self.rank(candidates, ctx)
+    def pick_ranked(
+        self,
+        ranked: list[tuple[Resource, float]],
+        ctx: AllocationContext,
+    ) -> Resource | None:
         if not ranked:
             return None
         # Never cross a priority tier.  Ties inside the best tier use the same
@@ -170,8 +195,13 @@ class RandomAllocator(Allocator):
         ctx.rng.shuffle(pool)
         return [(res, 0.0) for res in pool]
 
-    def pick(self, candidates: list[Resource], ctx: AllocationContext) -> Resource | None:
-        return ctx.rng.choice(candidates) if candidates else None
+    def pick_ranked(
+        self,
+        ranked: list[tuple[Resource, float]],
+        ctx: AllocationContext,
+    ) -> Resource | None:
+        # ``rank`` already shuffled; the first entry is a uniform draw.
+        return ranked[0][0] if ranked else None
 
 
 ALLOCATORS: dict[str, type[Allocator]] = {

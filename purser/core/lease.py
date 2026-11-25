@@ -33,24 +33,54 @@ class LeaseManager:
     heartbeat_interval: float = 20.0
     max_renew_errors: int = 3
     _leases: dict[str, Lease] = field(default_factory=dict, repr=False)
-    _tasks: dict[str, asyncio.Task[Any]] = field(default_factory=dict, repr=False)
+    _renew: dict[str, RenewFn] = field(default_factory=dict, repr=False)
+    _errors: dict[str, int] = field(default_factory=dict, repr=False)
+    _ticker: asyncio.Task[Any] | None = field(default=None, repr=False)
+    _consumer_counts: dict[str, int] = field(default_factory=dict, repr=False)
     _closed: bool = False
+
+    # One ticker renews every lease of a pool instead of one task per lease;
+    # sleep is capped so short test/deployment intervals still stagger the
+    # loop, and each renewal is checked against ``heartbeat_at`` so the
+    # cadence stays per-lease.
+    _TICKER_MAX_SLEEP = 1.0
 
     def register(self, lease: Lease, renew: RenewFn) -> None:
         """Start heartbeat renewal for ``lease``."""
 
+        previous = self._leases.get(lease.token)
+        if previous is not None and previous.consumer:
+            self._drop_consumer(previous.consumer)
         self._leases[lease.token] = lease
+        self._renew[lease.token] = renew
+        self._errors.pop(lease.token, None)
+        if lease.consumer:
+            self._consumer_counts[lease.consumer] = (
+                self._consumer_counts.get(lease.consumer, 0) + 1
+            )
         if self._closed:
             return
-        self._tasks[lease.token] = asyncio.create_task(
-            self._heartbeat_loop(lease, renew)
-        )
+        if self._ticker is None or self._ticker.done():
+            self._ticker = asyncio.create_task(self._ticker_loop())
 
     def unregister(self, token: str) -> None:
-        self._leases.pop(token, None)
-        task = self._tasks.pop(token, None)
-        if task is not None:
-            task.cancel()
+        lease = self._leases.pop(token, None)
+        self._renew.pop(token, None)
+        self._errors.pop(token, None)
+        if lease is not None and lease.consumer:
+            self._drop_consumer(lease.consumer)
+
+    def _drop_consumer(self, consumer: str) -> None:
+        remaining = self._consumer_counts.get(consumer, 0) - 1
+        if remaining > 0:
+            self._consumer_counts[consumer] = remaining
+        else:
+            self._consumer_counts.pop(consumer, None)
+
+    def consumer_count(self, consumer: str) -> int:
+        """Active leases held by ``consumer`` (O(1) for admission checks)."""
+
+        return self._consumer_counts.get(consumer, 0)
 
     def get(self, token: str) -> Lease | None:
         return self._leases.get(token)
@@ -63,19 +93,16 @@ class LeaseManager:
 
     async def close(self) -> None:
         self._closed = True
-        for task in self._tasks.values():
-            task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
-        self._tasks.clear()
+        ticker, self._ticker = self._ticker, None
+        if ticker is not None:
+            ticker.cancel()
+            await asyncio.gather(ticker, return_exceptions=True)
+        self._renew.clear()
+        self._errors.clear()
 
     def prune(self, now: float | None = None) -> list[Lease]:
-        """Remove finished/failed heartbeat tasks; returns live leases."""
+        """Returns live leases; heartbeat tasks live on the shared ticker."""
 
-        now = time.time() if now is None else now
-        for token, task in list(self._tasks.items()):
-            if task.done():
-                del self._tasks[token]
         return self.active()
 
     def expired(self, now: float | None = None) -> list[Lease]:
@@ -94,52 +121,68 @@ class LeaseManager:
                     logger.exception("on_expire failed for lease %s", lease.token)
         return expired
 
-    async def _heartbeat_loop(self, lease: Lease, renew: RenewFn) -> None:
-        consecutive_errors = 0
+    async def _ticker_loop(self) -> None:
+        interval = self.heartbeat_interval
+        sleep_for = min(interval, self._TICKER_MAX_SLEEP)
         while True:
-            await asyncio.sleep(self.heartbeat_interval)
-            if lease.expired():
-                break
-            try:
-                ok = await renew(lease)
-            except asyncio.CancelledError:
-                raise
-            except PurserError as exc:
-                if not is_retryable(exc):
-                    logger.warning(
-                        "heartbeat renewal rejected for %s: %s", lease.token, exc
-                    )
-                    await self._report_lost(lease)
-                    break
-                consecutive_errors += 1
-                if consecutive_errors >= self.max_renew_errors:
-                    logger.warning(
-                        "heartbeat renew failed %d times for %s",
-                        consecutive_errors,
-                        lease.token,
-                    )
-                    await self._report_lost(lease)
-                    break
-                logger.warning("heartbeat renew transient error for %s", lease.token)
-                continue
-            except Exception:
-                # Transient storage/coordination errors should not kill a
-                # healthy lease: retry before declaring it lost.
-                consecutive_errors += 1
-                if consecutive_errors >= self.max_renew_errors:
-                    logger.warning(
-                        "heartbeat renew failed %d times for %s",
-                        consecutive_errors,
-                        lease.token,
-                    )
-                    await self._report_lost(lease)
-                    break
-                logger.warning("heartbeat renew transient error for %s", lease.token)
-                continue
-            consecutive_errors = 0
-            if not ok:
-                await self._report_lost(lease)
-                break
+            await asyncio.sleep(sleep_for)
+            now = time.time()
+            due = [
+                lease
+                for lease in list(self._leases.values())
+                if lease.token in self._renew
+                and not lease.expired(now)
+                and now - lease.heartbeat_at >= interval * 0.9
+            ]
+            if due:
+                await asyncio.gather(
+                    *(self._renew_lease(lease) for lease in due),
+                    return_exceptions=True,
+                )
+
+    async def _renew_lease(self, lease: Lease) -> None:
+        renew = self._renew.get(lease.token)
+        if renew is None:
+            return
+        try:
+            ok = await renew(lease)
+        except asyncio.CancelledError:
+            raise
+        except PurserError as exc:
+            if not is_retryable(exc):
+                logger.warning(
+                    "heartbeat renewal rejected for %s: %s", lease.token, exc
+                )
+                await self._give_up(lease)
+                return
+            if self._record_transient(lease, str(exc)):
+                await self._give_up(lease)
+            return
+        except Exception as exc:  # noqa: BLE001 - transient by default
+            if self._record_transient(lease, str(exc)):
+                await self._give_up(lease)
+            return
+        self._errors.pop(lease.token, None)
+        if not ok:
+            await self._give_up(lease)
+
+    def _record_transient(self, lease: Lease, detail: str) -> bool:
+        """Count one transient renewal failure; ``True`` when giving up."""
+
+        errors = self._errors.get(lease.token, 0) + 1
+        self._errors[lease.token] = errors
+        if errors >= self.max_renew_errors:
+            logger.warning(
+                "heartbeat renew failed %d times for %s", errors, lease.token
+            )
+            return True
+        logger.warning("heartbeat renew transient error for %s: %s", lease.token, detail)
+        return False
+
+    async def _give_up(self, lease: Lease) -> None:
+        self._renew.pop(lease.token, None)
+        self._errors.pop(lease.token, None)
+        await self._report_lost(lease)
 
     async def _report_lost(self, lease: Lease) -> None:
         if self.on_lost is not None:

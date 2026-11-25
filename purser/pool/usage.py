@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -13,6 +15,10 @@ from purser.facade._helpers import _now
 if TYPE_CHECKING:
     from purser.pool.context import PoolContext
     from purser.pool.state_ops import StateOps
+
+logger = logging.getLogger("purser")
+
+_APPLY_ATTEMPTS = 3
 
 
 class UsageService:
@@ -29,9 +35,15 @@ class UsageService:
         self.on_validation_fail = on_validation_fail
 
     async def apply_outcome(
-        self, rid: str, outcome: UsageOutcome, used: int | None, lease: Lease
+        self,
+        rid: str,
+        outcome: UsageOutcome,
+        used: int | None,
+        lease: Lease,
+        *,
+        latency_ms: float | None = None,
     ) -> None:
-        for _attempt in range(2):
+        for _attempt in range(_APPLY_ATTEMPTS):
             resource = await self.ctx.storage.get(self.ctx.name, rid)
             if resource is None or resource.state in (
                 ResourceState.ARCHIVED,
@@ -39,8 +51,14 @@ class UsageService:
             ):
                 return
             now = _now()
-            health = resource.health
-            site_failures = resource.site_failures
+            # Work on copies: the memory backend hands back the stored object,
+            # so mutating it in place would leak a failed attempt's counters
+            # (quota, used_count, health) into the CAS retry.
+            health = copy.copy(resource.health)
+            site_failures = {
+                site: copy.copy(failure)
+                for site, failure in resource.site_failures.items()
+            }
             meta = dict(resource.meta)
             consume = used if used is not None else (lease.used or 1)
             used_count = resource.used_count + consume
@@ -52,6 +70,9 @@ class UsageService:
             if outcome in (UsageOutcome.TIMEOUT, UsageOutcome.NETWORK_ERROR, UsageOutcome.BANNED):
                 health.update(alive=False, error=outcome.value, now=now)
                 meta["needs_validate"] = now
+            elif outcome is UsageOutcome.OK and latency_ms is not None:
+                # Real usage is a stronger signal than periodic probes.
+                health.update(alive=True, latency_ms=latency_ms, now=now)
             if outcome is UsageOutcome.RATE_LIMITED:
                 next_available_at = now + max(self.ctx.cfg.cooldown_after_release, 5.0)
             if outcome is UsageOutcome.PREEMPTED:
@@ -59,7 +80,7 @@ class UsageService:
                     meta[f"cooldown:{lease.consumer}"] = now + 10.0
 
             # Usage metering and period quota.
-            quota = resource.quota
+            quota = copy.copy(resource.quota) if resource.quota is not None else None
             if quota is not None:
                 quota.used += consume
 
@@ -118,3 +139,15 @@ class UsageService:
                         operator="system",
                     )
                 return
+        # Every attempt lost the version race: the release itself already
+        # happened, so surface the loss instead of dropping it silently.
+        self.ctx.purser.metrics.inc(f"pool.{self.ctx.name}.feedback_dropped_total")
+        logger.warning(
+            "usage feedback dropped for %s on pool %s after %d CAS attempts "
+            "(outcome=%s, consumer=%s)",
+            rid,
+            self.ctx.name,
+            _APPLY_ATTEMPTS,
+            outcome.value,
+            lease.consumer,
+        )

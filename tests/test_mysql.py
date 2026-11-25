@@ -119,6 +119,15 @@ async def test_contract_suite():
         assert counts[ResourceState.IDLE] >= 4
         ids = [r.id async for r in store.scan(pool)]
         assert "a" in ids and "shared" in ids and "multi" in ids
+
+        # Bounded candidate sampling returns allocatable rows without payloads.
+        sampled = await store.sample_allocatable(
+            pool, states={ResourceState.IDLE}, limit=2
+        )
+        assert len(sampled) == 2
+        assert len({r.id for r in sampled}) == 2
+        assert all(r.payload == {} for r in sampled)
+
         assert await store.delete(pool, "a") is True
         assert await store.get(pool, "a") is None
         await store.flush(pool)
