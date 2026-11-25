@@ -1,4 +1,4 @@
-"""Cross-pool bundle leases (O8): atomic multi-pool acquisition with rollback."""
+"""Cross-pool bundle leases: atomic multi-pool acquisition with rollback."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from purser.core.resource import AcquireRequest, Lease
 from purser.errors import ConfigError
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MatchRule:
     """Derive a companion slot's hard tag from an earlier bundle member.
 
@@ -24,7 +24,7 @@ class MatchRule:
     to_tag: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BundleSlot:
     """One bundle member: a single-pool acquire with optional binding."""
 
@@ -34,9 +34,9 @@ class BundleSlot:
     match: MatchRule | None = None  # derive companion constraints
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BundleRequest:
-    """Desired combination of resources across pools (O8)."""
+    """Desired combination of resources across pools."""
 
     slots: tuple[BundleSlot, ...]
     consumer: str | None = None
@@ -74,7 +74,7 @@ class BundleRequest:
                 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BundleFairness:
     """Cross-pool admission limits for bundles (default off: ``None``)."""
 
@@ -95,7 +95,7 @@ class BundleFairness:
             raise ConfigError("bundle_fairness.timeout must be >= 0 or None")
 
 
-@dataclass
+@dataclass(slots=True)
 class BundleLease:
     """Result of ``acquire_bundle``: one lease per member pool."""
 

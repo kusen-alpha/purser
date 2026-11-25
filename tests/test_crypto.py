@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+
+import pytest
 
 from purser.core.resource import Resource, describe_resource
 from purser.core.state import ResourceState
-from purser.crypto import SecretCodec, mask_payload
+from purser.crypto import SecretCodec, load_or_create_key, mask_payload
+from purser.errors import ConfigError
 
 SECRETS = ("password", "cookie")
 
@@ -84,3 +88,59 @@ def test_describe_masks_payload():
 
 def test_mask_payload():
     assert mask_payload({"a": 1}) == {"a": "***"}
+
+
+def test_load_or_create_key_creates_then_reuses(tmp_path):
+    path = str(tmp_path / "store.db")
+    first = load_or_create_key(path)
+    assert first is not None and len(first) == 32
+    assert load_or_create_key(path) == first
+
+
+def test_load_or_create_key_skips_memory_stores():
+    assert load_or_create_key(":memory:") is None
+    assert load_or_create_key("") is None
+
+
+def test_corrupt_keyfile_raises(tmp_path):
+    path = str(tmp_path / "store.db")
+    (tmp_path / "store.db.key").write_bytes(b"short")
+    with pytest.raises(ConfigError, match="corrupt key file"):
+        load_or_create_key(path)
+
+
+def test_unreadable_keyfile_raises(tmp_path, monkeypatch):
+    path = str(tmp_path / "store.db")
+    (tmp_path / "store.db.key").write_bytes(b"x" * 32)
+    real_open = open
+
+    def fake_open(file, mode="r", *args, **kwargs):
+        if str(file).endswith(".key") and "r" in mode:
+            raise PermissionError("denied")
+        return real_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    with pytest.raises(ConfigError, match="cannot read key file"):
+        load_or_create_key(path)
+
+
+def test_unwritable_keyfile_raises(tmp_path, monkeypatch):
+    path = str(tmp_path / "store.db")
+    real_open = open
+
+    def fake_open(file, mode="r", *args, **kwargs):
+        if str(file).endswith(".key") and "w" in mode:
+            raise OSError("read-only filesystem")
+        return real_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    with pytest.raises(ConfigError, match="cannot persist key file"):
+        load_or_create_key(path)
+
+
+def test_ephemeral_key_warns(monkeypatch, caplog):
+    monkeypatch.delenv("PURSER_SECRET_KEY", raising=False)
+    with caplog.at_level(logging.WARNING, logger="purser"):
+        codec = SecretCodec()
+    assert codec.ephemeral is True
+    assert "ephemeral key" in caplog.text

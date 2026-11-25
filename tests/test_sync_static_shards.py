@@ -14,10 +14,11 @@ Covered shapes (``storage-coordination``):
 * mysql-memory       -- one MySQL schema, distinct pool names;
 * mysql-redis        -- one MySQL schema + real Redis, distinct pool names.
 
-Two extra tests document the two configuration conditions that make a shard
-safe: overlapping instances on one memory-coordinated shard double-book
-(known gap, xfail), and sharing a Redis pool name across private storage
-shards pollutes startup reconcile.
+Two extra tests pin the configuration conditions around shard safety: a
+memory-coordinated shard rejects overlapping instances through the isolation
+guard (and only the harness override, which bypasses the guard, lets them
+double-book), and sharing a Redis pool name across private storage shards
+pollutes startup reconcile.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import multiprocessing as mp
 import os
 import time
@@ -37,7 +39,12 @@ from conftest import FakeChecker
 from redis import asyncio as aioredis
 
 from purser import AcquireRequest, SyncPurser
-from purser.errors import PoolExhausted, PurserError, ResourceBusy
+from purser.errors import (
+    IsolationConflict,
+    PoolExhausted,
+    PurserError,
+    ResourceBusy,
+)
 
 REAL_REDIS_URL = os.environ.get("PURSER_TEST_REDIS_URL")
 MYSQL_URL = os.environ.get("PURSER_TEST_MYSQL_URL")
@@ -171,7 +178,7 @@ def _delete_pool(cfg: dict, name: str) -> None:
     try:
         ps = _new_instance(cfg)
         ps.start()
-        pool = ps.pool(name, "fakecheck", max_slots=1, lease_ttl=30.0)
+        pool = ps.ensure_pool(name, "fakecheck", max_slots=1, lease_ttl=30.0)
         for lease in list(pool.leases()):
             with contextlib.suppress(PurserError):
                 pool.force_revoke(
@@ -374,15 +381,18 @@ def test_static_shards_run_independently(shape, tmp_path, mysql_cleanup):
         assert used_a == {"r0": 0, "r1": 0} and used_b == {"r0": 0, "r1": 0}
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="V02/P0-2: memory coordination is instance-private; a second "
-    "instance on the same SQLite shard reconciles away the first instance's "
-    "live slot, so overlapping instances can double-book one shard",
-)
-def test_one_memory_coordinated_shard_rejects_overlapping_instances(tmp_path):
-    """Static-sharding condition: old and new instances must not overlap."""
+def test_memory_coordinated_shard_rejects_overlapping_instances(
+    tmp_path, monkeypatch
+):
+    """Static-sharding condition: old and new instances must not overlap.
 
+    In production the isolation guard (same process) and the SQLite file
+    authority (other processes) reject the second owner, so the shard never
+    double-books.  Only the harness override turns both off; the next test
+    pins what that opt-out permits.
+    """
+
+    monkeypatch.delenv("PURSER_ALLOW_SHARED_BACKENDS", raising=False)
     name = f"static-overlap-{uuid.uuid4().hex[:8]}"
     cfg = {
         "storage": "sqlite",
@@ -390,9 +400,7 @@ def test_one_memory_coordinated_shard_rejects_overlapping_instances(tmp_path):
         "sqlite_path": str(tmp_path / "overlap.sqlite3"),
     }
     ps_a = _new_instance(cfg)
-    ps_b = _new_instance(cfg)
     lease_a = None
-    lease_b = None
     try:
         pool_a = _open_pool(ps_a, name)
         _seed(pool_a, "overlap.internal")
@@ -401,17 +409,57 @@ def test_one_memory_coordinated_shard_rejects_overlapping_instances(tmp_path):
         )
         assert pool_a.require("r0").concurrency.used_slots == 1
 
-        # A new process opens the same shard while the old holder is alive.
-        pool_b = _open_pool(ps_b, name)
-        assert pool_b.require("r0").concurrency.used_slots == 0, (
-            "startup reconcile unexpectedly preserved the live slot"
+        ps_b = _new_instance(cfg)
+        try:
+            with pytest.raises(IsolationConflict):
+                _open_pool(ps_b, name)
+        finally:
+            with contextlib.suppress(BaseException):
+                ps_b.close()
+    finally:
+        if lease_a is not None:
+            with contextlib.suppress(PurserError):
+                pool_a.release(lease_a)
+        with contextlib.suppress(BaseException):
+            ps_a.close()
+
+
+def test_shared_backend_override_allows_double_booking(tmp_path, caplog):
+    """``PURSER_ALLOW_SHARED_BACKENDS=1`` is for harnesses that model hosts.
+
+    With both guards off, a second instance on the same SQLite shard reconciles
+    the first instance's live slot away and admits its own holder for the same
+    resource -- the pool oversells.  Reconcile warns while doing it.
+    """
+
+    name = f"static-overlap-{uuid.uuid4().hex[:8]}"
+    cfg = {
+        "storage": "sqlite",
+        "coordination": "memory",
+        "sqlite_path": str(tmp_path / "override.sqlite3"),
+    }
+    ps_a = _new_instance(cfg)
+    ps_b = _new_instance(cfg)
+    lease_a = None
+    lease_b = None
+    try:
+        pool_a = _open_pool(ps_a, name)
+        _seed(pool_a, "override.internal")
+        lease_a = pool_a.acquire(
+            AcquireRequest(resource_id="r0", consumer="old", slots=1, timeout=2.0)
         )
-        with pytest.raises(BUSY):
-            lease_b = pool_b.acquire(
-                AcquireRequest(
-                    resource_id="r0", consumer="new", slots=1, timeout=0.6
-                )
-            )
+        assert pool_a.require("r0").concurrency.used_slots == 1
+
+        with caplog.at_level(logging.WARNING, logger="purser"):
+            pool_b = _open_pool(ps_b, name)
+        assert any(
+            "instance-private" in record.getMessage() for record in caplog.records
+        ), caplog.text
+        assert pool_b.require("r0").concurrency.used_slots == 0
+        lease_b = pool_b.acquire(
+            AcquireRequest(resource_id="r0", consumer="new", slots=1, timeout=0.6)
+        )
+        assert lease_b.token != lease_a.token
     finally:
         if lease_b is not None:
             with contextlib.suppress(PurserError):

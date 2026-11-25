@@ -18,7 +18,8 @@ Each subclass declares two class-level facts:
 
 from __future__ import annotations
 
-from typing import Any
+import warnings
+from typing import Any, ClassVar
 
 
 class PurserError(Exception):
@@ -26,6 +27,15 @@ class PurserError(Exception):
 
     code: str | None = None
     retryable: bool = False
+    _by_code: ClassVar[dict[str, type[PurserError]]] = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Only classes that declare their own wire code are registered; the
+        # first declaration wins, matching the previous definition order.
+        code = cls.__dict__.get("code")
+        if isinstance(code, str) and code and code not in PurserError._by_code:
+            PurserError._by_code[code] = cls
 
     def details(self) -> dict[str, Any] | None:
         """Structured context for IPC round-trips (``None`` when absent)."""
@@ -56,17 +66,27 @@ class IsolationConflict(ConfigError):
 
 
 class NotStarted(PurserError):
-    """Pool runtime is not started; acquire/lease need ``await ps.start()``."""
+    """Pool runtime is not started; the facade must be started before use."""
 
     code = "not_started"
 
-    def __init__(self, pool: str | None = None, *, operation: str = "acquire") -> None:
+    def __init__(
+        self,
+        pool: str | None = None,
+        *,
+        operation: str = "acquire",
+        sync: bool = False,
+    ) -> None:
         self.pool = pool
         self.operation = operation
         target = f"pool {pool!r}" if pool else "purser"
+        hint = (
+            "`ps.start()`"
+            if sync
+            else "`await ps.start()` or use `async with Purser() as ps`"
+        )
         super().__init__(
-            f"cannot {operation}: {target} is not started; "
-            "call `await ps.start()` or use `async with Purser() as ps`"
+            f"cannot {operation}: {target} is not started; call {hint}"
         )
 
     def details(self) -> dict[str, Any] | None:
@@ -179,13 +199,13 @@ class LeaseExpired(PurserError):
     code = "lease_expired"
 
 
-class LeaseRevokedError(PurserError):
+class LeaseRevoked(PurserError):
     """Lease was force-revoked by an operator."""
 
     code = "lease_revoked"
 
 
-class LeaseLostError(PurserError):
+class LeaseLost(PurserError):
     """Lease vanished (expired or backend reset) while still held."""
 
     code = "lease_lost"
@@ -236,17 +256,9 @@ class BackendUnavailable(PurserError):
 
 
 def _error_types() -> dict[str, type[PurserError]]:
-    """Index every declared subclass by wire code (computed on demand)."""
+    """Snapshot of every declared subclass keyed by wire code."""
 
-    found: dict[str, type[PurserError]] = {}
-    stack: list[type[PurserError]] = list(PurserError.__subclasses__())
-    while stack:
-        cls = stack.pop()
-        stack.extend(cls.__subclasses__())
-        code = getattr(cls, "code", None)
-        if isinstance(code, str) and code and code not in found:
-            found[code] = cls
-    return found
+    return dict(PurserError._by_code)
 
 
 def error_by_code(code: str) -> type[PurserError] | None:
@@ -259,3 +271,23 @@ def is_retryable(exc: BaseException) -> bool:
     """Whether the same operation may succeed later without state changes."""
 
     return bool(getattr(exc, "retryable", False))
+
+
+_DEPRECATED_ALIASES = {
+    "LeaseRevokedError": "LeaseRevoked",
+    "LeaseLostError": "LeaseLost",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve the pre-0.6 ``*Error`` spellings with a deprecation warning."""
+
+    replacement = _DEPRECATED_ALIASES.get(name)
+    if replacement is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    warnings.warn(
+        f"purser.errors.{name} is deprecated; use {replacement}",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return globals()[replacement]

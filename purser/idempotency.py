@@ -1,4 +1,4 @@
-"""Write idempotency store (D1): return the first result for repeated keys."""
+"""Write idempotency store: return the first result for repeated keys."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass
+@dataclass(slots=True)
 class IdempotencyStore:
     """Process-local store.  Use :class:`RedisIdempotencyStore` when several
     API instances share the same clients."""
@@ -44,7 +44,7 @@ class IdempotencyStore:
 
 
 class RedisIdempotencyStore:
-    """Shared idempotency keys for multi-instance deployments (D1)."""
+    """Shared idempotency keys for multi-instance deployments."""
 
     def __init__(
         self,

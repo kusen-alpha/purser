@@ -89,4 +89,4 @@ asyncio.run(main())
 
 ## 版本
 
-当前文档对应 `0.2.0`。Python 侧签名以 `purser/` 源码与 `purser` 顶层导出为准；REST 端点级签名以运行中服务的 `/docs`（OpenAPI）为准。
+当前文档对应 `0.5.0`。Python 侧签名以 `purser/` 源码与 `purser` 顶层导出为准；REST 端点级签名以运行中服务的 `/docs`（OpenAPI）为准。

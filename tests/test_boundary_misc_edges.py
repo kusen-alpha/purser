@@ -6,6 +6,7 @@ import asyncio
 import json
 
 import fakeredis
+import pytest
 from conftest import FakeChecker, seed
 
 from purser import Purser
@@ -22,6 +23,7 @@ from purser.core.audit import AuditLog
 from purser.core.health import HealthStats
 from purser.core.resource import AcquireRequest, Quota, Resource, SiteFailure
 from purser.core.state import ResourceState
+from purser.errors import LeaseLimitReached
 
 
 async def test_max_lease_duration_caps_renewal(make_pool):
@@ -29,10 +31,11 @@ async def test_max_lease_duration_caps_renewal(make_pool):
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     assert lease.resource_id == rid
-    assert await pool.renew_manual(lease) is True
+    assert isinstance(await pool.renew(lease), float)
     assert lease.expires_at <= lease.started_at + 0.3 + 0.1  # capped, not ttl-sized
     await asyncio.sleep(0.5)
-    assert await pool.renew_manual(lease) is False  # total lifetime is over
+    with pytest.raises(LeaseLimitReached):
+        await pool.renew(lease)  # total lifetime is over
 
 
 async def test_started_pool_reaper_auto_returns_expired(storage_kind, coordination_kind):
@@ -110,18 +113,18 @@ async def test_recall_batch_isolate(make_pool):
     assert res is not None and res.state is ResourceState.QUARANTINED
 
 
-def test_next_usable_at_merges():
+def test_usable_at_merges():
     res = Resource(id="r", kind="k", payload={})
     res.next_available_at = 100.0
     res.expires_at = 200.0
     res.meta["quarantine_until"] = 300.0
     res.meta["cooldown:c"] = 50.0
     res.meta["cooldown:other"] = 400.0
-    assert res.next_usable_at(0.0) == 300.0
-    assert res.next_usable_at(0.0, consumer="c") == 300.0  # per-consumer max
-    assert res.next_usable_at(0.0, consumer="other") == 400.0
+    assert res.usable_at(0.0) == 300.0
+    assert res.usable_at(0.0, consumer="c") == 300.0  # per-consumer max
+    assert res.usable_at(0.0, consumer="other") == 400.0
     res.meta["quarantine_until"] = 10.0
-    assert res.next_usable_at(0.0, consumer="other") == 400.0
+    assert res.usable_at(0.0, consumer="other") == 400.0
 
 
 def test_serde_roundtrip():

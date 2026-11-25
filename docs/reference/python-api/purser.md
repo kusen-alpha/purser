@@ -10,7 +10,7 @@ Purser(
     usage_ledger_size=50_000, storage="memory", coordination="memory",
     mysql_url=None, mysql_connection=None, redis_url=None, redis_client=None,
     sqlite_path=None, audit_path=None, secret_key=None, secret_key_id="1",
-    previous_secret_keys=None, use_globals=True, bundle_mode="rollback",
+    previous_secret_keys=None, default_adapters="global", bundle_mode="rollback",
     bundle_fairness=None, reservation_ttl=30.0, bundle_gc_interval=30.0,
     fairness_ttl=300.0,
 )
@@ -28,7 +28,7 @@ Purser(
 | `sqlite_path` | `None` | SQLite 文件路径；`storage="sqlite"` 时必填，不会静默退回内存 |
 | `audit_path` | `None` | 非空时审计哈希链同时写入该 SQLite 文件，重启后恢复并继续校验 |
 | `secret_key` / `secret_key_id` / `previous_secret_keys` | `None` / `"1"` / `None` | payload 加密主密钥、当前密文标识与轮换期旧密钥表；缺省读取 `PURSER_SECRET_KEY`，sqlite 下可从 key 文件加载 |
-| `use_globals` | `True` | 是否装载 `@register` 声明的全局默认适配器；kind 与内置 `proxy` / `account` 冲突时报错 |
+| `default_adapters` | `"global"` | 构造时从默认目录装载适配器的范围：`"global"` = 内置 `proxy` / `account` + `@register_default_adapter` 全局注册；`"builtin"` = 只装内置；`"none"` = 空注册表，全部自行注册。`SyncPurser` / `ThreadPurser` / `ProcessPurser` 同名转发（进程模式下作用于调度进程） |
 | `bundle_mode` | `"rollback"` | 组合租约编排模式：`rollback`（默认）/ `two_phase`（跨实例严格两阶段） |
 | `bundle_fairness` | `None` | `BundleFairness` 配置；非空时开启跨池准入配额 |
 | `reservation_ttl` | `30.0` | 两阶段拼装期成员书签 TTL（秒） |
@@ -57,12 +57,12 @@ await ps.close()      # 幂等；关闭池、事件总线与审计
 
 | 方法 | 行为 |
 | --- | --- |
-| `create_pool(name, kind, *, config=None, profile=None, **overrides)` | 新建池；同名已存在抛 `PoolExists`。`config` 可为 `PoolConfig` 或字典，`profile` 为可选场景预设，`overrides` 最后覆盖 |
-| `pool(name, kind=None, *, config=None, profile=None, **overrides)` | 已存在则返回；否则用给定 `kind` 创建。缺 `kind` 且不存在时抛 `PoolNotFound` |
-| `get_pool(name)` | 不存在返回 `None` |
-| `require_pool(name)` | 不存在抛 `PoolNotFound` |
-| `pool_names()` | 返回已注册池名列表 |
-| `delete_pool(name, *, force=False, operator="system")` | 删除池；有活跃租约时始终拒绝。仅当 `force=True` 才允许删除仍有资源的池，并先 flush 两个后端。返回 `{"pool", "removed", "forced"}` |
+| `create_pool(name, kind, *, config=None, profile=None, **overrides)` | 严格新建池；同名已存在抛 `PoolExists`。`config` 可为 `PoolConfig` 或字典，`profile` 为可选场景预设，`overrides` 最后覆盖 |
+| `ensure_pool(name, kind, *, config=None, profile=None, **overrides)` | 幂等取或建（attach）：已存在直接返回，忽略本次 `config` / `profile` / `overrides`，也不校验 `kind`；不存在才按参数创建。多 worker / 多实例共享调度进程或存储时用它，重复执行不失败 |
+| `get_pool(name, *, default=...)` | 只读取池：存在则返回；不存在时传了 `default` 返回它，否则抛 `PoolNotFound`（`get_pool(name, default=None)` 返回 `None`） |
+| `pools`（property） | 本地已注册池的只读映射快照 `Mapping[str, Pool]`；之后的增删不会反映到已取得的对象上 |
+| `get_pool_names()` | 返回已注册池名列表 |
+| `await delete_pool(name, *, force=False, operator="system")` | 删除池；有活跃租约时始终拒绝。仅当 `force=True` 才允许删除仍有资源的池，并先 flush 两个后端。返回 `{"pool", "removed", "forced"}` |
 
 最基础的建池只需要直接字段，不必构造 `PoolConfig`；需要常见默认值时再加可选预设：
 
@@ -171,11 +171,11 @@ report = await ps.report_usage(
 
 ```python
 document = await ps.backup(operator="backup-job")
-result = await ps.restore(document, conflict="skip", operator="restore-job")
+result = await ps.restore_backup(document, conflict="skip", operator="restore-job")
 ```
 
 - `backup()` 返回 `format` / `version` / `schema_version` / `created_at` / `pools`；每个池含 `config`、`resources` 与**租约快照**。文档包含明文 payload（含密文字段），只应交给可信调用方。
-- `restore()` 校验 `format` / `version`；`conflict` 取 `skip`（已存在资源不动）或 `overwrite`。
+- `restore_backup()` 校验 `format` / `version`；`conflict` 取 `skip`（已存在资源不动）或 `overwrite`。
 - 恢复不迁移租约：`new` / `validating` / `active` / `full` / `draining` / `lost` 占用态一律回到 `IDLE`；`banned` / `quarantined` / `suspended` / `quota_exhausted` / `archived` 保留。备份中的租约只计入返回值的 `leases_ignored`。
 - 池的 `storage` / `coordination` 是部署选择，始终取当前服务配置，不取备份文档。
 - 返回 `{"ok", "format", "conflict", "created_pools", "reused_pools", "imported", "updated", "skipped", "normalized", "leases_ignored", "errors"}`。

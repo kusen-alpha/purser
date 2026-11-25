@@ -1,4 +1,4 @@
-"""PeriodicScheduler: six idempotent maintenance tasks (5.9 / O19 / X3)."""
+"""PeriodicScheduler: six idempotent maintenance tasks."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     RunFn = Callable[[], Awaitable[None]]
 
 
-@dataclass
+@dataclass(slots=True)
 class PeriodicTask:
     name: str
     interval: float

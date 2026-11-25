@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import random
 
-from hypothesis import given, settings
-from hypothesis import strategies as st
+from hypothesis import given, settings, strategies as st
 
 from purser.config import Weights
 from purser.core.allocator import (

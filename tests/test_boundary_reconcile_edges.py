@@ -11,6 +11,7 @@ steal another live holder's slot, and a waiter-cancel stress that guards the
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 import pytest
@@ -128,6 +129,26 @@ async def test_reconcile_full_orphan_resets_to_idle(make_pool):
     assert res.state is ResourceState.IDLE
     assert await pool._coordination.active(pool.name) == []
     assert lease_a.token != lease_b.token
+
+
+async def test_reconcile_warns_only_for_memory_coordination(make_pool, caplog):
+    """Dropping live-looking slots is normal after a crash for shared
+    coordination, but with memory coordination it can only mean a shard is
+    owned by more than one instance, so reconcile must say so."""
+
+    pool = make_pool("px", max_slots=2)
+    [rid] = await seed(pool, n=1)
+    await pool.acquire(AcquireRequest(consumer="a", slots=1))
+    await pool._coordination.flush(pool.name)
+    with caplog.at_level(logging.WARNING, logger="purser"):
+        await pool._reconcile_leases()
+    messages = [record.getMessage() for record in caplog.records]
+    if pool.cfg.coordination == "memory":
+        assert len(messages) == 1 and "instance-private" in messages[0], messages
+    else:
+        assert messages == [], messages
+    res = await pool.get(rid)
+    assert res is not None and res.concurrency.used_slots == 0
 
 
 async def test_reconcile_draining_with_surviving_lease_not_archived(make_pool):

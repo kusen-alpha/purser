@@ -64,8 +64,9 @@ asyncio.run(main())
 
 ### 同机多进程：`connect()`
 
-调度进程持有唯一的 `Purser`，业务进程用 `connect()` 拿到与 `ResourcePool` 同形的异步门面
-（IPC 调用跑在线程池里，不阻塞事件循环）：
+调度进程持有唯一的 `Purser`，业务进程用 `connect()` 拿到覆盖数据面与只读目录的异步门面
+（`acquire`/`lease`/`release`/`renew`/`stats`/`query`/`counts`/`get` 等；IPC 调用跑在线程池里，
+不阻塞事件循环）。组合租约、用量报告与备份仍由 `Purser` / `SyncPurser` 提供：
 
 ```python
 from purser import AcquireRequest, LocalScheduler, connect

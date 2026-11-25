@@ -46,7 +46,7 @@ purser serve --host 0.0.0.0 --port 8000
 
 新建资源池时池名与**资源类型**必填，其余都可以留空。适配器决定资源表单字段，创建后不可修改。
 
-「场景预设 profile（仅创建时）」是可选起点（`basic` / `validated` / `shared` / `long_running` / `quota`），基础脚本不需要选择。预设与显式字段冲突时，显式字段覆盖预设。
+「场景预设 profile（仅创建时）」是可选起点（`basic` / `validated` / `shared` / `long_running` / `quota` / `random` / `one_shot`），基础脚本不需要选择。预设与显式字段冲突时，显式字段覆盖预设。
 
 「调度与运行参数」由 `GET /config/schema` 动态生成，覆盖部署、分配、租约、隔离、验活与保留等全部池配置。`storage`、`coordination`、`secret_fields`、`event_queue_size`、`schema_version` 只能在建池时指定，编辑时会锁定；其余字段可在 **池设置** 中热更新。多实例部署应选 `sqlite`/`mysql` + `redis`。
 

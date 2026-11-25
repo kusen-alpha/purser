@@ -69,7 +69,7 @@ if TYPE_CHECKING:
     _Target = ResourceState | Callable[["ResourceState", "StateContext"], ResourceState]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StateContext:
     """Runtime values consulted by guard callables inside the table."""
 
@@ -134,7 +134,7 @@ ADMIN_ALLOWED: frozenset[ResourceState] = frozenset(
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _TransitionSpec:
     event: Event
     target: _Target

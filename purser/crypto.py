@@ -1,16 +1,25 @@
-"""AES-GCM payload encryption for sensitive fields (C1 / K1)."""
+"""AES-GCM payload encryption for sensitive fields."""
 
 from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
 from purser.errors import BadPayload, ConfigError
+
+logger = logging.getLogger("purser")
+
+
+def _aesgcm(key: bytes) -> Any:
+    """Create an AES-GCM cipher, importing ``cryptography`` on first use."""
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    return AESGCM(key)
 
 
 def _b64(data: bytes) -> str:
@@ -21,7 +30,7 @@ def _unb64(text: str) -> bytes:
     return base64.b64decode(text.encode("ascii"))
 
 
-@dataclass
+@dataclass(slots=True)
 class SecretCodec:
     """Encrypts a configured subset of payload fields before persistence.
 
@@ -46,6 +55,10 @@ class SecretCodec:
                 # Test/dev convenience only: an ephemeral key is generated.
                 self.key = os.urandom(32)
                 self.ephemeral = True
+                logger.warning(
+                    "PURSER_SECRET_KEY is not set; using an ephemeral key — "
+                    "encrypted payloads will be unreadable after restart"
+                )
         if len(self.key) not in (16, 24, 32):
             raise ConfigError("PURSER_SECRET_KEY must be 16/24/32 bytes (or base64)")
         ring: dict[str, bytes] = {}
@@ -107,7 +120,9 @@ class SecretCodec:
         return payload
 
     def _seal(self, value: Any) -> dict[str, str]:
-        aes = AESGCM(self.key)
+        key = self.key
+        assert key is not None  # __post_init__ always installs a key
+        aes = _aesgcm(key)
         nonce = os.urandom(12)
         # JSON keeps the field's type (int/float/bool/None/list/dict) intact
         # through the encrypt/decrypt round trip.
@@ -124,7 +139,7 @@ class SecretCodec:
             raise BadPayload(f"unknown key id {key_id!r}; cannot decrypt payload")
         blob = _unb64(sealed["v"])
         nonce, ct = blob[:12], blob[12:]
-        aes = AESGCM(key)
+        aes = _aesgcm(key)
         return json.loads(aes.decrypt(nonce, ct, None).decode("utf-8"))
 
 
@@ -146,15 +161,20 @@ def load_or_create_key(store_path: str) -> bytes | None:
     try:
         with open(keyfile, "rb") as fh:
             raw = fh.read()
+    except FileNotFoundError:
+        raw = None
+    except OSError as exc:
+        # A key file that exists but cannot be read must not be replaced:
+        # a fresh key would make every stored payload undecryptable.
+        raise ConfigError(f"cannot read key file {keyfile!r}: {exc}") from exc
+    if raw is not None:
         if len(raw) != 32:
             raise ConfigError(f"corrupt key file {keyfile!r}: expected 32 bytes")
         return raw
-    except OSError:
-        pass
     key = os.urandom(32)
     try:
         with open(keyfile, "wb") as fh:
             fh.write(key)
-    except OSError:
-        return None
+    except OSError as exc:
+        raise ConfigError(f"cannot persist key file {keyfile!r}: {exc}") from exc
     return key

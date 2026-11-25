@@ -1,26 +1,25 @@
-"""Allocation strategies: score eligible candidates, then pick (5.1)."""
+"""Allocation strategies: score eligible candidates, then pick."""
 
 from __future__ import annotations
 
 import math
 import random
-import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import cast
 
+from purser.allocator_registry import register_allocator_name
 from purser.config import Weights
+from purser.core.meta import ResourceMeta
 from purser.core.resource import AcquireRequest, Resource
-
-
-def _now() -> float:
-    return time.time()
+from purser.errors import ConfigError
 
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-@dataclass
+@dataclass(slots=True)
 class AllocationContext:
     now: float
     request: AcquireRequest
@@ -28,7 +27,6 @@ class AllocationContext:
     affinity_scores: dict[str, float] | None = None
     group_priority: dict[str, int] | None = None
     top_k: int = 8
-    cursor: int = 0
     rng: random.Random = field(default_factory=random.Random, repr=False)
 
 
@@ -58,9 +56,7 @@ class Allocator(ABC):
         total = sum(exp)
         r = ctx.rng.random() * total
         acc = 0.0
-        # Plain zip: ``strict=`` is Python 3.10+, and the sequences are the
-        # same length by construction here.
-        for (res, _), e in zip(ranked, exp):  # noqa: B905
+        for (res, _), e in zip(ranked, exp, strict=True):
             acc += e
             if r <= acc:
                 return res
@@ -69,7 +65,7 @@ class Allocator(ABC):
 
 class HealthWeightedAllocator(Allocator):
     """Default: health.score up, longer-idle up (LRU rotation), load down,
-    preference and affinity as soft boosts, plus jitter (5.1)."""
+    preference and affinity as soft boosts, plus jitter."""
 
     name = "health_weighted"
 
@@ -82,7 +78,7 @@ class HealthWeightedAllocator(Allocator):
             last = res.last_used_at
             if last is not None:
                 age = _clamp01((now - last) / 3600.0)
-            pref = float(res.meta.get("preference", 0.0))
+            pref = cast(ResourceMeta, res.meta).preference
             aff = 0.0
             if ctx.affinity_scores is not None:
                 aff = ctx.affinity_scores.get(res.id, 0.0)
@@ -142,9 +138,10 @@ class StaticPriorityAllocator(Allocator):
 
     def rank(self, candidates: list[Resource], ctx: AllocationContext) -> list[tuple[Resource, float]]:
         def priority(res: Resource) -> float:
-            if ctx.group_priority and res.meta.get("group"):
-                return float(ctx.group_priority.get(res.meta["group"], 0))
-            return float(res.meta.get("priority", 0))
+            meta = cast(ResourceMeta, res.meta)
+            if ctx.group_priority and meta.group:
+                return float(ctx.group_priority.get(meta.group, 0))
+            return float(meta.priority)
 
         return sorted(
             ((res, priority(res)) for res in candidates),
@@ -163,6 +160,20 @@ class StaticPriorityAllocator(Allocator):
         return self._weighted_pick(tied[: ctx.top_k], ctx)
 
 
+class RandomAllocator(Allocator):
+    """Uniform pick across every eligible candidate (ignores scores)."""
+
+    name = "random"
+
+    def rank(self, candidates: list[Resource], ctx: AllocationContext) -> list[tuple[Resource, float]]:
+        pool = list(candidates)
+        ctx.rng.shuffle(pool)
+        return [(res, 0.0) for res in pool]
+
+    def pick(self, candidates: list[Resource], ctx: AllocationContext) -> Resource | None:
+        return ctx.rng.choice(candidates) if candidates else None
+
+
 ALLOCATORS: dict[str, type[Allocator]] = {
     cls.name: cls
     for cls in (
@@ -170,14 +181,56 @@ ALLOCATORS: dict[str, type[Allocator]] = {
         RoundRobinAllocator,
         LeastLoadedAllocator,
         StaticPriorityAllocator,
+        RandomAllocator,
     )
 }
+
+
+def register_allocator(cls: type[Allocator]) -> type[Allocator]:
+    """Register a custom allocator class under its ``name`` attribute.
+
+    Works for the ``@register_allocator`` decorator form or a direct call; the
+    registered name is what ``PoolConfig(allocator=...)`` accepts.
+    """
+
+    if not isinstance(cls, type) or not issubclass(cls, Allocator):
+        raise ConfigError("register_allocator expects an Allocator subclass")
+    name = getattr(cls, "name", "")
+    if not name or name == Allocator.name:
+        raise ConfigError("custom allocator must declare a non-empty class name")
+    existing = ALLOCATORS.get(name)
+    if existing is not None:
+        raise ConfigError(
+            f"duplicate allocator name {name!r}: "
+            f"{'builtin' if existing.__module__.startswith('purser.') else 'custom'} "
+            "allocator already registered"
+        )
+    ALLOCATORS[name] = cls
+    register_allocator_name(name)
+    return cls
+
+
+def allocator_names() -> list[str]:
+    return sorted(ALLOCATORS)
 
 
 def make_allocator(name: str) -> Allocator:
     try:
         return ALLOCATORS[name]()
     except KeyError:
-        from purser.errors import ConfigError
-
         raise ConfigError(f"unknown allocator {name!r}") from None
+
+
+__all__ = [
+    "ALLOCATORS",
+    "AllocationContext",
+    "Allocator",
+    "HealthWeightedAllocator",
+    "LeastLoadedAllocator",
+    "RandomAllocator",
+    "RoundRobinAllocator",
+    "StaticPriorityAllocator",
+    "allocator_names",
+    "make_allocator",
+    "register_allocator",
+]

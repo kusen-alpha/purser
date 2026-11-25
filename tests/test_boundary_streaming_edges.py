@@ -10,7 +10,7 @@ from conftest import seed
 from purser.config import PoolConfig
 from purser.core.resource import AcquireRequest
 from purser.core.state import ResourceState
-from purser.errors import ConfigError, PoolExhausted
+from purser.errors import ConfigError, LeaseLost, PoolExhausted
 
 
 async def test_acquire_many_honors_requested_slots(make_pool):
@@ -123,12 +123,13 @@ async def test_release_rejects_bad_outcome_type(make_pool):
     assert await pool.release(lease, outcome=None) is True
 
 
-async def test_renew_after_release_returns_false(make_pool):
+async def test_renew_after_release_raises_lost(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     await pool.release(lease)
-    assert await pool.renew_manual(lease) is False
+    with pytest.raises(LeaseLost):
+        await pool.renew(lease)
 
 
 async def test_concurrent_import_same_records_no_duplicates(make_pool):
@@ -160,7 +161,7 @@ async def test_force_revoke_clears_consumer_hold(make_pool):
 async def test_move_then_acquire_from_target(make_pool, purser):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    target = purser.pool("target", "fakecheck")
+    target = purser.ensure_pool("target", "fakecheck")
     moved = await pool.move_resource(rid, target, operator="ops", reason="migrate")
     assert moved.id == rid
     lease = await target.acquire(AcquireRequest(consumer="c"))

@@ -21,6 +21,10 @@
 
 `purser serve` 的参数优先于环境变量。多实例必须同时设置 `PURSER_COORDINATION=redis`。
 
+`PURSER_SECRET_KEY` 未设置且使用 SQLite 时，密钥从 `<db 路径>.key` 读取；仅当该文件
+不存在时才创建。文件存在但不可读、损坏或写不进去会直接抛 `ConfigError`，不会静默
+换钥。两者都没有时生成临时密钥并记录 warning，该密钥不跨重启。
+
 ## PoolConfig
 
 创建池时传入，或通过 `PATCH /pools/{pool}` 热更新（不可变项除外）。
@@ -41,7 +45,8 @@ pool = ps.create_pool("proxies", "proxy", profile="basic", lease_ttl=120)
 ```
 
 合并顺序固定为：实例默认值（`storage` / `coordination`）→ `profile` → `config` → 关键字参数。
-预设包括 `basic`、`validated`、`shared`、`long_running`、`quota`，完整定义见
+预设包括 `basic`、`validated`、`shared`、`long_running`、`quota`、`random`（随机分配）与
+`one_shot`（无占用取样 + 随机分配，适合“拿一次就用、不归还”的脚本），完整定义见
 `purser.POOL_PROFILES`。纯 Python 侧也可以用映射一步构造：
 
 ```python
@@ -59,8 +64,12 @@ REST 与浏览器控制台使用同一份契约：`GET /config/schema` 返回字
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `allocator` | `health_weighted` | `round_robin` / `least_loaded` / `static_priority` |
-| `scheduler` | `priority_quota` | 目前唯一实现；`fifo` / `token_bucket` 为预留值，传入会报错 |
+| `allocator` | `health_weighted` | `random` / `round_robin` / `least_loaded` / `static_priority`；也可用 `register_allocator` 注册自定义实现 |
+| `scheduler` | `priority_quota` | `fifo`（严格到达顺序）/ `token_bucket`（配合 `rate_limit`、`rate_burst` 做每消费者限速） |
+| `acquire_mode` | `lease` | `stateless`：只取样不占用槽位，无需归还（归还仅用于反馈用量与健康） |
+| `max_leases_per_consumer` | `None` | 单消费者同时持有的租约上限；`None` 不限制 |
+| `rate_limit` | `None` | `token_bucket` 下每消费者每秒的获取次数（req/s） |
+| `rate_burst` | `None` | 令牌桶突发容量；默认取 `ceil(rate_limit)` |
 | `top_k` | `8` | 随机候选数 |
 | `max_slots` | `None` | 单资源槽位上限；`None` 由适配器决定 |
 | `weights` | 见下 | 打分权重 |
@@ -93,7 +102,7 @@ REST 与浏览器控制台使用同一份契约：`GET /config/schema` 返回字
 
 !!! note "探测目标写在资源适配器上"
 
-    代理探测目标不在池配置上设置：请使用 `ProxyAdapter(probe_targets=[...])`。`PoolConfig.probe_targets` 与 `fail_open` 为预留字段，传入非默认值会抛 `ConfigError`（校验失败时始终 fail-closed）。
+    代理探测目标不在池配置上设置：请使用 `ProxyAdapter(probe_targets=[...])`。池配置没有该字段，传入会被视为未知字段。
 
 ### 隔离与封禁
 
@@ -141,19 +150,16 @@ REST 与浏览器控制台使用同一份契约：`GET /config/schema` 返回字
 | `scheduler_intervals` | `None` | 维护任务执行间隔覆盖，key 需来自 `MAINTENANCE_NAMES` |
 | `meta` | `{}` | 业务自定义元数据 |
 
-### 预留字段（未实现）
+### 抢占、优雅停机与故障放行
 
-!!! warning "预留字段不是功能开关"
-
-    以下字段只为未来版本保留，**传入非默认值会立即抛 `ConfigError`**。不要把它们写进部署配置来“提前启用”。
-
-| 字段 | 唯一允许值 | 原因 |
+| 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `preemptible` | `False` | 自动抢占未实现 |
-| `preempt_threshold` | `10` | 同上 |
-| `drain_timeout` | `30.0` | 仅用于抢占式退役，未实现 |
-| `fail_open` | `False` | 校验失败始终 fail-closed |
-| `probe_targets` | `None` | 池级探测目标未实现，改用 `ProxyAdapter` |
+| `preemptible` | `False` | 开启后，高优先级请求可抢占低优先级租约；`priority` 差值需达到 `preempt_threshold` |
+| `preempt_threshold` | `10` | `请求优先级 - 持有者优先级 >= 阈值` 才允许抢占；被抢占方进入 10 秒踢出冷却，事件 `lease_preempted` |
+| `drain_timeout` | `0.0` | `close()` 前等待在途租约归还的秒数；`0` 立即关闭，超时后强制回收 |
+| `fail_open` | `False` | 协调层 `BackendUnavailable` 时降级为本地模式（获取/归还/续租继续，记录 `fail_open_total`）；默认 fail-closed |
+
+### 预留字段（未实现）
 
 ## 不可热更新项
 

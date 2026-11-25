@@ -1,4 +1,4 @@
-"""Event bus with bounded queue and backpressure (E1) plus cursor replay (E3)."""
+"""Event bus with bounded queue, backpressure and cursor replay."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     Listener = Callable[["Event"], Awaitable[None]]
 
 
-@dataclass
+@dataclass(slots=True)
 class Event:
     type: str
     pool: str
@@ -110,7 +110,7 @@ class EventBus:
         return event
 
     def history(self, after_seq: int = 0, limit: int = 500) -> list[Event]:
-        """Replay dispatched events with ``seq > after_seq`` (E3).
+        """Replay dispatched events with ``seq > after_seq``.
 
         The history is a separate bounded ring from the dispatch queue, so
         SSE cursor continuation still sees events the dispatcher consumed.
@@ -177,15 +177,3 @@ class EventBus:
                 except Exception:
                     logger.exception("event listener failed")
                     self.dropped += 1
-
-
-class EventSink:
-    """Adapter that forwards every event to an async callback."""
-
-    def __init__(self, bus: EventBus, fn: Listener) -> None:
-        self._bus = bus
-        self._fn = fn
-        self._unsub = bus.subscribe(fn)
-
-    def close(self) -> None:
-        self._unsub()

@@ -3,6 +3,7 @@ period quota / hold-until, default backfill and expired-resource GC."""
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -10,6 +11,7 @@ from conftest import seed
 
 from purser.backends.base import ResourcePatch
 from purser.config import PoolConfig
+from purser.core.meta import ResourceMeta
 from purser.core.resource import AcquireRequest, Resource
 from purser.core.state import ResourceState
 from purser.errors import ConfigError, PoolExhausted
@@ -40,6 +42,29 @@ def test_resource_system_and_user_meta_split():
     # The full bag is still available for backwards compatibility.
     assert resource.meta["owner"] == "team-a"
     assert resource.meta["created_at"] == 111.0
+
+
+def test_framework_written_meta_keys_are_all_system_owned():
+    from purser.core.resource import is_system_meta_key
+
+    # Keys the framework itself writes via admin/import/switch paths.
+    for key in ("priority", "preference", "group", "switched_from"):
+        assert is_system_meta_key(key), key
+
+    resource = Resource(
+        id="r1",
+        kind="fake",
+        meta={
+            "priority": 5,
+            "preference": 0.5,
+            "group": "g1",
+            "switched_from": "old",
+            "owner": "team-a",
+        },
+    )
+    assert resource.user_meta == {"owner": "team-a"}
+    assert set(resource.system_meta) == {"priority", "preference", "group", "switched_from"}
+    assert resource.system_meta | resource.user_meta == resource.meta
 
 
 # -- PoolConfig first-class knobs and legacy meta migration -----------------
@@ -114,6 +139,101 @@ async def test_import_accepts_quota_limit_and_next_available_at(make_pool):
     assert res is not None
     assert res.quota is not None and res.quota.limit == 3
     assert res.next_available_at == hold
+
+
+def test_resource_meta_typed_properties():
+    meta = ResourceMeta({"priority": "2", "preference": 0.5})
+    assert meta.priority == 2
+    assert meta.preference == 0.5
+    assert meta.group is None
+    assert meta.quarantine_until is None
+
+    meta.priority = 9
+    meta.group = "g1"
+    meta.quarantine_until = 12.5
+    assert meta == {
+        "priority": 9,
+        "preference": 0.5,
+        "group": "g1",
+        "quarantine_until": 12.5,
+    }
+    assert json.loads(json.dumps(meta)) == dict(meta)
+
+    meta.priority = None
+    assert "priority" not in meta
+
+    # Construction keeps the instance as-is, so identity is preserved.
+    resource = Resource(id="r1", kind="fake", meta=meta)
+    assert resource.meta is meta
+    assert resource.system_meta["group"] == "g1"
+
+
+async def test_meta_survives_backends_and_admin_updates(make_pool):
+    pool = make_pool()
+    [rid] = await seed(pool, n=1)
+    res = await pool.get(rid)
+    assert res is not None and isinstance(res.meta, ResourceMeta)
+
+    res = await pool.update_resource(rid, priority=3, preference=0.75, reason="rank")
+    assert isinstance(res.meta, ResourceMeta)
+    assert res.meta.priority == 3 and res.meta.preference == 0.75
+
+    res = await pool.update_resource(rid, priority=None, preference=None, reason="clear")
+    assert isinstance(res.meta, ResourceMeta)
+    assert res.meta.priority == 0 and res.meta.preference == 0.0
+
+
+async def test_update_resource_scheduling_keys_stay_out_of_user_meta(make_pool):
+    pool = make_pool()
+    [rid] = await seed(pool, n=1)
+    await pool.update_resource(
+        rid,
+        priority=7,
+        preference=0.25,
+        operator="ops",
+        reason="rank",
+    )
+    res = await pool.get(rid)
+    assert res is not None
+    assert res.system_meta["priority"] == 7
+    assert res.system_meta["preference"] == 0.25
+    assert res.user_meta == {}
+    assert res.system_meta | res.user_meta == res.meta
+
+
+async def test_switch_resource_marks_switched_from_as_system_meta():
+    from conftest import FakeChecker
+
+    from purser import Purser
+
+    class SwitchingChecker(FakeChecker):
+        kind = "switcher"
+
+        async def switch(self, resource):
+            return Resource(
+                id="r2",
+                kind=self.kind,
+                payload=dict(resource.payload),
+                tags=resource.tags,
+            )
+
+    ps = Purser(maintenance_enabled=False)
+    ps.register_adapter(SwitchingChecker())
+    await ps.start()
+    try:
+        pool = ps.ensure_pool("sw", "switcher")
+        await pool.import_resources(
+            [{"id": "r1", "host": "127.0.0.1", "port": 1}],
+            import_validate="on_import",
+        )
+        switched = await pool.switch_resource("r1", operator="ops", reason="rotate")
+        assert switched is not None and switched.id == "r2"
+        res = await pool.get("r2")
+        assert res is not None
+        assert res.system_meta["switched_from"] == "r1"
+        assert "switched_from" not in res.user_meta
+    finally:
+        await ps.close()
 
 
 async def test_update_resource_sets_and_clears_quota_limit_and_hold(make_pool):

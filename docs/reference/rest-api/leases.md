@@ -78,10 +78,12 @@ curl http://127.0.0.1:8000/pools/proxies/leases/<token>
 ## 续约
 
 ```bash
-curl -X POST http://127.0.0.1:8000/pools/proxies/leases/<token>/renew
+curl -X POST http://127.0.0.1:8000/pools/proxies/leases/<token>/renew \
+  -H "Content-Type: application/json" \
+  -d '{"used": 3}'
 ```
 
-成功返回新的 `expires_at`；续约被拒返回 `409`。常规场景由心跳自动按 TTL/3 续约，手动续约用于长任务显式保活。
+请求体可选：`used` 上报当前已用次数，服务端只按最大值更新租约计数，重复或回退的上报不会改小。成功返回新的 `expires_at` 与当前 `used`；`use_limit` / `max_lease_duration` 用尽或 token 已丢失返回 `409`。常规场景由心跳自动按 TTL/3 续约，手动续约用于长任务显式保活。
 
 ## 归还
 

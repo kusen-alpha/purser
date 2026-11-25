@@ -204,8 +204,10 @@ def test_service_owns_one_shared_resource_set(shape, tmp_path):
                 assert blocked.status_code == 409, blocked.text
 
                 result: dict = {}
+                entered = threading.Event()
 
                 def wait_for_slot() -> None:
+                    entered.set()
                     with httpx.Client(
                         base_url=base,
                         headers=_auth(),
@@ -226,7 +228,7 @@ def test_service_owns_one_shared_resource_set(shape, tmp_path):
 
                 thread = threading.Thread(target=wait_for_slot)
                 thread.start()
-                time.sleep(0.35)
+                assert entered.wait(5)
                 released = client.request(
                     "DELETE",
                     f"{pool_url}/leases/{token}",

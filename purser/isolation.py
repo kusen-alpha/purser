@@ -30,7 +30,7 @@ import os
 import stat
 import threading
 import weakref
-from typing import Any, Tuple
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from purser.errors import IsolationConflict
@@ -39,7 +39,7 @@ ALLOW_SHARED_ENV = "PURSER_ALLOW_SHARED_BACKENDS"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
-Identity = Tuple[Any, str]
+Identity = tuple[Any, str]
 
 
 class _Claim:

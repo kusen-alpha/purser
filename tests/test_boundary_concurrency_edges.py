@@ -36,6 +36,13 @@ async def test_waiter_cancelled_during_wait_leaves_no_debt(make_pool):
     await pool.release(ok)
 
 
+async def _wait_until(predicate, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition never reached"
+        await asyncio.sleep(0.01)
+
+
 async def test_priority_waiter_overtakes_fifo(make_pool):
     pool = make_pool()
     await seed(pool, n=1)
@@ -51,15 +58,18 @@ async def test_priority_waiter_overtakes_fifo(make_pool):
 
     held: list = []
     low = asyncio.create_task(waiter("low", -1))
-    await asyncio.sleep(0.1)
+    await _wait_until(
+        lambda: any(h.req.consumer == "low" for h in pool._waiters)
+    )
     high = asyncio.create_task(waiter("high", 5))
-    await asyncio.sleep(0.2)
+    await _wait_until(
+        lambda: {h.req.consumer for h in pool._waiters} >= {"low", "high"}
+    )
     await pool.release(holder)
-    await asyncio.sleep(0.2)
+    await _wait_until(lambda: bool(order))
     assert order == ["high"]  # high priority overtakes the FIFO low waiter
     await pool.release(held[0])
-    await asyncio.sleep(0.3)
-    assert set(order) == {"high", "low"}
+    await _wait_until(lambda: set(order) == {"high", "low"})
     await pool.release(held[1])
     await asyncio.gather(low, high)
 

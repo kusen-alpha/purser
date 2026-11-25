@@ -2,6 +2,8 @@
 
 `LocalScheduler` 让**同一台机器上的多个 worker 进程**共享一个调度进程。它通过 `multiprocessing.connection`（Windows 命名管道 / POSIX Unix socket）通信，不经过 HTTP，与 `purser serve` 是两套独立入口。
 
+如果你想要 Purser 形状的异步门面（同步管理方法 + async 池数据面），用 [`ProcessPurser`](../guides/facades.md)：它内部管理 `LocalScheduler`，也可以 attach 到已有地址，并支持把 attach 句柄 pickle 给 worker。
+
 ## 适用场景
 
 - 多进程爬虫/任务池需要共享同一批代理或账号；
@@ -52,7 +54,7 @@ LocalScheduler(
     sqlite_path=None, mysql_url=None, redis_url=None, audit_path=None,
     secret_key=None, authkey=None,
     start_method="spawn", startup_timeout=30.0, close_timeout=30.0,
-    types=(), maintenance_enabled=None,
+    adapters=(), maintenance_enabled=None, default_adapters="global",
 )
 ```
 
@@ -114,7 +116,7 @@ def worker(address):
 | --- | --- |
 | `acquire(pool, req=None, *, timeout=None, idempotency_key=None, resource_cls=None)` | 返回 `RemoteLease`；`resource_cls` 让 `lease.resource` 恢复为类型化对象 |
 | `release(pool, lease_or_token, *, outcome=None, used=None)` | 幂等归还；`outcome` 接受枚举或字符串值 |
-| `renew(pool, lease_or_token)` | 返回新的 `expires_at` |
+| `renew(pool, lease_or_token, *, used=None)` | 返回新的 `expires_at`；`used` 省略时取 `RemoteLease.used`，调度进程按最大值更新租约计数；被拒抛 `LeaseLimitReached` / `LeaseLost` |
 | `lease(pool, req=None)` | 上下文管理器，退出时自动归还 |
 | `register_resource_type(kind, cls)` | 按资源 kind 注册反序列化类型（等价于构造参数 `resource_types=`） |
 | `health()` / `pool_names()` / `stats(pool)` | 观测 |

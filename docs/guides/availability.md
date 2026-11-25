@@ -20,8 +20,11 @@
 | 10 | 周期配额 `quota` 未耗尽 | 配额耗尽，跳过 |
 | 11 | `mutex_group` 不与同 consumer 已持有的资源冲突 | 互斥冲突，跳过 |
 | 12 | 同 consumer 未持有该资源（除非 `allow_duplicate=True`） | 已持有，跳过 |
+| 13 | 消费者租约数未达 `max_leases_per_consumer` | 已达上限，跳过（失败消息中出现 `consumer_limit`） |
 
-通过硬过滤后，才进入分配器打分、Top-K 加权随机、请求级校验（`on_request_check`，默认按 `target` 缓存 2 秒）和原子占用。
+`acquire_mode="stateless"` 时第 2、11、12、13 步跳过——取样不占槽位、不登记消费者持有，其余状态/标签/时段/冷却/失败/配额检查保持不变。
+
+通过硬过滤后，才进入分配器打分、Top-K 加权随机、请求级校验（`on_request_check`，默认按 `target` 缓存 2 秒）和原子占用。若开启 `preemptible`，原子占用失败还会尝试按优先级抢占一个低优先级持有者后重试一次。
 
 ## 各检查的语义
 
@@ -47,7 +50,7 @@
 
 ### 冷却、隔离与消费者级暂停
 
-`Resource.next_usable_at()` 取以下三者的最大值：
+`Resource.usable_at()` 取以下三者的最大值：
 
 - `next_available_at`（释放后冷却、外部暂停）；
 - `meta["quarantine_until"]`（隔离期截止时间）；

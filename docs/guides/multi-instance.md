@@ -57,6 +57,12 @@ ps = Purser(
 
 协调端连接或操作失败时抛 `BackendUnavailable`，不会静默降级为本地内存状态。Redis 连接与操作带 5 秒超时，强制 RESP2 以兼容 Redis < 6。
 
+需要“协调端抖动时本实例继续工作”的场景，可以显式开启 `PoolConfig(fail_open=True)`：注册、续租、归还遇到 `BackendUnavailable` 时不再抛错，而是记录 `pool.<name>.fail_open_total`、发布 `coordination_degraded` 事件，并按本地状态继续。此时其他实例看不到本实例的新租约，可能重复占用同一资源——只建议在同实例独占资源、或短时抖动可接受的部署中开启；默认仍是 fail-closed。
+
+## 优雅停机
+
+`PoolConfig(drain_timeout=...)` 大于 0 时，`close()` 会先停止接收新获取，等待在途租约归还最多 `drain_timeout` 秒；到期仍未归还的租约由 `force_revoke(reason="drain_timeout")` 强制回收。默认 `0.0` 表示立即关闭。
+
 ## 隔离约束
 
 - **同一进程内**的两个 `Purser` 实例不能共享 SQLite 文件、MySQL 库、Redis DB 或适配器实例；半共享会产生无法对账的租约/槽位视图，库会在装配时抛 `IsolationConflict`。

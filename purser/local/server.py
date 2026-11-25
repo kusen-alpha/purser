@@ -7,19 +7,22 @@ The process owns the only ``SyncPurser`` and serves workers over a
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import os
 import threading
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future
+from enum import Enum
 from multiprocessing.connection import Listener
 from typing import Any
 
+from purser.adapter_spec import load_adapter
 from purser.config import PoolConfig, parse_pool_config
-from purser.core.resource import AcquireRequest, UsageOutcome
-from purser.errors import ConfigError, LeaseConflict, PurserError
+from purser.core.resource import AcquireRequest, Resource, UsageOutcome
+from purser.errors import ConfigError, LeaseLost, PurserError
 from purser.local.errors import SchedulerProtocolError
 from purser.local.protocol import (
     SchedulerAddress,
@@ -33,6 +36,43 @@ logger = logging.getLogger("purser.local")
 
 _IDEMPOTENCY_TTL = 600.0
 _RELEASE_TOMBSTONE_TTL = 600.0
+
+_POOL_CALL_METHODS = frozenset(
+    {
+        "stats",
+        "counts",
+        "leases",
+        "describe",
+        "query",
+        "get",
+        "require",
+        "count_matching",
+        "batches",
+        "validate_jobs",
+        "validate_job",
+        "cancel_validate_job",
+        "validate_now",
+        "import_resources",
+        "generate",
+        "reconfigure",
+        "ban",
+        "unban",
+        "suspend",
+        "resume",
+        "top_up",
+        "drain",
+        "cancel_drain",
+        "restore_resource",
+        "admin_set_state",
+        "force_revoke",
+        "update_resource",
+        "switch_resource",
+        "move_resource",
+        "recall_batch",
+        "release_consumer",
+        "run_maintenance",
+    }
+)
 
 
 def _scheduler_main(
@@ -257,14 +297,18 @@ class _Service:
                 self._stop.set()
                 result = {"ok": True}
             elif op == "pool_names":
-                result = {"pools": self._purser.pool_names()}
+                result = {"pools": self._purser.get_pool_names()}
+            elif op == "register_adapter":
+                result = self._register_adapter(request)
             elif op == "create_pool":
                 result = {"pool": self._create_pool(request)}
             elif op == "update_pool":
                 result = self._update_pool(request)
             elif op == "delete_pool":
                 result = self._purser.delete_pool(
-                    str(request["name"]), force=bool(request.get("force", False))
+                    str(request["name"]),
+                    force=bool(request.get("force", False)),
+                    operator=str(request.get("operator", "system")),
                 )
             elif op == "stats":
                 result = {"stats": self._stats(str(request["pool"]))}
@@ -278,6 +322,8 @@ class _Service:
                 result = self._release(request)
             elif op == "renew":
                 result = self._renew(request)
+            elif op == "pool_call":
+                result = self._pool_call(request)
             else:
                 raise ConfigError(f"unknown scheduler operation {op!r}")
             return {"id": request_id, "ok": True, "result": result}
@@ -310,8 +356,16 @@ class _Service:
             "uptime_s": round(time.time() - self._started_at, 1),
             "storage": self._purser.storage_kind,
             "coordination": self._purser.coordination_kind,
-            "pools": self._purser.pool_names(),
+            "pools": self._purser.get_pool_names(),
         }
+
+    def _register_adapter(self, request: dict[str, Any]) -> dict[str, Any]:
+        spec = request.get("spec")
+        if not isinstance(spec, dict):
+            raise ConfigError("register_adapter requires an adapter spec object")
+        adapter = load_adapter(spec)
+        self._purser.register_adapter(adapter)
+        return {"kind": str(getattr(adapter, "kind", ""))}
 
     def _create_pool(self, request: dict[str, Any]) -> dict[str, Any]:
         name = str(request["name"])
@@ -333,7 +387,7 @@ class _Service:
         return self._pool_stats(pool)
 
     def _update_pool(self, request: dict[str, Any]) -> dict[str, Any]:
-        pool = self._purser.require_pool(str(request["name"]))
+        pool = self._purser.get_pool(str(request["name"]))
         config = request.get("config") or {}
         if not isinstance(config, dict):
             raise ConfigError("config must be an object")
@@ -345,7 +399,7 @@ class _Service:
         return {"pool": self._pool_stats(pool), "config": cfg.to_dict()}
 
     def _stats(self, name: str) -> dict[str, Any]:
-        return self._pool_stats(self._purser.require_pool(name))
+        return self._pool_stats(self._purser.get_pool(name))
 
     @staticmethod
     def _pool_stats(pool: SyncPool) -> dict[str, Any]:
@@ -354,8 +408,28 @@ class _Service:
             raise SchedulerProtocolError("pool stats are not a mapping")
         return dict(stats)
 
+    def _pool_call(self, request: dict[str, Any]) -> dict[str, Any]:
+        pool = self._purser.get_pool(str(request["pool"]))
+        method = str(request.get("method") or "")
+        if method not in _POOL_CALL_METHODS or not hasattr(pool, method):
+            raise ConfigError(
+                f"pool method {method!r} is not exposed over the local scheduler"
+            )
+        args = request.get("args") or []
+        kwargs = request.get("kwargs") or {}
+        if not isinstance(args, list) or not isinstance(kwargs, dict):
+            raise ConfigError("args must be a list and kwargs an object")
+        if method == "describe" and args and isinstance(args[0], dict):
+            # Workers send resource snapshots because live objects cannot
+            # cross the IPC boundary; rebuild a generic Resource for describe.
+            from purser.local.client import _resource_from_dict
+
+            args[0] = _resource_from_dict(args[0])
+        value = getattr(pool, method)(*args, **kwargs)
+        return {"value": _pool_value(value, pool)}
+
     def _import(self, request: dict[str, Any]) -> dict[str, Any]:
-        pool = self._purser.require_pool(str(request["pool"]))
+        pool = self._purser.get_pool(str(request["pool"]))
         records = request.get("records")
         if not isinstance(records, list):
             raise ConfigError("records must be a list")
@@ -371,7 +445,7 @@ class _Service:
         return report.to_dict()
 
     def _generate(self, request: dict[str, Any]) -> dict[str, Any]:
-        pool = self._purser.require_pool(str(request["pool"]))
+        pool = self._purser.get_pool(str(request["pool"]))
         specs = request.get("specs")
         if not isinstance(specs, list):
             raise ConfigError("specs must be a list")
@@ -391,7 +465,7 @@ class _Service:
         idem_key = f"acquire:{pool_name}:{key}" if key else None
 
         def run() -> dict[str, Any]:
-            pool = self._purser.require_pool(pool_name)
+            pool = self._purser.get_pool(pool_name)
             lease = pool.acquire(_acquire_request(raw_request))
             return {"lease": _lease_payload(lease)}
 
@@ -449,7 +523,7 @@ class _Service:
         outcome: UsageOutcome | None,
         used: int | None,
     ) -> dict[str, Any]:
-        pool = self._purser.require_pool(pool_name)
+        pool = self._purser.get_pool(pool_name)
         lease = _find_lease(pool, token)
         if lease is None:
             # Same contract as the in-process facade: releasing a token that a
@@ -471,13 +545,24 @@ class _Service:
     def _renew(self, request: dict[str, Any]) -> dict[str, Any]:
         pool_name = str(request["pool"])
         token = str(request["token"])
-        pool = self._purser.require_pool(pool_name)
+        pool = self._purser.get_pool(pool_name)
         lease = _find_lease(pool, token)
         if lease is None:
-            raise LeaseConflict(f"lease {token!r} is not active on pool {pool_name!r}")
-        if not pool.renew_manual(lease):
-            raise LeaseConflict(f"lease {token!r} renewal was rejected")
-        return {"ok": True, "token": token, "expires_at": lease.expires_at}
+            raise LeaseLost(
+                f"lease {token!r} is not active on pool {pool_name!r}"
+            )
+        used = request.get("used")
+        if used is not None and (
+            isinstance(used, bool) or not isinstance(used, int) or used < 0
+        ):
+            raise ConfigError("used must be a non-negative integer")
+        pool.renew(lease, used=used)
+        return {
+            "ok": True,
+            "token": token,
+            "expires_at": lease.expires_at,
+            "used": lease.used,
+        }
 
     # -- idempotency ------------------------------------------------------
     def _idempotent(
@@ -579,6 +664,32 @@ def _lease_payload(lease: SyncLease) -> dict[str, Any]:
         "payload": lease.payload,
         "resource": None if resource is None else resource.to_dict(),
     }
+
+
+def _pool_value(value: Any, pool: SyncPool) -> Any:
+    """Normalize a ``SyncPool`` result into JSON-safe data."""
+
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Mapping):
+        return {
+            (key.value if isinstance(key, Enum) else str(key)): _pool_value(item, pool)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_pool_value(item, pool) for item in value]
+    if isinstance(value, SyncLease):
+        return _lease_payload(value)
+    if isinstance(value, Resource):
+        return _pool_value(pool.describe(value), pool)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return _pool_value(to_dict(), pool)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _pool_value(dataclasses.asdict(value), pool)
+    return str(value)
 
 
 def _error_code(exc: BaseException) -> str:

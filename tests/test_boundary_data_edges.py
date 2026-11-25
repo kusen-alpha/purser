@@ -12,7 +12,7 @@ from purser import Purser
 from purser.core.lease import LeaseManager
 from purser.core.resource import AcquireRequest, Lease
 from purser.core.state import ResourceState
-from purser.errors import ConfigError
+from purser.errors import ConfigError, LeaseLimitReached
 
 
 async def test_release_negative_used_rejected(make_pool):
@@ -43,14 +43,16 @@ async def test_use_limit_blocks_renewal(make_pool):
     [rid] = await seed(pool, n=1)
     exhausted = await pool.acquire(AcquireRequest(consumer="a", use_limit=0))
     assert exhausted.resource_id == rid
-    assert await pool.renew_manual(exhausted) is False  # already at the limit
+    with pytest.raises(LeaseLimitReached):
+        await pool.renew(exhausted)  # already at the limit
     await pool.release(exhausted)
 
     lease = await pool.acquire(AcquireRequest(consumer="b", use_limit=2))
     lease.used = 1
-    assert await pool.renew_manual(lease) is True
+    assert isinstance(await pool.renew(lease), float)
     lease.used = 2
-    assert await pool.renew_manual(lease) is False
+    with pytest.raises(LeaseLimitReached):
+        await pool.renew(lease)
     await pool.release(lease)
 
 
@@ -99,7 +101,7 @@ async def test_restore_archived_requalifies(make_pool):
     await pool.release(lease)
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.ARCHIVED
-    await pool.restore(rid, operator="ops", reason="back")
+    await pool.restore_resource(rid, operator="ops", reason="back")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
 
@@ -170,5 +172,28 @@ async def test_heartbeat_transient_errors_retried_then_lost():
         assert calls["n"] >= 4  # transients were retried, lease survived
         assert not lost.is_set()
         await asyncio.wait_for(lost.wait(), timeout=2.0)  # hard failures -> lost
+    finally:
+        await manager.close()
+
+
+async def test_heartbeat_terminal_rejection_reports_lost_immediately():
+    manager = LeaseManager(heartbeat_interval=0.01, max_renew_errors=3)
+    lease = Lease.new("p", "r", ttl=3600.0)
+    lost = asyncio.Event()
+    calls = {"n": 0}
+
+    async def on_lost(item):
+        lost.set()
+
+    manager.on_lost = on_lost
+
+    async def renew(item) -> bool:
+        calls["n"] += 1
+        raise LeaseLimitReached("use_limit reached")
+
+    manager.register(lease, renew)
+    try:
+        await asyncio.wait_for(lost.wait(), timeout=2.0)
+        assert calls["n"] == 1  # terminal rejection is not retried
     finally:
         await manager.close()

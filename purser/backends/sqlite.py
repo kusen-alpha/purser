@@ -1,4 +1,4 @@
-"""SQLite storage plane: durable system of record (S10 / F2) without deps.
+"""SQLite storage plane: durable system of record without deps.
 
 Resources live in ``resources`` (one row per ``(pool, id)``) plus a
 ``resource_tags`` join table for indexed tag queries.  Every mutation is a
@@ -22,8 +22,8 @@ import random
 import sqlite3
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
-from typing import Any, Mapping, TypeVar, cast
+from collections.abc import AsyncIterator, Callable, Mapping
+from typing import Any, TypeVar, cast
 
 from purser.backends.base import (
     ResourcePatch,

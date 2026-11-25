@@ -52,6 +52,7 @@ class LocalScheduler:
         close_timeout: float = 30.0,
         adapters: Iterable[Any] = (),
         maintenance_enabled: bool | None = None,
+        default_adapters: str = "global",
     ) -> None:
         self.address = default_address(authkey)
         self._adapters = tuple(adapters)
@@ -60,6 +61,7 @@ class LocalScheduler:
             "coordination": coordination,
             "startup_timeout": startup_timeout,
             "close_timeout": close_timeout,
+            "default_adapters": default_adapters,
         }
         if maintenance_enabled is not None:
             self._config["maintenance_enabled"] = maintenance_enabled

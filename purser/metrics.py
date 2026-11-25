@@ -1,4 +1,4 @@
-"""Lightweight counters and histograms with Prometheus text rendering (S14)."""
+"""Lightweight counters and histograms with Prometheus text rendering."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass
+@dataclass(slots=True)
 class Metrics:
     counters: dict[str, int] = field(default_factory=lambda: OrderedDict())
     histograms: dict[str, list[float]] = field(default_factory=lambda: OrderedDict())

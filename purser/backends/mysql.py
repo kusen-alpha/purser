@@ -1,4 +1,4 @@
-"""MySQL storage plane: durable system of record on aiomysql (S10 / F2).
+"""MySQL storage plane: durable system of record on aiomysql.
 
 Implements the same :class:`StorageBackend` contract as memory and sqlite.
 The connection is created lazily on first use, so importing ``purser`` never
@@ -16,13 +16,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import logging
 import random
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine
-from typing import Any, TypeVar
+from typing import Any, ParamSpec, TypeVar
 from urllib.parse import unquote, urlsplit
-
-from typing_extensions import ParamSpec
 
 from purser.backends.base import (
     ResourcePatch,
@@ -62,6 +61,8 @@ def _parse_url(url: str) -> dict[str, Any]:
         "db": (parts.path or "/").lstrip("/") or None,
     }
 
+
+logger = logging.getLogger(__name__)
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -602,7 +603,7 @@ class MySqlStorage(StorageBackend):
             if self._conn is not None and self._owns:
                 try:
                     await self._conn.ensure_closed()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("mysql connection close failed: %s", exc)
             self._conn = None
             self._schema_ready = False

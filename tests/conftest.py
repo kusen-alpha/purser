@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import os
 import uuid
+from pathlib import Path
 
 import fakeredis
 import pytest
@@ -15,6 +16,14 @@ from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport
 from purser.core.resource import Resource
 from purser.ui.server import create_app
+
+# Spawned scheduler/worker processes are fresh interpreters: expose a
+# sitecustomize that calls coverage.process_startup() so their lines count.
+if os.environ.get("COVERAGE_PROCESS_START"):
+    _cov_boot = str(Path(__file__).with_name("_coverage_boot"))
+    os.environ["PYTHONPATH"] = os.pathsep.join(
+        [_cov_boot, os.environ.get("PYTHONPATH", "")]
+    ).rstrip(os.pathsep)
 
 
 class FakeChecker(ResourceAdapter):
@@ -134,7 +143,7 @@ def make_pool(purser: Purser):
     created: list = []
 
     def factory(name: str = "pool", **cfg):
-        pool = purser.pool(name, "fakecheck", **cfg)
+        pool = purser.ensure_pool(name, "fakecheck", **cfg)
         created.append(pool)
         return pool
 

@@ -30,6 +30,9 @@ Synchronous facade (blocking calls from any thread)::
             print(lease.payload)
 """
 
+import warnings
+
+from purser.adapter_spec import AdapterSpec, load_adapter
 from purser.adapters import (
     AccountAdapter,
     AccountResource,
@@ -37,14 +40,27 @@ from purser.adapters import (
     ProxyResource,
     ResourceAdapter,
     clear_default_adapters,
-    register,
+    register_default_adapter,
     validator,
 )
 from purser.backends.coordination import MemoryCoordination, RedisCoordination
 from purser.backends.memory import MemoryStorage
 from purser.backends.mysql import MySqlStorage
 from purser.backends.sqlite import SqliteStorage
-from purser.config import POOL_PROFILES, PoolConfig, Weights
+from purser.config import (
+    POOL_PROFILES,
+    AcquireMode,
+    BundleMode,
+    CoordinationKind,
+    ExpirePolicy,
+    ImportValidate,
+    PoolConfig,
+    SchedulerKind,
+    StorageKind,
+    UnbanMode,
+    Weights,
+)
+from purser.core.allocator import Allocator, allocator_names, register_allocator
 from purser.core.bundle import (
     BundleFairness,
     BundleLease,
@@ -88,8 +104,8 @@ from purser.errors import (
     LeaseConflict,
     LeaseExpired,
     LeaseLimitReached,
-    LeaseLostError,
-    LeaseRevokedError,
+    LeaseLost,
+    LeaseRevoked,
     NoSuitableResource,
     NotStarted,
     PoolEmpty,
@@ -110,7 +126,15 @@ from purser.facade import (
     Purser,
     ResourcePool,
 )
-from purser.local import LocalScheduler, SchedulerAddress
+from purser.local import (
+    LocalScheduler,
+    SchedulerAddress,
+    SchedulerProtocolError,
+    SchedulerTimeout,
+    SchedulerUnavailable,
+)
+from purser.process import ProcessPurser
+from purser.protocols import PoolProtocol, PurserProtocol, SyncPoolProtocol
 from purser.remote import RemotePool, connect
 from purser.sync import (
     SyncBatchLease,
@@ -120,11 +144,23 @@ from purser.sync import (
     SyncResourceIterator,
     SyncSubscription,
 )
+from purser.thread import ThreadPool, ThreadPurser
 
-__version__ = "0.2.0"
+EmbeddedPurser = Purser
+
+__version__ = "0.5.0"
 
 __all__ = [
     "Purser",
+    "EmbeddedPurser",
+    "ThreadPurser",
+    "ThreadPool",
+    "ProcessPurser",
+    "PurserProtocol",
+    "PoolProtocol",
+    "SyncPoolProtocol",
+    "AdapterSpec",
+    "load_adapter",
     "ResourcePool",
     "BatchLease",
     "BundleLease",
@@ -143,11 +179,25 @@ __all__ = [
     "SyncSubscription",
     "LocalScheduler",
     "SchedulerAddress",
+    "SchedulerProtocolError",
+    "SchedulerTimeout",
+    "SchedulerUnavailable",
     "RemotePool",
     "connect",
     "PoolConfig",
     "POOL_PROFILES",
     "Weights",
+    "StorageKind",
+    "CoordinationKind",
+    "SchedulerKind",
+    "AcquireMode",
+    "UnbanMode",
+    "ImportValidate",
+    "ExpirePolicy",
+    "BundleMode",
+    "Allocator",
+    "allocator_names",
+    "register_allocator",
     "MemoryStorage",
     "SqliteStorage",
     "MySqlStorage",
@@ -174,7 +224,7 @@ __all__ = [
     "ValidateJobCancelView",
     "ValidateJobError",
     "ResourceAdapter",
-    "register",
+    "register_default_adapter",
     "validator",
     "clear_default_adapters",
     "ProxyAdapter",
@@ -194,8 +244,8 @@ __all__ = [
     "ResourceBusy",
     "LeaseConflict",
     "LeaseExpired",
-    "LeaseRevokedError",
-    "LeaseLostError",
+    "LeaseRevoked",
+    "LeaseLost",
     "LeaseLimitReached",
     "BadState",
     "InvalidTransition",
@@ -206,3 +256,26 @@ __all__ = [
     "error_by_code",
     "is_retryable",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Resolve deprecated pre-0.6 spellings with a warning."""
+
+    if name in ("LeaseRevokedError", "LeaseLostError"):
+        replacement = name.removesuffix("Error")
+        warnings.warn(
+            f"purser.{name} is deprecated; use {replacement}",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return globals()[replacement]
+    if name == "register":
+        warnings.warn(
+            "purser.register is deprecated; use purser.register_default_adapter",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from purser.adapters.base import register_default_adapter
+
+        return register_default_adapter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

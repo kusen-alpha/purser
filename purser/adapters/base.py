@@ -1,15 +1,18 @@
-"""ResourceAdapter base class and registry (4.4 / 4.5 / S13)."""
+"""ResourceAdapter base class and registry."""
 
 from __future__ import annotations
 
 import hashlib
 import inspect
 import json
-from collections.abc import Awaitable
+import warnings
+from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass, fields
-from typing import Any, Callable, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from purser.core.health import HealthReport
+from purser.core.meta import ResourceMeta
 from purser.core.resource import (
     AcquireRequest,
     CheckVerdict,
@@ -23,7 +26,7 @@ from purser.errors import ConfigError
 ResourceT = TypeVar("ResourceT", bound=Resource)
 
 
-@dataclass
+@dataclass(slots=True)
 class Validator:
     """One named validation check declared on a ResourceAdapter."""
 
@@ -32,7 +35,7 @@ class Validator:
     both: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FieldSpec:
     """Public schema for one typed payload field (UI/CLI consume this)."""
 
@@ -44,7 +47,7 @@ class FieldSpec:
     doc: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ValidatorSpec:
     """Public schema for one named validation check."""
 
@@ -52,7 +55,7 @@ class ValidatorSpec:
     both: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AdapterDefaults:
     """Pool-level defaults a ResourceAdapter contributes at pool creation."""
 
@@ -126,7 +129,7 @@ def rehydrate(resource: Resource, cls: type[ResourceT]) -> ResourceT:
         for f in fields(Resource)
         if f.name != "_payload"
     }
-    return cls(payload=resource.payload, **values)
+    return cls(payload=deepcopy(resource._payload_view()), **values)
 
 
 class ResourceAdapter:
@@ -242,7 +245,7 @@ class ResourceAdapter:
                 id=rid,
                 kind=self.kind,
                 tags=tags,
-                payload=spec or None,
+                payload=spec,
                 **typed,
             )
         )
@@ -278,7 +281,7 @@ class ResourceAdapter:
         if not isinstance(resource.payload, dict):
             raise ValueError("resource payload must be a dict")
         resource.tags = frozenset(resource.tags or ())
-        resource.meta = dict(resource.meta or {})
+        resource.meta = ResourceMeta(resource.meta or {})
         typed = self._typed(resource)
         typed.normalize_payload(require=True)
         return typed
@@ -296,7 +299,7 @@ class ResourceAdapter:
         return typed
 
     async def validate(self, resource: Resource) -> HealthReport:
-        """Lifecycle validation: is the resource alive right now (5.3)?
+        """Lifecycle validation: is the resource alive right now?
 
         Default trusts the resource (always alive); override with a real
         probe when the resource can go stale or get banned.
@@ -307,7 +310,7 @@ class ResourceAdapter:
     async def on_request_check(
         self, resource: Resource, req: AcquireRequest
     ) -> CheckVerdict:
-        """Request-level check: can this resource serve *this* request (5.8)?
+        """Request-level check: can this resource serve *this* request?
         Default is a pass-through; subclasses return FAIL/BAN as needed."""
 
         return CheckVerdict.PASS
@@ -367,7 +370,7 @@ class ResourceAdapter:
         """Fires when a hook raises; never propagates into the kernel."""
 
     def describe(self, resource: Resource) -> str:
-        """Masked human-readable summary for UI/logs (A1)."""
+        """Masked human-readable summary for UI/logs."""
 
         return f"{self.kind}:{resource.id} [{resource.state.value}]"
 
@@ -404,7 +407,7 @@ class ResourceAdapter:
 
 
 class ResourceAdapterRegistry:
-    """Runtime-registrable plugin registry (X7)."""
+    """Runtime-registrable plugin registry."""
 
     def __init__(self) -> None:
         self._adapters: dict[str, ResourceAdapter] = {}
@@ -432,34 +435,58 @@ class ResourceAdapterRegistry:
 
 _AdapterFactory = Callable[[], ResourceAdapter]
 
-# Process-wide default catalog: kind -> factory producing a ResourceAdapter
-# instance.  The catalog is shared (one per process); each Purser instantiates
-# its own copy at construction, so instances never leak across Pursers.
-_DEFAULT_ADAPTERS: dict[str, _AdapterFactory] = {}
+
+@dataclass(frozen=True, slots=True)
+class _CatalogEntry:
+    factory: _AdapterFactory
+    builtin: bool = False
 
 
-def register(
+# Process-wide default catalog: kind -> entry.  Builtin adapters are installed
+# by ``purser.adapters`` at import time, so they are ordinary catalog entries
+# instead of privileged kinds.  The catalog is shared (one per process); each
+# Purser instantiates its own copy at construction, so instances never leak
+# across Pursers.
+_DEFAULT_ADAPTERS: dict[str, _CatalogEntry] = {}
+
+
+def install_builtin_adapter(cls: type[ResourceAdapter]) -> None:
+    """Add ``cls`` to the default catalog as a builtin entry."""
+
+    kind = getattr(cls, "kind", "")
+    if not kind:
+        raise ConfigError("builtin resource adapter must declare a non-empty kind")
+    _DEFAULT_ADAPTERS[kind] = _CatalogEntry(lambda: cls(), builtin=True)
+
+
+def register_default_adapter(
     target: type[ResourceAdapter] | None = None, **config: Any
 ) -> type[ResourceAdapter] | Callable[[type[ResourceAdapter]], type[ResourceAdapter]]:
     """Register a ResourceAdapter as a process-wide default (decorator).
 
     Every :class:`Purser` built afterwards instantiates its own copy from the
     registered factory, so type instances are never shared between Purser
-    instances.  ``kind`` must be unique across defaults and may not collide
-    with a builtin adapter.  Usable bare (``@register``) or with constructor
-    config (``@register(probe_targets=[...])``).
+    instances.  ``kind`` must be unique across the default catalog, including
+    the builtin ``proxy`` / ``account`` entries.  Usable bare
+    (``@register_default_adapter``) or with constructor config
+    (``@register_default_adapter(probe_targets=[...])``).
     """
 
     def decorate(cls: type[ResourceAdapter]) -> type[ResourceAdapter]:
         kind = getattr(cls, "kind", "")
         if not kind:
             raise ConfigError("registered resource adapter must declare a non-empty kind")
-        if kind in _DEFAULT_ADAPTERS:
-            raise ConfigError(f"duplicate resource adapter kind {kind!r}")
+        entry = _DEFAULT_ADAPTERS.get(kind)
+        if entry is not None:
+            origin = "builtin" if entry.builtin else "default"
+            raise ConfigError(
+                f"duplicate resource adapter kind {kind!r}: "
+                f"{origin} adapter already in the default catalog"
+            )
         def build() -> ResourceAdapter:
             return cls(**config) if config else cls()
 
-        _DEFAULT_ADAPTERS[kind] = build
+        _DEFAULT_ADAPTERS[kind] = _CatalogEntry(build)
         return cls
 
     if target is not None:
@@ -467,13 +494,43 @@ def register(
     return decorate
 
 
-def default_adapter_factories() -> dict[str, _AdapterFactory]:
-    """Snapshot of the process-wide default adapter factories (kind -> builder)."""
+def register(
+    target: type[ResourceAdapter] | None = None, **config: Any
+) -> type[ResourceAdapter] | Callable[[type[ResourceAdapter]], type[ResourceAdapter]]:
+    """Deprecated alias for :func:`register_default_adapter`."""
 
-    return dict(_DEFAULT_ADAPTERS)
+    warnings.warn(
+        "purser.register is deprecated; use purser.register_default_adapter",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return register_default_adapter(target, **config)
+
+
+def default_adapter_factories() -> dict[str, _AdapterFactory]:
+    """Snapshot of the whole default catalog (builtins first, then globals)."""
+
+    return {kind: entry.factory for kind, entry in _DEFAULT_ADAPTERS.items()}
+
+
+def builtin_adapter_factories() -> dict[str, _AdapterFactory]:
+    """Snapshot of the builtin entries only (``proxy`` / ``account``)."""
+
+    return {
+        kind: entry.factory
+        for kind, entry in _DEFAULT_ADAPTERS.items()
+        if entry.builtin
+    }
 
 
 def clear_default_adapters() -> None:
-    """Drop every process-wide default adapter (test / hot-reload isolation)."""
+    """Drop user-registered defaults; builtin entries stay installed.
 
-    _DEFAULT_ADAPTERS.clear()
+    Test / hot-reload isolation should not need to rebuild ``proxy`` or
+    ``account``; use ``Purser(default_adapters="none")`` to get an empty
+    registry instead.
+    """
+
+    for kind, entry in list(_DEFAULT_ADAPTERS.items()):
+        if not entry.builtin:
+            del _DEFAULT_ADAPTERS[kind]

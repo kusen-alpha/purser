@@ -31,7 +31,7 @@ Resource(
 | `next_available_at` | `float \| None` | 冷却结束时刻；与消费者冷却、隔离合并为“最早可用时间” |
 | `mutex_group` | `str \| None` | 互斥组；同一 consumer 同时只能持有组内一个资源 |
 | `schedule_window` | `tuple[str, str] \| None` | `("HH:MM", "HH:MM")`，支持跨夜 |
-| `meta` | `dict` | 业务自定义元数据 + 系统标记（批次、来源、创建/更新时间、冷却与隔离等）；`user_meta` / `system_meta` 属性按归属拆分 |
+| `meta` | `dict` | 业务自定义元数据 + 系统标记（批次、来源、创建/更新时间、冷却与隔离等）；`user_meta` / `system_meta` 属性按归属拆分。框架写入的 `priority` / `preference` / `group` / `switched_from` 与其余系统键一样归入 `system_meta`；`meta` 为 `ResourceMeta`（`dict` 子类），可用 `meta.priority` / `meta.preference` / `meta.group` / `meta.quarantine_until` 类型化读写 |
 
 嵌套结构：
 
@@ -51,7 +51,7 @@ Resource(
 | `available_slots` | `max_slots - used_slots` |
 | `allocatable` | `state ∈ {IDLE, ACTIVE}` 且仍有可用槽位 |
 | `created_at` / `updated_at` / `last_used_at` | 从 `meta` 读取的时间戳 |
-| `next_usable_at(now=None, consumer=None)` | 冷却、消费者冷却与隔离结束时间的最大值；绝对过期由过滤层单独处理 |
+| `usable_at(now=None, consumer=None)` | 冷却、消费者冷却与隔离结束时间的最大值；绝对过期由过滤层单独处理 |
 | `normalize_payload(require=False)` | 规范化类型化字段并填默认值；`require=True` 在写入边界强制必填 |
 | `to_dict()` | 存储形态的深拷贝，类型化字段折回 `payload`，状态与标签转为 JSON 友好值 |
 | `copy_with(payload=None, **changes)` | 受支持的复制入口，可整体替换 payload |
@@ -63,7 +63,7 @@ Resource(
 
 ```python
 from dataclasses import dataclass
-from typing_extensions import Annotated
+from typing import Annotated
 
 from purser import PayloadField, Resource
 

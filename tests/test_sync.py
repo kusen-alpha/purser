@@ -56,10 +56,10 @@ def test_lifecycle_and_pool_crud(sync_ps):
     pool = sync_ps.create_pool("p", "fakecheck")
     assert isinstance(pool, SyncPool)
     assert pool.name == "p" and pool.kind == "fakecheck" and pool.started
-    assert sync_ps.pool_names() == ["p"]
-    assert sync_ps.pool("p") is pool
-    assert sync_ps.require_pool("p") is pool
-    assert sync_ps.get_pool("missing") is None
+    assert sync_ps.get_pool_names() == ["p"]
+    assert sync_ps.pools == {"p": pool}
+    assert sync_ps.get_pool("p") is pool
+    assert sync_ps.get_pool("missing", default=None) is None
 
     ids = seed(pool)
     assert pool.counts(by_name=True).get("idle") == 3
@@ -74,8 +74,9 @@ def test_lifecycle_and_pool_crud(sync_ps):
 
     removed = sync_ps.delete_pool("p", force=True)
     assert removed["removed"] == 3
-    assert sync_ps.pool_names() == []
-    assert sync_ps.get_pool("p") is None
+    assert sync_ps.get_pool_names() == []
+    assert sync_ps.pools == {}
+    assert sync_ps.get_pool("p", default=None) is None
 
 
 def test_lease_live_writes_and_release(sync_ps):
@@ -89,7 +90,7 @@ def test_lease_live_writes_and_release(sync_ps):
     assert pool.counts(by_name=True).get("full") == 1
 
     before = lease.expires_at
-    assert pool.renew_manual(lease)
+    assert isinstance(pool.renew(lease), float)
     assert lease.expires_at >= before
     assert lease.heartbeat_at is not None
 
@@ -187,6 +188,9 @@ def test_shared_instance_across_threads(sync_ps):
             lease = pool.acquire(consumer=f"t{index}")
             try:
                 results.append((lease.token, lease.resource_id))
+                # Hold every lease until all four are in hand so the distinct
+                # resource ids below are a simultaneous-hold property.
+                barrier.wait(timeout=10)
             finally:
                 pool.release(lease)
         except BaseException as exc:  # pragma: no cover - surfaced below
@@ -272,7 +276,7 @@ def test_calls_from_loop_thread_are_rejected(sync_ps):
 
     def on_loop() -> None:
         try:
-            sync_ps.pool_names()
+            sync_ps.get_pool_names()
         except BaseException as exc:
             errors.append(exc)
 
@@ -296,11 +300,11 @@ def test_dangerous_ops_from_event_callback_are_rejected(sync_ps):
             done.set()
 
     subscription = sync_ps.subscribe(callback)
-    lease = sync_ps.require_pool("p").acquire(consumer="c")
+    lease = sync_ps.get_pool("p").acquire(consumer="c")
     assert done.wait(10)
     subscription.close()
     assert outcome == ["rejected"]
-    sync_ps.require_pool("p").release(lease)
+    sync_ps.get_pool("p").release(lease)
 
 
 def test_report_usage_backup_and_restore(sync_ps):
@@ -318,9 +322,9 @@ def test_report_usage_backup_and_restore(sync_ps):
     assert [entry["name"] for entry in backup["pools"]] == ["p"]
 
     sync_ps.delete_pool("p", force=True)
-    restored = sync_ps.restore(backup)
+    restored = sync_ps.restore_backup(backup)
     assert restored["ok"] is True and restored["created_pools"] == ["p"]
-    assert sync_ps.require_pool("p").counts(by_name=True).get("idle") == 2
+    assert sync_ps.get_pool("p").counts(by_name=True).get("idle") == 2
 
 
 def test_timeout_and_foreign_lease_rejected(sync_ps):
@@ -351,7 +355,7 @@ def test_kernel_wait_timeout_is_not_masked(sync_ps):
     with pytest.raises(TimeoutError):
         sync_ps._submit(lambda: asyncio.sleep(0.5), timeout=0.02)
     # The facade still works after an outer timeout cancelled the task.
-    assert sync_ps.pool_names() == ["busy"]
+    assert sync_ps.get_pool_names() == ["busy"]
 
 
 def test_admin_methods_forward(sync_ps):

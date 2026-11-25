@@ -27,7 +27,22 @@ score = health*w_health + age*w_age - load*w_load + preference + affinity + jitt
 | `affinity` | `0.0` | 由 `affinity_weight` 注入 |
 | `jitter` | `0.05` | 抗惊群随机项 |
 
-取 `top_k=8` 个候选后按分数加权随机，而非永远选第一名。其他分配器：`round_robin`、`least_loaded`、`static_priority`。
+取 `top_k=8` 个候选后按分数加权随机，而非永远选第一名。其他分配器：`random`（均匀随机）、`round_robin`、`least_loaded`、`static_priority`。自定义分配器继承 `Allocator`，用 `register_allocator` 注册后即可作为 `allocator=` 的取值：
+
+```python
+from purser import Allocator, register_allocator
+
+@register_allocator
+class CheapestFirst(Allocator):
+    name = "cheapest_first"
+
+    def rank(self, candidates, ctx):
+        return sorted(
+            ((res, -float(res.meta.get("price", 0))) for res in candidates),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+```
 
 ## 公平队列
 
@@ -38,6 +53,22 @@ score = health*w_health + age*w_age - load*w_load + preference + affinity + jitt
 - 池内完全没有资源时立即 `PoolEmpty`，不等待。
 - 池关闭会用 `PoolExhausted` 唤醒所有在途等待者。
 - 等待者被取消后由队列清扫，不会把租约交给已取消的等待者。
+
+`PoolConfig(scheduler=...)` 切换队列语义：
+
+| 取值 | 行为 |
+| --- | --- |
+| `priority_quota` | 默认；`priority` 高者先出队，同优先级按到达顺序 |
+| `fifo` | 完全忽略 `priority`，严格按到达顺序出队 |
+| `token_bucket` | 在 `priority_quota` 基础上，按消费者做 `rate_limit` req/s、`rate_burst` 突发的准入限速；超时抛 `PoolExhausted` 并给出建议重试等待 |
+
+## 抢占
+
+`preemptible=True` 时，获取失败会尝试踢出一个低优先级持有者：
+
+- 条件：`请求 priority - 持有者 priority >= preempt_threshold`（默认 10）。
+- 被抢占方进入 10 秒消费者冷却（`cooldown:<consumer>`），记录一条 `PREEMPTED` 用量事件，并发布 `lease_preempted`。
+- 抢占成功后重试一次分配；仍失败则退回等待队列。`stateless` 模式不参与抢占。
 
 ## 容量与槽位
 

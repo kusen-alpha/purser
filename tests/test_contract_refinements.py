@@ -12,9 +12,11 @@ from purser import (
     ConfigError,
     LeaseView,
     NoSuitableResource,
+    NotStarted,
     PoolConfig,
     PoolExhausted,
     ProxyResource,
+    PurserError,
     QuotaExceeded,
     Resource,
     ResourceBusy,
@@ -26,7 +28,6 @@ from purser import (
 )
 from purser.local import LocalScheduler, LocalSchedulerClient
 from purser.local.errors import remote_error
-
 
 # -- outcome coercion -----------------------------------------------------
 
@@ -69,6 +70,30 @@ def test_error_codes_come_from_the_class_hierarchy():
     assert error_by_code("quota_exceeded") is QuotaExceeded
     assert error_by_code("pool_exhausted") is PoolExhausted
     assert error_by_code("nope") is None
+
+
+def test_error_registry_is_complete_and_late_bindings_work():
+    from purser.local.errors import (
+        SchedulerProtocolError,
+        SchedulerTimeout,
+        SchedulerUnavailable,
+    )
+
+    assert error_by_code(ConfigError.code) is ConfigError
+    assert error_by_code(NotStarted.code) is NotStarted
+    assert error_by_code(SchedulerUnavailable.code) is SchedulerUnavailable
+    assert error_by_code(SchedulerTimeout.code) is SchedulerTimeout
+    assert error_by_code(SchedulerProtocolError.code) is SchedulerProtocolError
+
+    class LateError(PurserError):
+        code = "late_error"
+
+    assert error_by_code("late_error") is LateError
+
+    class DuplicateLateError(PurserError):
+        code = "late_error"
+
+    assert error_by_code("late_error") is LateError
 
 
 def test_retryable_classification():
@@ -186,6 +211,13 @@ async def test_connect_exposes_an_async_pool_facade():
                 assert isinstance(lease, LeaseView)
             stats = await pool.stats()
             assert isinstance(stats, dict)
+
+            await pool.ban("r1", reason="contract")
+            banned = await pool.stats()
+            assert banned["counts"]["banned"] == 1
+            await pool.unban("r1")
+            unbanned = await pool.stats()
+            assert unbanned["counts"].get("banned", 0) == 0
         finally:
             await pool.aclose()
 

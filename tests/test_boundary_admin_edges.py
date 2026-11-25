@@ -27,7 +27,7 @@ class _BanOnTargetChecker(FakeChecker):
 async def test_move_collision_rejected(make_pool, purser):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    target = purser.pool("target", "fakecheck")
+    target = purser.ensure_pool("target", "fakecheck")
     await target.import_resources([{"id": rid, "host": "9.9.9.9", "port": 9}])
     with pytest.raises(BadState):
         await pool.move_resource(rid, target, operator="ops", reason="x")
@@ -68,7 +68,7 @@ async def test_ban_revokes_active_leases(make_pool):
 
 async def test_request_level_ban_records_site_failure(purser):
     purser.register_adapter(_BanOnTargetChecker())
-    pool = purser.pool("bantargetpool", "bantarget")
+    pool = purser.ensure_pool("bantargetpool", "bantarget")
     await pool.import_resources(
         [{"id": "r1", "host": "10.0.0.1", "port": 8081}], import_validate="on_import"
     )

@@ -1,4 +1,4 @@
-"""Transient lease / wake-up plane: memory and redis (S10 / F2).
+"""Transient lease / wake-up plane: memory and redis.
 
 Leases, heartbeats and wake-ups live here and are rebuildable: losing them on
 an abnormal restart only costs scheduling accuracy.  The redis implementation
@@ -12,21 +12,38 @@ import functools
 import json
 import time
 from collections.abc import Callable, Coroutine
-from typing import Any, TypeVar
-
-from redis import asyncio as aioredis
-from redis.exceptions import RedisError
-from typing_extensions import ParamSpec
+from dataclasses import fields
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from purser.backends.base import Coordination
 from purser.core.resource import Lease
 from purser.errors import BackendUnavailable, ConfigError
 
+if TYPE_CHECKING:
+    from redis import asyncio as aioredis
+
+_REDIS_ERROR: type[BaseException] | None = None
+
+
+def _redis_error() -> type[BaseException]:
+    """Import ``redis.exceptions.RedisError`` on first failure path."""
+
+    global _REDIS_ERROR
+    if _REDIS_ERROR is None:
+        from redis.exceptions import RedisError
+
+        _REDIS_ERROR = RedisError
+    return _REDIS_ERROR
+
 
 def _encode_lease(lease: Lease) -> str:
     # ``resource`` is a process-local typed snapshot, not coordination state.
     return json.dumps(
-        {k: v for k, v in vars(lease).items() if k not in ("payload", "resource")}
+        {
+            item.name: getattr(lease, item.name)
+            for item in fields(lease)
+            if item.name not in ("payload", "resource")
+        }
     )
 
 
@@ -63,8 +80,10 @@ def _fail_closed(
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
             return await fn(*args, **kwargs)
-        except RedisError as exc:
-            raise BackendUnavailable(f"redis error: {exc}") from exc
+        except Exception as exc:
+            if isinstance(exc, _redis_error()):
+                raise BackendUnavailable(f"redis error: {exc}") from exc
+            raise
 
     return wrapper
 
@@ -137,6 +156,9 @@ class RedisCoordination(Coordination):
     ) -> None:
         if client is None and url is None:
             raise ConfigError("RedisCoordination requires a client or url")
+
+        from redis import asyncio as aioredis
+
         # Force RESP2 so the client also works against Redis < 6 servers that
         # do not speak HELLO/RESP3 (redis-py >= 8 negotiates RESP3 by default).
         self._client = client or aioredis.Redis.from_url(

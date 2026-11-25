@@ -13,7 +13,6 @@ import asyncio
 import copy
 import json
 import sqlite3
-import sys
 import time
 
 import fakeredis
@@ -523,13 +522,11 @@ async def test_scheduler_tasks_run_independently():
         {"requalify_on_release": "yes"},
         {"scheduler_intervals": {"quota_reset": 0}},
         {"schema_version": 2},
-        {"scheduler": "token_bucket"},
-        {"scheduler": "fifo"},
-        {"drain_timeout": 5},
-        {"preempt_threshold": 5},
-        {"fail_open": True},
-        {"preemptible": True},
-        {"probe_targets": ["http://example.com"]},
+        {"scheduler": "bogus"},
+        {"drain_timeout": -1},
+        {"preempt_threshold": "5"},
+        {"fail_open": "yes"},
+        {"preemptible": 1},
     ],
 )
 def test_invalid_pool_config_is_rejected(overrides):
@@ -548,11 +545,11 @@ def test_quota_limit_is_the_period_quota_knob():
     assert replaced.quota_limit == 3
 
 
-def test_acquire_request_rejects_unimplemented_hints():
-    # probe is now a supported per-target live check; only affinity is unused.
+def test_acquire_request_accepts_affinity_hint():
     assert AcquireRequest(probe="site").probe == "site"
-    with pytest.raises(ConfigError, match="affinity"):
-        AcquireRequest(affinity="c")
+    assert AcquireRequest(affinity="c").affinity == "c"
+    with pytest.raises(ValueError, match="affinity"):
+        AcquireRequest(affinity="")
 
 
 def test_acquire_request_normalises_tags():
@@ -648,20 +645,18 @@ def test_report_views_are_exported_from_top_level():
         assert getattr(purser, name) is getattr(views, name)
         assert name in purser.__all__
 
-    # TypedDict.__required_keys__ only exists on Python 3.9+.
-    if sys.version_info >= (3, 9):
-        assert views.PoolStats.__required_keys__ >= {"name", "counts", "config"}
-        assert views.UsageReport.__required_keys__ >= {
-            "window",
-            "totals",
-            "groups",
-            "active",
-            "pools",
-        }
-        assert views.ValidateJobView.__required_keys__ >= {
-            "id",
-            "status",
-            "pending",
-            "errors",
-        }
-        assert "cancelled" in views.ValidateJobCancelView.__required_keys__
+    assert views.PoolStats.__required_keys__ >= {"name", "counts", "config"}
+    assert views.UsageReport.__required_keys__ >= {
+        "window",
+        "totals",
+        "groups",
+        "active",
+        "pools",
+    }
+    assert views.ValidateJobView.__required_keys__ >= {
+        "id",
+        "status",
+        "pending",
+        "errors",
+    }
+    assert "cancelled" in views.ValidateJobCancelView.__required_keys__

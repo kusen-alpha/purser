@@ -1,4 +1,4 @@
-"""In-memory storage plane: dict store plus state/tag inverted indexes (6.1)."""
+"""In-memory storage plane: dict store plus state/tag inverted indexes."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _now() -> float:
 
 class MemoryStorage(StorageBackend):
     """Single-process storage.  All mutations happen synchronously inside the
-    event loop, so read-check-write sequences are naturally atomic (S10)."""
+    event loop, so read-check-write sequences are naturally atomic."""
 
     def __init__(self) -> None:
         self._pools: dict[str, dict[str, Resource]] = {}

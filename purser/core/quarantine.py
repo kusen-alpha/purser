@@ -1,4 +1,4 @@
-"""Quarantine / ban escalation policy (5.4): isolate first, ban last."""
+"""Quarantine / ban escalation policy: isolate first, ban last."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ def _now() -> float:
     return time.time()
 
 
-@dataclass
+@dataclass(slots=True)
 class QuarantinePolicy:
     base: float = 30.0
     cap: float = 1800.0
@@ -30,7 +30,7 @@ class QuarantinePolicy:
 
     def threshold_for(self, created_at: float, now: float | None = None) -> int:
         """Failures tolerated before BANNED.  Trial protection halves it but
-        never bans on the very first validation failure (5.4 rule 3)."""
+        never bans on the very first validation failure."""
 
         now = now or _now()
         in_trial = (now - created_at) < self.trial_hours * 3600.0

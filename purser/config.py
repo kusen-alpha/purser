@@ -1,12 +1,36 @@
-"""Pool configuration with schema versioning (Y4) and validation (X8)."""
+"""Pool configuration with schema versioning and validation."""
 
 from __future__ import annotations
 
+import enum
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field, fields, replace
+from typing import TYPE_CHECKING, Any, cast
 
+from purser.allocator_registry import (
+    ALLOCATOR_NAMES as _ALLOCATORS,
+    DEFAULT_ALLOCATOR,
+    register_allocator_name as register_allocator_name,
+)
+from purser.config_kinds import (
+    AcquireMode as AcquireMode,
+    BundleMode as BundleMode,
+    CoordinationKind as CoordinationKind,
+    ExpirePolicy as ExpirePolicy,
+    ImportValidate as ImportValidate,
+    SchedulerKind as SchedulerKind,
+    StorageKind as StorageKind,
+    UnbanMode as UnbanMode,
+    _coerce_kind as _coerce_kind,
+    _EnumT as _EnumT,
+    _Kind as _Kind,
+    _values as _values,
+)
+from purser.config_schema import (
+    _FIELD_META as _FIELD_META,
+    ConfigField as ConfigField,
+)
 from purser.core.quarantine import QuarantinePolicy
 from purser.errors import ConfigError
 
@@ -45,9 +69,9 @@ def apply_adapter_defaults(
     return cfg
 
 
-@dataclass
+@dataclass(slots=True)
 class Weights:
-    """Scoring weights for the health-weighted allocator (5.1)."""
+    """Scoring weights for the health-weighted allocator."""
 
     health: float = 1.0
     age: float = 0.15      # longer-idle resources get a boost (LRU rotation)
@@ -63,15 +87,6 @@ class Weights:
         known = {f: float(data[f]) for f in cls.__dataclass_fields__ if f in data}
         return cls(**known)
 
-
-_ALLOCATORS = ("health_weighted", "round_robin", "least_loaded", "static_priority")
-_SCHEDULERS = ("priority_quota",)
-_RESERVED_SCHEDULERS = ("fifo", "token_bucket")
-_UNBAN_MODES = ("manual_only", "auto_after_ttl", "mixed")
-_IMPORT_VALIDATE = ("none", "on_import", "batch")
-_STORAGES = ("memory", "sqlite", "mysql")
-_COORDINATIONS = ("memory", "redis")
-_EXPIRE_POLICIES = ("suspended", "quota")
 
 # Fields that identify the storage/coordination planes or change the wire
 # shape of a live pool.  They may be supplied at create time, but a PATCH may
@@ -118,171 +133,44 @@ POOL_PROFILES: dict[str, dict[str, Any]] = {
         "expire_policy": "quota",
         "quota_cooldown": 60.0,
     },
+    # Simplest shape: sample a random resource without occupying a lease.
+    "one_shot": {
+        "acquire_mode": "stateless",
+        "allocator": "random",
+        "import_validate": "on_import",
+    },
+    # Keep lease semantics but pick uniformly instead of scoring.
+    "random": {
+        "allocator": "random",
+    },
 }
 
 
-@dataclass(frozen=True)
-class ConfigField:
-    """UI/API metadata for one pool or resource scheduling field.
-
-    Parsing still goes through ``PoolConfig`` / ``PoolConfig.__post_init__``;
-    this metadata exists so every entry path can share labels, grouping,
-    mutability and null/clear semantics without hard-coded form copies.
-    """
-
-    name: str
-    kind: str
-    group: str
-    label: str
-    choices: tuple[Any, ...] = ()
-    minimum: float | None = None
-    maximum: float | None = None
-    mutable: bool = True
-    nullable: bool = False
-    hidden: bool = False
-    unit: str = ""
-    doc: str = ""
-    default: Any = None
-    fields: Mapping[str, "ConfigField"] = field(default_factory=dict)
-
-
-def _meta(group: str, label: str, **extra: Any) -> dict[str, Any]:
-    return {"group": group, "label": label, **extra}
-
-
-_FIELD_META: dict[str, dict[str, Any]] = {
-    "storage": _meta(
-        "deployment", "存储后端", kind="enum", choices=_STORAGES, mutable=False
-    ),
-    "coordination": _meta(
-        "deployment", "协调后端", kind="enum", choices=_COORDINATIONS, mutable=False
-    ),
-    "secret_fields": _meta(
-        "deployment",
-        "加密字段",
-        kind="array",
-        mutable=False,
-        doc="落库前加密的 payload 字段名",
-    ),
-    "allocator": _meta(
-        "scheduling", "分配器", kind="enum", choices=_ALLOCATORS
-    ),
-    # Kept in the schema for API compatibility, but the queue is fixed today.
-    "scheduler": _meta(
-        "scheduling", "队列策略", kind="enum", choices=_SCHEDULERS, hidden=True
-    ),
-    "max_slots": _meta("scheduling", "每资源槽位", kind="int", minimum=1, nullable=True),
-    "top_k": _meta("scheduling", "候选集大小", kind="int", minimum=1),
-    "affinity_weight": _meta(
-        "scheduling", "亲和权重", kind="float", minimum=0.0
-    ),
-    "weights": _meta("scheduling", "分配权重", kind="object"),
-    "unban_mode": _meta(
-        "lifecycle", "解禁模式", kind="enum", choices=_UNBAN_MODES
-    ),
-    "unban_after": _meta("lifecycle", "自动解禁时间", kind="float", minimum=0.0, unit="s"),
-    "quarantine": _meta("lifecycle", "隔离策略", kind="object"),
-    "expire_policy": _meta(
-        "lifecycle", "过期策略", kind="enum", choices=_EXPIRE_POLICIES
-    ),
-    "requalify_on_release": _meta("lifecycle", "隔离后重新验活", kind="bool"),
-    "expires_in": _meta(
-        "lifecycle", "默认有效期", kind="float", minimum=0.0, unit="s", nullable=True
-    ),
-    "archive_retention": _meta(
-        "lifecycle", "归档保留", kind="float", minimum=0.0, unit="s"
-    ),
-    "lost_retention": _meta(
-        "lifecycle", "失联保留", kind="float", minimum=0.0, unit="s"
-    ),
-    "expired_retention": _meta(
-        "lifecycle", "过期保留", kind="float", minimum=0.0, unit="s", nullable=True
-    ),
-    "lease_ttl": _meta("lease", "租约 TTL", kind="float", minimum=0.001, unit="s"),
-    "heartbeat_interval": _meta(
-        "lease", "心跳间隔", kind="float", minimum=0.01, unit="s", nullable=True
-    ),
-    "max_lease_duration": _meta(
-        "lease", "租约最长时间", kind="float", minimum=0.001, unit="s", nullable=True
-    ),
-    "wait_timeout": _meta("lease", "默认等待", kind="float", minimum=0.0, unit="s"),
-    "cooldown_after_release": _meta(
-        "quota", "释放后冷却", kind="float", minimum=0.0, unit="s"
-    ),
-    "cooldown_consumer_only": _meta("quota", "冷却仅限 consumer", kind="bool"),
-    "quota_cooldown": _meta("quota", "配额冷却", kind="float", minimum=0.0, unit="s"),
-    "usage_quota": _meta(
-        "quota", "使用次数上限", kind="int", minimum=0, nullable=True
-    ),
-    "quota_limit": _meta(
-        "quota", "周期配额上限", kind="int", minimum=1, nullable=True
-    ),
-    "import_validate": _meta(
-        "validation", "导入验活", kind="enum", choices=_IMPORT_VALIDATE
-    ),
-    "stale_after": _meta(
-        "validation", "验活陈旧阈值", kind="float", minimum=0.0, unit="s"
-    ),
-    "background_interval": _meta(
-        "validation", "后台验活间隔", kind="float", minimum=0.0, unit="s"
-    ),
-    "background_validate_sample": _meta(
-        "validation",
-        "后台验活采样率",
-        kind="float",
-        minimum=0.0,
-        maximum=1.0,
-    ),
-    "validate_timeout": _meta(
-        "validation", "验活超时", kind="float", minimum=0.0, unit="s"
-    ),
-    "validate_concurrency": _meta(
-        "validation", "验活并发", kind="int", minimum=1
-    ),
-    "site_failure_ttl": _meta(
-        "resilience", "站点故障 TTL", kind="float", minimum=0.0, unit="s"
-    ),
-    "site_failure_max": _meta("resilience", "站点故障上限", kind="int", minimum=1),
-    "check_cache_ttl": _meta(
-        "resilience", "请求检查缓存", kind="float", minimum=0.0, unit="s"
-    ),
-    "timezone": _meta("advanced", "时区", kind="string"),
-    "meta": _meta("advanced", "自定义元数据", kind="object", nullable=True),
-    "scheduler_intervals": _meta(
-        "maintenance", "维护任务间隔", kind="map", nullable=True
-    ),
-    # Reserved / not implemented: keep them out of the generated UI.
-    "probe_targets": _meta("advanced", "探测目标", kind="array", hidden=True),
-    "fail_open": _meta("advanced", "故障放行", kind="bool", hidden=True),
-    "preemptible": _meta("advanced", "可抢占", kind="bool", hidden=True),
-    "preempt_threshold": _meta("advanced", "抢占阈值", kind="int", hidden=True),
-    "drain_timeout": _meta("advanced", "排空超时", kind="float", hidden=True),
-    "schema_version": _meta(
-        "advanced", "Schema 版本", kind="int", mutable=False, hidden=True
-    ),
-    "event_queue_size": _meta(
-        "advanced", "事件队列长度", kind="int", mutable=False, hidden=True
-    ),
-}
-
-
-@dataclass
+@dataclass(slots=True)
 class PoolConfig:
     """Per-pool knobs.  ResourceAdapter provides defaults; pool overrides them."""
 
     kind: str
-    storage: str = "memory"
-    coordination: str = "memory"
-    allocator: str = "health_weighted"
-    scheduler: str = "priority_quota"
+    storage: StorageKind = StorageKind.MEMORY
+    coordination: CoordinationKind = CoordinationKind.MEMORY
+    allocator: str = DEFAULT_ALLOCATOR
+    scheduler: SchedulerKind = SchedulerKind.PRIORITY_QUOTA
     max_slots: int | None = None
+    # ``lease`` occupies slots and needs release (or reaping); ``stateless``
+    # samples a resource without tracking it, so release is a safe no-op.
+    acquire_mode: AcquireMode = AcquireMode.LEASE
+    max_leases_per_consumer: int | None = None
+    # ``scheduler="token_bucket"`` admits per-consumer acquire attempts at
+    # ``rate_limit`` per second with a burst of ``rate_burst``.
+    rate_limit: float | None = None
+    rate_burst: int | None = None
 
-    unban_mode: str = "mixed"
+    unban_mode: UnbanMode = UnbanMode.MIXED
     unban_after: float = 86400.0  # BANNED -> VALIDATING after this TTL (auto)
     quarantine: QuarantinePolicy = field(default_factory=QuarantinePolicy)
-    # What an absolute expiry does to the resource (S18): flip it to
+    # What an absolute expiry does to the resource: flip it to
     # ``suspended`` or treat it like quota exhaustion (``quota``).
-    expire_policy: str = "suspended"
+    expire_policy: ExpirePolicy = ExpirePolicy.SUSPENDED
     # Whether quarantine release re-validates the resource instead of idling.
     requalify_on_release: bool = False
 
@@ -305,7 +193,6 @@ class PoolConfig:
     # the resource does not set one itself.
     quota_limit: int | None = None
 
-    probe_targets: list[str] | None = None
     site_failure_ttl: float = 300.0
     site_failure_max: int = 16
     check_cache_ttl: float = 2.0
@@ -315,7 +202,7 @@ class PoolConfig:
     # Default to background validation so an imported pool is usable without
     # an extra call. ``none`` stays available as an explicit opt-out for
     # callers that pre-load data offline and validate later.
-    import_validate: str = "batch"
+    import_validate: ImportValidate = ImportValidate.BATCH
     secret_fields: tuple[str, ...] = ()
     timezone: str = "Asia/Shanghai"
     schema_version: int = 1
@@ -323,7 +210,7 @@ class PoolConfig:
     affinity_weight: float = 0.0
     preemptible: bool = False
     preempt_threshold: int = 10
-    drain_timeout: float = 30.0
+    drain_timeout: float = 0.0
     archive_retention: float = 30 * 86400.0
     lost_retention: float = 4 * 3600.0
     # How long an expired (suspended) resource is kept before ``expire_gc``
@@ -341,25 +228,45 @@ class PoolConfig:
     def __post_init__(self) -> None:
         if not self.kind:
             raise ConfigError("pool kind must not be empty")
+        self.storage = _coerce_kind(StorageKind, self.storage, "storage")
+        self.coordination = _coerce_kind(
+            CoordinationKind, self.coordination, "coordination"
+        )
+        self.scheduler = _coerce_kind(SchedulerKind, self.scheduler, "scheduler")
+        self.acquire_mode = _coerce_kind(AcquireMode, self.acquire_mode, "acquire_mode")
+        self.unban_mode = _coerce_kind(UnbanMode, self.unban_mode, "unban_mode")
+        self.import_validate = _coerce_kind(
+            ImportValidate, self.import_validate, "import_validate"
+        )
+        self.expire_policy = _coerce_kind(
+            ExpirePolicy, self.expire_policy, "expire_policy"
+        )
         if self.max_slots is not None and self.max_slots <= 0:
-            raise ConfigError("max_slots must be > 0 (X8)")
-        if self.storage not in ("memory", "sqlite", "mysql"):
-            raise ConfigError(f"unknown storage {self.storage!r}")
-        if self.coordination not in ("memory", "redis"):
-            raise ConfigError(f"unknown coordination {self.coordination!r}")
+            raise ConfigError("max_slots must be > 0")
         if self.allocator not in _ALLOCATORS:
             raise ConfigError(f"unknown allocator {self.allocator!r}")
-        if self.scheduler in _RESERVED_SCHEDULERS:
+        if self.max_leases_per_consumer is not None and (
+            isinstance(self.max_leases_per_consumer, bool)
+            or not isinstance(self.max_leases_per_consumer, int)
+            or self.max_leases_per_consumer < 1
+        ):
+            raise ConfigError("max_leases_per_consumer must be an integer >= 1")
+        if self.rate_limit is not None and (
+            isinstance(self.rate_limit, bool)
+            or not math.isfinite(float(self.rate_limit))
+            or self.rate_limit <= 0
+        ):
+            raise ConfigError("rate_limit must be a finite number > 0")
+        if self.rate_burst is not None and (
+            isinstance(self.rate_burst, bool)
+            or not isinstance(self.rate_burst, int)
+            or self.rate_burst < 1
+        ):
+            raise ConfigError("rate_burst must be an integer >= 1")
+        if self.scheduler is SchedulerKind.TOKEN_BUCKET and self.rate_limit is None:
             raise ConfigError(
-                f"scheduler {self.scheduler!r} is not implemented; only "
-                "'priority_quota' (priority first, FIFO within a priority) is available"
+                "scheduler='token_bucket' requires rate_limit (requests/second)"
             )
-        if self.scheduler not in _SCHEDULERS:
-            raise ConfigError(f"unknown scheduler {self.scheduler!r}")
-        if self.unban_mode not in _UNBAN_MODES:
-            raise ConfigError(f"unknown unban_mode {self.unban_mode!r}")
-        if self.import_validate not in _IMPORT_VALIDATE:
-            raise ConfigError(f"unknown import_validate {self.import_validate!r}")
         if not 0.0 < self.background_validate_sample <= 1.0:
             raise ConfigError("background_validate_sample must be in (0, 1]")
         if self.lease_ttl <= 0:
@@ -397,8 +304,6 @@ class PoolConfig:
             or self.quota_limit <= 0
         ):
             raise ConfigError("quota_limit must be a positive integer")
-        if self.expire_policy not in ("suspended", "quota"):
-            raise ConfigError("expire_policy must be 'suspended' or 'quota'")
         if not isinstance(self.requalify_on_release, bool):
             raise ConfigError("requalify_on_release must be a boolean")
         if self.scheduler_intervals is not None:
@@ -446,25 +351,16 @@ class PoolConfig:
             raise ConfigError("expired_retention must be a finite number >= 0")
         if self.schema_version != 1:
             raise ConfigError(f"unsupported schema_version {self.schema_version!r}")
-        if self.drain_timeout != 30.0:
-            raise ConfigError(
-                "drain_timeout is reserved for preemptive drains, which are not "
-                "implemented; leave it at the default 30.0"
-            )
-        if self.preempt_threshold != 10:
-            raise ConfigError(
-                "preempt_threshold is reserved for preemptible leases, which are not "
-                "implemented; leave it at the default 10"
-            )
-        if self.fail_open:
-            raise ConfigError("fail_open is not implemented; storage fails closed")
-        if self.preemptible:
-            raise ConfigError("preemptible leases are not implemented yet")
-        if self.probe_targets is not None:
-            raise ConfigError(
-                "pool-level probe_targets is not implemented; configure "
-                "ProxyAdapter(probe_targets=...)"
-            )
+        if not isinstance(self.preempt_threshold, int) or isinstance(
+            self.preempt_threshold, bool
+        ):
+            raise ConfigError("preempt_threshold must be an integer")
+        if self.preempt_threshold < 0:
+            raise ConfigError("preempt_threshold must be >= 0")
+        if not isinstance(self.fail_open, bool):
+            raise ConfigError("fail_open must be a boolean")
+        if not isinstance(self.preemptible, bool):
+            raise ConfigError("preemptible must be a boolean")
         if not isinstance(self.weights, Weights):
             self.weights = Weights.from_dict(self.weights)
         self.weights.affinity = self.affinity_weight
@@ -482,7 +378,7 @@ class PoolConfig:
             raise ConfigError("quarantine.max_failures must be an integer >= 1")
 
     def with_overrides(self, **updates: Any) -> PoolConfig:
-        """Return a shallow copy with the given knobs replaced (O16)."""
+        """Return a shallow copy with the given knobs replaced."""
 
         cfg = replace(self, **updates)
         cfg.__post_init__()
@@ -542,9 +438,10 @@ class PoolConfig:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        data = {
-            f: getattr(self, f) for f in self.__dataclass_fields__
-        }
+        data: dict[str, Any] = {}
+        for name in self.__dataclass_fields__:
+            value = getattr(self, name)
+            data[name] = value.value if isinstance(value, enum.Enum) else value
         data["quarantine"] = {
             "base": self.quarantine.base,
             "cap": self.quarantine.cap,
@@ -584,7 +481,8 @@ def _nested_fields(
 ) -> dict[str, ConfigField]:
     defaults = cls()
     out: dict[str, ConfigField] = {}
-    for name in cls.__dataclass_fields__:
+    for item in fields(cast(Any, cls)):
+        name = item.name
         if name == "rng":
             continue
         default = getattr(defaults, name)
@@ -695,6 +593,8 @@ RESOURCE_SCHEDULING_SCHEMA: dict[str, ConfigField] = {
 def _json_value(value: Any) -> Any:
     """Convert schema defaults to JSON-safe values for the console."""
 
+    if isinstance(value, enum.Enum):
+        return value.value
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, (list, tuple, set, frozenset)):
@@ -711,12 +611,16 @@ def _json_value(value: Any) -> Any:
 
 
 def _field_payload(field: ConfigField) -> dict[str, Any]:
+    choices = list(field.choices)
+    if field.name == "allocator":
+        # Custom allocators registered after import must show up in the console.
+        choices = sorted(_ALLOCATORS)
     payload: dict[str, Any] = {
         "name": field.name,
         "type": field.kind,
         "group": field.group,
         "label": field.label,
-        "choices": list(field.choices),
+        "choices": choices,
         "min": field.minimum,
         "max": field.maximum,
         "mutable": field.mutable,

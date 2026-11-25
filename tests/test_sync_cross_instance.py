@@ -140,7 +140,7 @@ class Backend:
             ps = SyncPurser(**self.kwargs())
             ps.register_adapter(FakeChecker())
             ps.start()
-            pool = ps.pool(
+            pool = ps.ensure_pool(
                 name, "fakecheck", max_slots=max_slots, lease_ttl=lease_ttl
             )
             for lease in list(pool.leases()):
@@ -260,9 +260,11 @@ def test_cross_instance_directed_acquire_wakes_by_polling(backend):
         AcquireRequest(resource_id="r0", consumer="a", slots=1, timeout=2.0)
     )
     result: dict = {}
+    entered = threading.Event()
 
     def waiter() -> None:
         started = time.monotonic()
+        entered.set()
         try:
             result["lease"] = pool_b.acquire(
                 AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=3.0)
@@ -273,7 +275,7 @@ def test_cross_instance_directed_acquire_wakes_by_polling(backend):
 
     thread = threading.Thread(target=waiter)
     thread.start()
-    time.sleep(0.35)
+    assert entered.wait(5)
     assert pool_a.release(lease_a) is True
     thread.join(timeout=10)
     assert not thread.is_alive()
@@ -294,9 +296,11 @@ def test_cross_instance_undirected_waiter_wakes_by_polling(backend):
         AcquireRequest(resource_id="r0", consumer="a", slots=1, timeout=2.0)
     )
     result: dict = {}
+    entered = threading.Event()
 
     def waiter() -> None:
         started = time.monotonic()
+        entered.set()
         try:
             result["lease"] = pool_b.acquire(
                 AcquireRequest(consumer="b", slots=1, timeout=1.5)
@@ -307,7 +311,7 @@ def test_cross_instance_undirected_waiter_wakes_by_polling(backend):
 
     thread = threading.Thread(target=waiter)
     thread.start()
-    time.sleep(0.35)
+    assert entered.wait(5)
     assert pool_a.release(lease_a) is True
     thread.join(timeout=10)
     assert not thread.is_alive()

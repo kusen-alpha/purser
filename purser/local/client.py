@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from multiprocessing.connection import Client
 from typing import Any
 
+from purser.adapter_spec import AdapterSpec
 from purser.core.resource import (
     AcquireRequest,
     Concurrency,
@@ -267,11 +268,11 @@ class RemoteLease:
     def expired(self, now: float | None = None) -> bool:
         return (now or time.time()) >= self._expires_at
 
-    def renew(self) -> bool:
-        expires_at = self._client.renew(self._pool, self._token)
+    def renew(self) -> float:
+        expires_at = self._client.renew(self._pool, self._token, used=self._used)
         self._expires_at = expires_at
         self._heartbeat_at = time.time()
-        return True
+        return float(expires_at)
 
     def release(
         self,
@@ -329,6 +330,7 @@ class LocalSchedulerClient:
         self._ids_lock = threading.Lock()
         self._pid = os.getpid()
         self._closed = False
+        self._shutdown_sent = False
         self._resource_types = dict(resource_types or {})
 
     def register_resource_type(self, kind: str, cls: type[Resource]) -> None:
@@ -362,6 +364,7 @@ class LocalSchedulerClient:
         self._conns = []
         self._pid = os.getpid()
         self._closed = False
+        self._shutdown_sent = False
 
     def _conn(self) -> Any:
         self._ensure_pid()
@@ -489,9 +492,19 @@ class LocalSchedulerClient:
         )
         return bool(result.get("ok", False))
 
-    def renew(self, pool: str, lease: RemoteLease | str) -> float:
+    def renew(
+        self,
+        pool: str,
+        lease: RemoteLease | str,
+        *,
+        used: int | None = None,
+    ) -> float:
         token = lease.token if isinstance(lease, RemoteLease) else str(lease)
-        result = self._request("renew", pool=pool, token=token, timeout=30.0)
+        if used is None and isinstance(lease, RemoteLease):
+            used = lease.used
+        result = self._request(
+            "renew", pool=pool, token=token, used=used, timeout=30.0
+        )
         return float(result["expires_at"])
 
     @contextmanager
@@ -517,6 +530,19 @@ class LocalSchedulerClient:
         if not isinstance(names, list):
             raise SchedulerProtocolError("scheduler did not return a pool list")
         return [str(name) for name in names]
+
+    def register_adapter(
+        self, spec: AdapterSpec | Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Register an adapter in the scheduler process from an importable spec."""
+
+        if isinstance(spec, AdapterSpec):
+            payload = spec.to_dict()
+        elif isinstance(spec, Mapping):
+            payload = dict(spec)
+        else:
+            raise ConfigError("spec must be an AdapterSpec or mapping")
+        return self._request("register_adapter", spec=payload, timeout=30.0)
 
     def create_pool(
         self,
@@ -558,8 +584,20 @@ class LocalSchedulerClient:
             raise SchedulerProtocolError("scheduler did not return the new config")
         return updated
 
-    def delete_pool(self, name: str, *, force: bool = False) -> dict[str, Any]:
-        return self._request("delete_pool", name=name, force=force, timeout=30.0)
+    def delete_pool(
+        self,
+        name: str,
+        *,
+        force: bool = False,
+        operator: str = "system",
+    ) -> dict[str, Any]:
+        return self._request(
+            "delete_pool",
+            name=name,
+            force=force,
+            operator=operator,
+            timeout=30.0,
+        )
 
     def stats(self, pool: str) -> dict[str, Any]:
         result = self._request("stats", pool=pool, timeout=10.0)
@@ -567,6 +605,24 @@ class LocalSchedulerClient:
         if not isinstance(stats, dict):
             raise SchedulerProtocolError("scheduler did not return pool stats")
         return stats
+
+    def pool_call(
+        self,
+        pool: str,
+        method: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Invoke a whitelisted ``SyncPool`` method in the scheduler process."""
+
+        result = self._request(
+            "pool_call",
+            pool=pool,
+            method=method,
+            args=list(args),
+            kwargs=dict(kwargs),
+        )
+        return result.get("value")
 
     def import_resources(
         self,
@@ -614,9 +670,10 @@ class LocalSchedulerClient:
 
     # -- lifecycle --------------------------------------------------------
     def shutdown(self) -> None:
-        if self._closed:
+        if self._closed or self._shutdown_sent:
             return
         self._request("shutdown", timeout=10.0)
+        self._shutdown_sent = True
 
     def close(self) -> None:
         if self._closed:

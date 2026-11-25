@@ -216,4 +216,4 @@ curl -X POST http://127.0.0.1:8000/pools/accounts/leases \
 | 要限并发/防稀缺池被占满 | `bundle_fairness` |
 | 固定 1:1 绑定 | 别用 bundle，用组合资源 |
 
-详细 API 见 [Purser / 组合租约](../reference/python-api/purser.md)，设计与边界见 [Bundle v2 设计](../design/bundle-v2.md)。
+详细 API 见 [Purser / 组合租约](../reference/python-api/purser.md)；设计取舍见仓库归档 `docs/design/bundle-v2.md`。

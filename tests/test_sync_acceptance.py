@@ -84,7 +84,7 @@ POOL_METHODS = {
     "top_up",
     "drain",
     "cancel_drain",
-    "restore",
+    "restore_resource",
     "admin_set_state",
     "force_revoke",
     "update_resource",
@@ -92,22 +92,22 @@ POOL_METHODS = {
     "recall_batch",
     "run_maintenance",
     "acquire_many",
-    "renew_manual",
+    "renew",
 }
 
 PURSER_METHODS = {
     "start",
     "close",
     "create_pool",
-    "pool",
     "get_pool",
-    "require_pool",
-    "pool_names",
+    "pools",
+    "get_pool_names",
+    "ensure_pool",
     "delete_pool",
     "register_adapter",
     "report_usage",
     "backup",
-    "restore",
+    "restore_backup",
 }
 
 
@@ -193,7 +193,7 @@ def test_lifecycle_crud_and_events(sync_backend, pool_name):
     lease = pool.acquire(consumer="c")
     assert lease.resource_id in ids
     assert len(pool.leases()) == 1
-    assert pool.renew_manual(lease) is True
+    assert isinstance(pool.renew(lease), float)
     lease.used = 2
     lease.outcome = UsageOutcome.OK
     assert pool.release(lease) is True
@@ -232,10 +232,10 @@ def test_backup_restore_roundtrip(sync_backend, pool_name):
     assert [entry["name"] for entry in backup["pools"]] == [name]
 
     ps.delete_pool(name, force=True)
-    assert ps.pool_names() == []
-    report = ps.restore(backup)
+    assert ps.get_pool_names() == []
+    report = ps.restore_backup(backup)
     assert report["ok"] is True and report["created_pools"] == [name]
-    assert ps.require_pool(name).counts(by_name=True).get("idle") == 2
+    assert ps.get_pool(name).counts(by_name=True).get("idle") == 2
 
 
 def test_multithread_no_oversell(sync_backend, pool_name):
@@ -293,7 +293,7 @@ def test_wait_timeout_and_outer_timeout(sync_backend, pool_name):
 
     with pytest.raises(TimeoutError):
         ps._submit(lambda: asyncio.sleep(0.5), timeout=0.02)
-    assert ps.pool_names() == [name]
+    assert ps.get_pool_names() == [name]
     assert pool.counts(by_name=True).get("idle") == 1
 
 

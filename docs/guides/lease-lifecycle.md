@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
     A["acquire() → Lease(token)"] --> B["持有中"]
-    B -->|"heartbeat / renew_manual"| B
+    B -->|"heartbeat / renew"| B
     B -->|"release()"| C["已归还"]
     B -->|"force_revoke()"| D["已撤销"]
     B -->|"TTL 到期 / max_lease_duration"| E["已过期，reaper 回收"]
@@ -69,6 +69,20 @@ finally:
 - 迟到归还（token 已不在协调端）幂等返回 `True`，不会误扣新持有者的槽位。
 - `used` 是本次实际使用次数，进入用量报表；不传时按租约累计值或 1 计。
 
+## 无占用取样（`acquire_mode="stateless"`）
+
+只需要“拿一份资源、不归还、不占并发”的脚本可以整池切换模式，调用面保持不变：
+
+```python
+pool = ps.create_pool("proxies", "proxy", acquire_mode="stateless", allocator="random")
+proxy = await pool.acquire()        # 仍返回 Lease，但不注册租约、不占槽位
+```
+
+- 同一资源可以被无限次取样；`pool.leases()` 为空，`concurrency` 不变。
+- 容量、消费者持有、互斥组过滤被跳过；状态、标签、时间窗、冷却、站点失败与配额仍然生效。
+- `release()` 变为可选：显式调用只反馈用量/健康（`used`、`outcome`、冷却、隔离）并发布事件，重复调用是安全的 no-op。
+- 取样得到的租约不参与心跳续期、`max_lease_duration` 与抢占。
+
 ## 批量获取
 
 ```python
@@ -95,9 +109,10 @@ lease = await pool.acquire(AcquireRequest(resource_id="r42", timeout=5))
 ## 续约与寿命
 
 - 默认 `lease_ttl=60s`，心跳按 TTL/3 自动续约。
-- `await pool.renew_manual(lease)` 用于长任务显式保活；被拒返回 `False`。
-- `max_lease_duration` 到达后拒续，心跳停跳，reaper 回收；租约使用超限抛 `LeaseLimitReached`。
-- 续约被后端拒绝会触发 `lease_lost` 事件；持有者继续使用会得到 `LeaseLostError` / `LeaseExpired`。
+- `await pool.renew(lease)` 用于长任务显式保活；成功返回新的 `expires_at`（`float`）。
+- `use_limit` 在续约时校验租约上的 `used`。跨进程续约会携带 `RemoteLease.used`，调度进程只按最大值更新，因此重试和乱序上报不会把计数改小；要尽早拦截，消费后主动续约一次即可。
+- 续约被拒抛异常：`use_limit` 或 `max_lease_duration` 用尽抛 `LeaseLimitReached`，协调端已不认识 token 抛 `LeaseLost`。
+- 心跳续约遇到同样的拒绝会停止续约并回收槽位，同时触发 `lease_lost` 事件；持有者继续使用会得到 `LeaseLost` / `LeaseExpired`。
 
 ## 强制撤销与失联
 
@@ -119,7 +134,7 @@ for lease in list(await pool.leases("r42")):
 ```
 
 - 每次调用只处理**一条**租约；`token` 只是用来指定是哪一条，不会扩大范围。
-- 强制撤销写入审计并发布 `lease_revoked` 事件，返回被撤销的 `Lease`；原持有者后续调用会收到 `LeaseRevokedError`。
+- 强制撤销写入审计并发布 `lease_revoked` 事件，返回被撤销的 `Lease`；原持有者后续调用会收到 `LeaseRevoked`。
 - 被撤销租约的 `consumer` 在该资源上进入 10 秒消费者级冷却（`meta["cooldown:<consumer>"]`），其他消费者不受影响；匿名租约没有消费者冷却。
 - `lease_lost` 事件（心跳被拒/协调端 token 消失）只回收槽位并发出事件，不会把资源转成 `LOST`。`LOST` 是保留的失联状态，当前没有自动进入路径，见[状态机](../reference/state-machine.md)。
 
@@ -132,7 +147,7 @@ for lease in list(await pool.leases("r42")):
 | `PoolExhausted` | 等待超时；资源停在 `NEW` 且无验活任务时也会立即抛出（`VALIDATING` 期间会等待） |
 | `ResourceBusy` | 定向获取超时 |
 | `LeaseConflict` | token 不匹配或并发状态冲突 |
-| `LeaseExpired` / `LeaseLostError` | 租约已过期或在持有期间丢失 |
-| `LeaseRevokedError` | 被管理员强制撤销 |
+| `LeaseExpired` / `LeaseLost` | 租约已过期或在持有期间丢失 |
+| `LeaseRevoked` | 被管理员强制撤销 |
 
 同步代码见 [同步 Purser](sync-facade.md)。

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from purser.core.resource import Lease
+from purser.errors import PurserError, is_retryable
 
 logger = logging.getLogger("purser.lease")
 
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     LostFn = Callable[[Lease], Awaitable[None]]
 
 
-@dataclass
+@dataclass(slots=True)
 class LeaseManager:
     """Tracks in-flight leases of one pool.
 
@@ -103,6 +104,24 @@ class LeaseManager:
                 ok = await renew(lease)
             except asyncio.CancelledError:
                 raise
+            except PurserError as exc:
+                if not is_retryable(exc):
+                    logger.warning(
+                        "heartbeat renewal rejected for %s: %s", lease.token, exc
+                    )
+                    await self._report_lost(lease)
+                    break
+                consecutive_errors += 1
+                if consecutive_errors >= self.max_renew_errors:
+                    logger.warning(
+                        "heartbeat renew failed %d times for %s",
+                        consecutive_errors,
+                        lease.token,
+                    )
+                    await self._report_lost(lease)
+                    break
+                logger.warning("heartbeat renew transient error for %s", lease.token)
+                continue
             except Exception:
                 # Transient storage/coordination errors should not kill a
                 # healthy lease: retry before declaring it lost.

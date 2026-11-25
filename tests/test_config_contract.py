@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import fields
 
 import pytest
 
-from purser import ConfigError, PoolConfig, Purser
+from purser import (
+    AcquireMode,
+    BundleMode,
+    ConfigError,
+    CoordinationKind,
+    ExpirePolicy,
+    ImportValidate,
+    PoolConfig,
+    Purser,
+    SchedulerKind,
+    StorageKind,
+    UnbanMode,
+)
 from purser.config import (
     IMMUTABLE_POOL_FIELDS,
     POOL_CONFIG_SCHEMA,
@@ -65,7 +78,8 @@ def test_schema_payload_exposes_profiles_and_marks_immutable_fields():
     assert tuple(payload["immutable"]) == tuple(sorted(IMMUTABLE_POOL_FIELDS))
     by_name = {item["name"]: item for item in payload["fields"]}
     assert by_name["storage"]["mutable"] is False
-    assert by_name["scheduler"]["hidden"] is True
+    assert by_name["scheduler"]["hidden"] is False
+    assert by_name["acquire_mode"]["choices"] == ["lease", "stateless"]
     assert by_name["quota_cooldown"]["nullable"] is False
     assert by_name["max_lease_duration"]["nullable"] is True
 
@@ -122,6 +136,69 @@ def test_null_clear_is_only_allowed_for_nullable_fields():
 def test_unknown_profile_lists_available_names():
     with pytest.raises(ConfigError, match="available: .*basic"):
         resolve_pool_config("proxy", profile="missing")
+
+
+# -- typed kebab values ---------------------------------------------------
+
+
+def test_kind_enums_coerce_and_stay_plain_strings_outside_python():
+    cfg = PoolConfig(
+        kind="proxy",
+        storage="sqlite",
+        coordination="redis",
+        scheduler="fifo",
+        acquire_mode="stateless",
+        unban_mode="manual_only",
+        import_validate="none",
+        expire_policy="quota",
+    )
+    assert cfg.storage is StorageKind.SQLITE
+    assert cfg.coordination is CoordinationKind.REDIS
+    assert cfg.scheduler is SchedulerKind.FIFO
+    assert cfg.acquire_mode is AcquireMode.STATELESS
+    assert cfg.unban_mode is UnbanMode.MANUAL_ONLY
+    assert cfg.import_validate is ImportValidate.NONE
+    assert cfg.expire_policy is ExpirePolicy.QUOTA
+
+    assert f"{cfg.storage}" == "sqlite"
+    assert f"{cfg.acquire_mode}" == "stateless"
+    dumped = cfg.to_dict()
+    assert dumped["storage"] == "sqlite"
+    assert type(dumped["storage"]) is str
+    json.dumps(dumped)
+
+
+def test_schema_choices_come_from_the_enums():
+    by_name = {item["name"]: item for item in config_schema_payload()["fields"]}
+    assert by_name["storage"]["choices"] == ["memory", "sqlite", "mysql"]
+    assert by_name["coordination"]["choices"] == ["memory", "redis"]
+    assert by_name["scheduler"]["choices"] == [
+        "priority_quota",
+        "fifo",
+        "token_bucket",
+    ]
+    assert by_name["storage"]["default"] == "memory"
+
+
+def test_unknown_kind_reports_the_expected_choices():
+    with pytest.raises(ConfigError, match="unknown storage 'bogus'.*memory"):
+        PoolConfig(kind="proxy", storage="bogus")
+    with pytest.raises(ConfigError, match="unknown acquire_mode 'bogus'"):
+        PoolConfig(kind="proxy", acquire_mode="bogus")
+
+
+def test_probe_targets_is_not_a_pool_field():
+    assert "probe_targets" not in POOL_CONFIG_SCHEMA
+    with pytest.raises(ConfigError, match="unknown pool config field"):
+        resolve_pool_config("proxy", config={"probe_targets": ["http://x"]})
+
+
+def test_bundle_mode_is_typed():
+    ps = Purser(bundle_mode="two_phase")
+    assert ps.bundle_mode is BundleMode.TWO_PHASE
+    assert f"{ps.bundle_mode}" == "two_phase"
+    with pytest.raises(ConfigError, match="unknown bundle_mode"):
+        Purser(bundle_mode="bogus")
 
 
 # -- Python facade --------------------------------------------------------

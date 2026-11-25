@@ -1,6 +1,6 @@
 # 安装
 
-要求 Python `>=3.8`。内核只依赖 `redis`（协调层）与 `cryptography`（密文字段）；Web 服务与 CLI 的依赖按需安装。
+要求 Python `>=3.10`。内核只依赖 `redis`（协调层）与 `cryptography`（密文字段）；Web 服务与 CLI 的依赖按需安装。
 
 ## 按用途选择 extras
 

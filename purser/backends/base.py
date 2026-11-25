@@ -1,4 +1,4 @@
-"""Two-plane backend contracts (S10 / F2).
+"""Two-plane backend contracts.
 
 * :class:`StorageBackend` is the durable system of record: resource master
   data, important state, slot accounting and the version CAS.  A loss here is
@@ -31,7 +31,7 @@ def _now() -> float:
     return time.time()
 
 
-@dataclass
+@dataclass(slots=True)
 class ResourcePatch:
     """Structured updates committed atomically with a state change."""
 
@@ -106,7 +106,7 @@ class ResourcePatch:
         return resource
 
 
-@dataclass
+@dataclass(slots=True)
 class TransitionResult:
     ok: bool
     state: ResourceState | None = None
@@ -178,7 +178,7 @@ class StorageBackend(ABC):
 
     @abstractmethod
     async def reset_usage(self, pool: str, rid: str, slots: int = 0) -> bool:
-        """Reconciliation (F2): align ``used_slots`` with ``slots``.
+        """Reconciliation: align ``used_slots`` with ``slots``.
 
         ``slots == 0`` drops orphaned usage back to IDLE (or archives a
         DRAINING resource whose in-flight leases were lost); ``slots > 0``

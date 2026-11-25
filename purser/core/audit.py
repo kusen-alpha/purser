@@ -1,4 +1,4 @@
-"""Append-only audit log with a SHA-256 hash chain (O9 / D2).
+"""Append-only audit log with a SHA-256 hash chain.
 
 In-memory by default; pass ``sqlite_path`` to persist every entry and to
 reload the chain on restart so ``verify()`` still covers the full history.
@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass
+@dataclass(slots=True)
 class AuditEntry:
     seq: int
     ts: float

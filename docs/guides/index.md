@@ -21,6 +21,7 @@
 | 在多线程里并发使用 | [多线程使用](threading.md) |
 | 同主机多进程共享资源池 | [多进程使用](multiprocessing.md) |
 | 在同步代码里调用 | [同步 Purser](sync-facade.md) |
+| 在嵌入式 / 线程 / 进程运行时之间切换 | [门面族与运行时选择](facades.md) |
 | 接入代理/账号之外的新资源 | [自定义资源适配器](custom-resource-adapter.md) |
 | 在浏览器里建池、加资源、看租约 | [Web 控制台](web-console.md) |
 | 退役、备份、审计、轮换密钥 | [运维操作](operations.md) |

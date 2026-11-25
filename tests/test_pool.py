@@ -244,6 +244,31 @@ async def test_acquire_many_atomic_and_best_effort(make_pool):
         await pool.acquire_many(2, mode="best_effort", n_min=2, timeout=0.1)
 
 
+async def test_acquire_many_never_mutates_the_request(make_pool):
+    pool = make_pool()
+    await seed(pool, n=2)
+    req = AcquireRequest(timeout=30.0)
+    batch = await pool.acquire_many(2, req=req, timeout=0.1)
+    assert req.timeout == 30.0
+    await batch.release_all(pool)
+
+
+async def test_acquire_many_rejects_unknown_mode_and_bad_n_min(make_pool):
+    pool = make_pool()
+    with pytest.raises(ConfigError, match="acquire mode"):
+        await pool.acquire_many(1, mode="sometimes")  # type: ignore[arg-type]
+    with pytest.raises(ConfigError, match="n_min"):
+        await pool.acquire_many(1, n_min=2)
+
+
+async def test_import_validate_rejects_unknown_mode(make_pool):
+    pool = make_pool()
+    with pytest.raises(ConfigError, match="import_validate"):
+        await pool.import_resources(
+            [{"id": "x", "host": "h"}], import_validate="on-import"
+        )
+
+
 async def test_cooldown_after_release(make_pool):
     pool = make_pool(cooldown_after_release=60.0)
     [rid] = await seed(pool, n=1)
@@ -308,7 +333,7 @@ async def test_drain_archives_after_release(make_pool):
     assert res.state is ResourceState.ARCHIVED
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(timeout=0))
-    await pool.restore(rid, operator="ops")
+    await pool.restore_resource(rid, operator="ops")
     assert (await pool.get(rid)).state is ResourceState.IDLE
 
 
@@ -448,7 +473,7 @@ async def test_request_level_check_rejection(make_pool, purser):
             return CheckVerdict.PASS
 
     purser.register_adapter(Guarded())
-    pool = purser.pool("guarded", "guarded", max_slots=2)
+    pool = purser.ensure_pool("guarded", "guarded", max_slots=2)
     records = [{"id": f"g-{i}", "host": "1.1.1.1", "port": i} for i in range(3)]
     await pool.import_resources(records, import_validate="on_import")
     with pytest.raises(NoSuitableResource):

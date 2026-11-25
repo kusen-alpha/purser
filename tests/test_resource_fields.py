@@ -7,10 +7,9 @@ import sqlite3
 import sys
 import types
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 import pytest
-from typing_extensions import Annotated
 
 from purser import HealthReport, PoolConfig, Purser, ResourceState
 from purser.adapters.account import AccountAdapter, AccountResource
@@ -203,6 +202,47 @@ def test_payload_is_a_detached_view():
         "port": 1,
         "nested": {"k": "v"},
     }
+
+
+def test_payload_property_deep_copies_exactly_once(monkeypatch):
+    import purser.core.resource as resource_module
+
+    calls: list[object] = []
+    real = resource_module.deepcopy
+
+    def counting(value):
+        calls.append(value)
+        return real(value)
+
+    monkeypatch.setattr(resource_module, "deepcopy", counting)
+    typed = ProxyResource(id="p", payload={"host": "h", "port": 8080, "note": "n"})
+    plain = Resource(id="r", kind="fake", payload={"a": {"b": 1}})
+
+    assert typed.payload == {"host": "h", "port": 8080, "note": "n"}
+    assert len(calls) == 1
+    calls.clear()
+    assert plain.payload == {"a": {"b": 1}}
+    assert len(calls) == 1
+
+
+def test_payload_view_is_shallow_and_internal():
+    plain = Resource(id="r", kind="fake", payload={"a": {"b": 1}})
+    assert plain._payload_view() is plain._payload
+
+    typed = ProxyResource(id="p", payload={"host": "h", "port": "8080", "note": "n"})
+    view = typed._payload_view()
+    assert view == {"host": "h", "port": 8080, "note": "n"}
+    # Shallow: nested custom values are shared with internal storage.
+    assert view["note"] == typed._payload["note"]
+
+
+def test_resource_patch_without_payload_keeps_payload():
+    from purser.backends.base import ResourcePatch
+
+    resource = ProxyResource(id="p", payload={"host": "h", "port": 8080})
+    patch = ResourcePatch(meta_patch={"priority": 1})
+    updated = patch.apply(resource)
+    assert updated.payload == {"host": "h", "port": 8080}
 
 
 def test_copy_with_replaces_payload_and_typed_fields():
@@ -450,7 +490,7 @@ def test_annotated_fields_with_string_annotations():
         exec(
             "from __future__ import annotations\n"
             "from dataclasses import dataclass\n"
-            "from typing_extensions import Annotated\n"
+            "from typing import Annotated\n"
             "from purser.core.resource import Resource, PayloadField\n"
             "@dataclass\n"
             "class SmsCard(Resource):\n"

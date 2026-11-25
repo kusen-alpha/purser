@@ -1,4 +1,4 @@
-"""Purser CLI: operate a running service (8.3)."""
+"""Purser CLI: operate a running service."""
 
 from __future__ import annotations
 
@@ -81,13 +81,6 @@ def cmd_ls(args: argparse.Namespace, client: httpx.Client) -> None:
             ",".join(r.get("tags") or []),
         )
     console.print(table)
-
-
-def cmd_validate(args: argparse.Namespace, client: httpx.Client) -> None:
-    resp = client.post(
-        f"/pools/{args.pool}/resources/{args.rid}/validate", json={"reason": "cli"}
-    )
-    _ok_or_fail(resp, f"validate {args.rid}")
 
 
 def cmd_action(args: argparse.Namespace, client: httpx.Client) -> None:

@@ -63,11 +63,11 @@ ps.close()                  # 幂等；关闭后调用其他方法抛 RuntimeErr
 | `await pool.acquire_many(n, ...)` | `pool.acquire_many(n, ...)` → `SyncBatchLease` |
 | `await pool.release(lease, ...)` | `pool.release(lease, ...)` |
 | `await pool.release_consumer(...)` | `pool.release_consumer(...)` |
-| `await pool.renew_manual(lease)` | `pool.renew_manual(lease)` |
+| `await pool.renew(lease)` | `pool.renew(lease)` → 新的 `expires_at` |
 | `pool.iter_resources(...)` | `pool.iter_resources(...)` → `SyncResourceIterator` |
 | `ps.bus.subscribe(listener)` | `ps.subscribe(callback)` → `SyncSubscription` |
 | `ps.report_usage(...)` | `ps.report_usage(...)` |
-| `await ps.backup()/restore()` | `ps.backup()/restore()` |
+| `await ps.backup()/restore_backup()` | `ps.backup()/restore_backup()` |
 
 `SyncBatchLease` 支持 `with` 与 `release_all()`；`SyncResourceIterator` 支持 `with` 与 `close()`；`SyncSubscription` 支持 `with` 与 `close()`。
 

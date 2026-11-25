@@ -3,12 +3,14 @@ site_description: 通用采集资源调度库：代理、账号与自定义资�
 docs_dir: docs
 site_dir: site
 
-# 发布后按实际部署地址填写；search.share、canonical 与 sitemap 依赖它。
-# site_url: https://your-domain.example/
+site_url: https://kusen-alpha.github.io/purser/
+repo_url: https://github.com/kusen-alpha/purser
+edit_uri: edit/master/docs/
 
 exclude_docs: |
   design/design-doc.md
   design/feasibility.md
+  design/bundle-v2.md
 
 theme:
   name: material
@@ -114,6 +116,7 @@ nav:
       - 多进程使用: guides/multiprocessing.md
       - 后端配置示例: guides/backend-configuration.md
       - 同步 Purser: guides/sync-facade.md
+      - 门面族与运行时选择: guides/facades.md
       - 自定义资源适配器: guides/custom-resource-adapter.md
       - Web 控制台: guides/web-console.md
       - 运维操作: guides/operations.md
@@ -140,6 +143,7 @@ nav:
       - LocalScheduler: reference/local-scheduler.md
       - 错误处理: reference/errors.md
       - 状态机: reference/state-machine.md
+      - 版本与弃用政策: reference/stability.md
   - 设计与内部:
       - 概览: design/index.md
       - 架构: design/architecture.md

@@ -31,8 +31,8 @@ except PurserError as exc:
 | `BundleAcquireFailed` | 跨池组合获取未完成，已拿到的成员已回滚释放 | 补充资源、调整约束或改用 `best_effort` |
 | `LeaseConflict` | token 不匹配或乐观锁冲突 | 用最新租约状态重试 |
 | `LeaseExpired` | 租约已过期 | 续约或重新获取 |
-| `LeaseRevokedError` | 租约被管理员强制撤销 | 停止使用该资源 |
-| `LeaseLostError` | 租约在持有期间消失（过期/后端重置） | 重新获取，检查心跳 |
+| `LeaseRevoked` | 租约被管理员强制撤销 | 停止使用该资源 |
+| `LeaseLost` | 租约在持有期间消失（过期/后端重置） | 重新获取，检查心跳 |
 | `LeaseLimitReached` | 达到 `use_limit` 或 `max_lease_duration` | 归还并重新获取 |
 | `BadState` | 资源状态不允许该操作 | 查询当前状态后重试 |
 | `InvalidTransition` | 状态机拒绝 `(state, event)` | 同上；检查操作顺序 |

@@ -89,7 +89,8 @@ flowchart TB
 ```text
 purser/
   __init__.py            # 公共导出
-  facade.py              # Purser / 资源池的编排
+  facade/                # Purser 组合根与共享 helper
+  pool/                  # ResourcePool 数据面
   config.py              # PoolConfig / 字段 schema / 场景预设
   sync.py                # SyncPurser / SyncPool / SyncLease
   authority.py           # 进程内权威/单例约束

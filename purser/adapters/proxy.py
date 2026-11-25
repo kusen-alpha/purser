@@ -1,4 +1,4 @@
-"""Proxy resource adapter with real HTTP CONNECT / SOCKS probes (S2)."""
+"""Proxy resource adapter with real HTTP CONNECT / SOCKS probes."""
 
 from __future__ import annotations
 
@@ -8,9 +8,7 @@ import math
 import socket
 import time
 from dataclasses import dataclass
-from typing import Any
-
-from typing_extensions import Annotated
+from typing import Annotated, Any
 
 from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport, ProbeGuard
@@ -24,7 +22,7 @@ from purser.core.resource import (
 DEFAULT_PROBE_TARGETS = ["http://example.com:80"]
 
 
-@dataclass
+@dataclass(slots=True)
 class ProxyResource(Resource):
     """Typed proxy resource; ``payload`` merges these fields with custom keys."""
 
@@ -146,7 +144,7 @@ class ProxyAdapter(ResourceAdapter):
             results.append((ok, latency, error))
 
         if not results:
-            # Every probe is on cooldown; we cannot judge, so never ban (X1).
+            # Every probe is on cooldown; we cannot judge, so never ban.
             return HealthReport(alive=True, error="all probes disabled")
         if self.probe_guard is not None and self.probe_guard.all_down(self.probe_targets):
             return HealthReport(alive=True, error="all probes down; judgement paused")

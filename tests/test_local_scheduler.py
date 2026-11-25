@@ -19,7 +19,13 @@ from concurrent.futures import ProcessPoolExecutor
 import pytest
 from conftest import FakeChecker
 
-from purser import PoolExhausted, PoolNotFound
+from purser import (
+    ConfigError,
+    LeaseLimitReached,
+    LeaseLost,
+    PoolExhausted,
+    PoolNotFound,
+)
 from purser.local import (
     ENV_VAR,
     LocalScheduler,
@@ -128,7 +134,7 @@ def test_in_process_data_plane_and_idempotency():
 
         with sched.lease("p", consumer="c3") as second:
             assert second.resource_id == rid
-            assert second.renew() is True
+            assert second.renew() == pytest.approx(second.expires_at)
             assert second.expires_at >= lease.started_at
         assert sched.stats("p")["active_leases"] == 0
 
@@ -140,6 +146,70 @@ def test_in_process_data_plane_and_idempotency():
 
         assert sched.delete_pool("p", force=True)["removed"] == 1
         assert sched.pool_names() == []
+
+
+def test_renew_rejections_surface_as_typed_errors():
+    with _scheduler() as sched:
+        _seed(sched)
+        lease = sched.acquire("p", consumer="c", use_limit=0)
+        with pytest.raises(LeaseLimitReached):
+            lease.renew()
+        lease.release()
+        with pytest.raises(LeaseLost):
+            lease.renew()
+
+
+def test_renew_carries_used_and_enforces_use_limit():
+    with _scheduler() as sched:
+        _seed(sched)
+        lease = sched.acquire("p", consumer="c", use_limit=3)
+        lease.used = 2
+        assert lease.renew() == pytest.approx(lease.expires_at)
+        assert sched.client.pool_call("p", "leases")[0]["used"] == 2
+
+        # Counters only move forward; a stale report must not roll them back.
+        lease.used = 1
+        assert lease.renew() == pytest.approx(lease.expires_at)
+        assert sched.client.pool_call("p", "leases")[0]["used"] == 2
+
+        lease.used = 3
+        with pytest.raises(LeaseLimitReached):
+            lease.renew()
+        assert lease.release() is True
+
+
+def test_renew_rejects_invalid_used_report():
+    with _scheduler() as sched:
+        _seed(sched)
+        lease = sched.acquire("p", consumer="c")
+        with pytest.raises(ConfigError):
+            sched.client.renew("p", lease.token, used=-1)
+        assert lease.release() is True
+
+
+def test_pool_call_exposes_pool_reads_and_admin_methods():
+    from purser.errors import ConfigError
+
+    with _scheduler() as sched:
+        [rid] = _seed(sched)
+        lease = sched.acquire("p", consumer="c1")
+
+        rows = sched.client.pool_call("p", "leases")
+        assert [row["token"] for row in rows] == [lease.token]
+        assert rows[0]["resource"]["id"] == rid
+
+        assert sched.client.pool_call("p", "stats")["active_leases"] == 1
+        assert sum(sched.client.pool_call("p", "counts", by_name=True).values()) == 1
+        snapshot = sched.client.pool_call("p", "get", rid)
+        assert snapshot["id"] == rid
+        assert sched.client.pool_call("p", "describe", snapshot)["id"] == rid
+
+        assert sched.client.release("p", lease.token) is True
+        assert sched.client.pool_call("p", "ban", rid, reason="manual") is None
+        assert sched.client.pool_call("p", "counts", by_name=True)["banned"] == 1
+
+        with pytest.raises(ConfigError):
+            sched.client.pool_call("p", "acquire")
 
 
 def test_create_pool_profile_and_hot_update():
@@ -172,19 +242,21 @@ def test_release_wakes_blocked_acquire():
         result: dict = {}
 
         def waiter() -> None:
-            started = time.monotonic()
             with sched.client.lease("p", consumer="waiter", timeout=10.0) as lease:
                 result["resource_id"] = lease.resource_id
-                result["waited"] = time.monotonic() - started
 
         thread = threading.Thread(target=waiter)
         thread.start()
-        time.sleep(0.3)
+        # Wait until the scheduler reports the waiter queued, so the release
+        # below cannot race ahead of the blocked acquire.
+        deadline = time.monotonic() + 10.0
+        while sched.stats("p")["waiting"] < 1:
+            assert time.monotonic() < deadline, "waiter never queued"
+            time.sleep(0.02)
         holder.release()
         thread.join(10)
         assert not thread.is_alive()
         assert result["resource_id"] == holder.resource_id
-        assert result["waited"] >= 0.2
 
 
 # -- same-host processes --------------------------------------------------

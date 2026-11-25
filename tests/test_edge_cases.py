@@ -86,7 +86,7 @@ async def test_move_and_update_rejected_while_busy(make_pool, purser):
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     with pytest.raises(BadState):
         await pool.update_resource(rid, operator="ops", reason="x", tags=frozenset())
-    target = purser.pool("target", "fakecheck")
+    target = purser.ensure_pool("target", "fakecheck")
     with pytest.raises(BadState):
         await pool.move_resource(rid, target, operator="ops", reason="x")
     await pool.release(lease)

@@ -1,6 +1,16 @@
 # 内置资源适配器
 
-`Purser` 构造时会自动注册两个内置适配器：`proxy` 与 `account`。它们只是 `ResourceAdapter` 插件的两个实现，行为与自定义适配器完全一致。
+`proxy` 与 `account` 是默认目录（default catalog）里的两个普通条目，和 `@register_default_adapter` 注册的自定义适配器遵循同一套规则：kind 全局唯一、重复即报错、每个 `Purser` 实例各自实例化一份。它们在 `purser.adapters` 导入时安装，因此默认可用。
+
+`Purser(default_adapters=...)` 控制构造时装载多少：
+
+| 取值 | 注册表内容 |
+| --- | --- |
+| `"global"`（默认） | 内置 `proxy` / `account` + 所有 `@register_default_adapter` 条目 |
+| `"builtin"` | 只有内置 `proxy` / `account` |
+| `"none"` | 空注册表；所有 kind（含 `proxy` / `account`）都需自行 `register_adapter()` |
+
+需要替换内置实现时（例如自定义 `ProxyAdapter` 探测目标），用实例级 `register_adapter()` 覆盖同 kind 的条目；`@register_default_adapter` 不允许重复 kind。
 
 ## 对比
 
@@ -47,7 +57,7 @@ ps.register_adapter(
 - 每次探测受 `timeout`（默认 8 秒）约束。
 - 按目标实时验活：请求带 `AcquireRequest(probe=...)`（REST 同名字段）时，取得该代理前会对目标 URL 实测（复用同一探针），`PASS/FAIL` 走池的请求级校验与缓存；不传 `probe` 维持原来的生命周期探测，行为不变。
 
-> `PoolConfig.probe_targets` 是未实现的预留字段，传入会报错；探测目标只能配在 `ProxyAdapter` 上。
+> 池配置不提供探测目标字段；探测目标只能配在 `ProxyAdapter` 上。
 
 ## `AccountAdapter`
 

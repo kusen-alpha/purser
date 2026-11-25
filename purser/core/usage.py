@@ -1,4 +1,4 @@
-"""Usage ledger (R1): bounded release history for consumer/target reports."""
+"""Usage ledger: bounded release history for consumer/target reports."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class UsageRecord:
     ts: float
     pool: str

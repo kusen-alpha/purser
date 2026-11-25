@@ -12,16 +12,28 @@ import json
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
-
-from redis import asyncio as aioredis
-from redis.exceptions import RedisError
-from typing_extensions import ParamSpec
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from purser.errors import BackendUnavailable, ConfigError
 
+if TYPE_CHECKING:
+    from redis import asyncio as aioredis
 
-@dataclass(frozen=True)
+_REDIS_ERROR: type[BaseException] | None = None
+
+
+def _redis_error() -> type[BaseException]:
+    """Import ``redis.exceptions.RedisError`` on first failure path."""
+
+    global _REDIS_ERROR
+    if _REDIS_ERROR is None:
+        from redis.exceptions import RedisError
+
+        _REDIS_ERROR = RedisError
+    return _REDIS_ERROR
+
+
+@dataclass(frozen=True, slots=True)
 class ReservationMember:
     """One member lease bookmarked on a bundle reservation."""
 
@@ -30,7 +42,7 @@ class ReservationMember:
     token: str
 
 
-@dataclass
+@dataclass(slots=True)
 class Reservation:
     """One bundle's cross-pool state on the coordination plane."""
 
@@ -66,8 +78,10 @@ def _fail_closed(
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
             return await fn(*args, **kwargs)
-        except RedisError as exc:
-            raise BackendUnavailable(f"bundle redis error: {exc}") from exc
+        except Exception as exc:
+            if isinstance(exc, _redis_error()):
+                raise BackendUnavailable(f"bundle redis error: {exc}") from exc
+            raise
 
     return wrapper
 
@@ -192,6 +206,9 @@ class RedisBundleStore(BundleStore):
     ) -> None:
         if client is None and url is None:
             raise ConfigError("RedisBundleStore requires a client or url")
+
+        from redis import asyncio as aioredis
+
         self._client = client or aioredis.Redis.from_url(
             url,
             protocol=2,

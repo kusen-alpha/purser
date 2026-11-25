@@ -117,7 +117,7 @@ def test_backup_restore_roundtrip(make_client):
     assert "restore" in {item["action"] for item in audit["entries"]}
     backup_audit = src.get("/audit", params={"action": "backup"}, headers=head).json()
     assert backup_audit["entries"][0]["detail"]["resources"] == 2
-    assert dst_ps.get_pool("p1") is not None
+    assert dst_ps.get_pool("p1", default=None) is not None
 
 
 def test_health_and_ready(make_client):
@@ -249,7 +249,6 @@ def test_patch_pool_config_hot_applies(make_client):
     )
     assert resp.status_code == 200
     pool = ps.get_pool("px")
-    assert pool is not None
     assert pool.cfg.allocator == "round_robin"
     assert pool._allocator.name == "round_robin"
     # Invalid knob values are rejected with 422, not 500.
@@ -540,7 +539,7 @@ def test_pool_delete_requires_force_and_no_active_leases(make_client):
     removed = client.delete("/pools/px", params={"force": "true"}, headers=head)
     assert removed.status_code == 200
     assert removed.json()["removed"] == 1
-    assert ps.get_pool("px") is None
+    assert ps.get_pool("px", default=None) is None
     assert client.get("/pools/px", headers=head).status_code == 404
 
 
@@ -912,10 +911,20 @@ def test_acquire_extras_batch_mode_and_lease_renew(make_client):
     assert "affinity" in rejected.json()["detail"]
 
     renewed = client.post(
-        f"/pools/px/leases/{lease['token']}/renew", headers=head
+        f"/pools/px/leases/{lease['token']}/renew",
+        headers=head,
+        json={"used": 1},
     )
     assert renewed.status_code == 200
     assert renewed.json()["expires_at"] >= lease["expires_at"]
+    assert renewed.json()["used"] == 1
+    stale = client.post(
+        f"/pools/px/leases/{lease['token']}/renew",
+        headers=head,
+        json={"used": 0},
+    )
+    assert stale.status_code == 200
+    assert stale.json()["used"] == 1
     assert client.post("/pools/px/leases/nope/renew", headers=head).status_code == 404
 
     # best_effort returns what it could lease instead of waiting for the rest.
@@ -1004,7 +1013,6 @@ def test_service_metrics_and_persistence(make_client, monkeypatch, tmp_path):
     client2, ps2 = make_client()
     assert client2.get("/pools", headers=head).json()["pools"][0]["name"] == "px"
     restored = ps2.get_pool("px")
-    assert restored is not None
     assert restored.cfg.secret_fields == ("token",)
     assert restored.cfg.weights.health == 1.3
     assert restored.cfg.quota_limit == 2

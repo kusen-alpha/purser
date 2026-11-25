@@ -14,8 +14,8 @@
     <a class="md-button" href="reference/">API 参考</a>
   </p>
   <p class="purser-hero__badges">
-    <img src="https://img.shields.io/badge/version-0.2.0-009688" alt="版本 0.2.0">
-    <img src="https://img.shields.io/badge/python-3.8%2B-009688" alt="Python 3.8+">
+    <img src="https://img.shields.io/badge/version-0.5.0-009688" alt="版本 0.5.0">
+    <img src="https://img.shields.io/badge/python-3.10%2B-009688" alt="Python 3.10+">
     <img src="https://img.shields.io/badge/license-MIT-009688" alt="MIT License">
   </p>
 </div>
@@ -113,4 +113,4 @@ asyncio.run(main())
 
 源码是最终权威；[参考](reference/index.md)描述公开契约；指南与设计页解释语义，可能滞后于实现。行为冲突时按此顺序采信。
 
-当前版本 `0.2.0`。
+当前版本 `0.5.0`。

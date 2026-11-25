@@ -12,7 +12,7 @@ from purser.adapters.base import (
     ResourceAdapter,
     ResourceAdapterRegistry,
     clear_default_adapters,
-    register,
+    register_default_adapter,
 )
 from purser.core.health import HealthReport
 from purser.core.resource import AcquireRequest, CheckVerdict, Resource, UsageOutcome
@@ -114,7 +114,7 @@ class SwitchAdapter(ResourceAdapter):
 async def test_plugin_hooks_fire(make_pool, purser):
     checker = HookAdapter()
     purser.register_adapter(checker)
-    pool = purser.pool("hookpool", "hooks")
+    pool = purser.ensure_pool("hookpool", "hooks")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     await pool.release(lease, outcome=UsageOutcome.RATE_LIMITED)
@@ -132,7 +132,7 @@ async def test_plugin_hooks_fire(make_pool, purser):
 async def test_plugin_hook_exception_is_contained_and_reported(make_pool, purser):
     checker = BrokenHookAdapter()
     purser.register_adapter(checker)
-    pool = purser.pool("brokenpool", "broken")
+    pool = purser.ensure_pool("brokenpool", "broken")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     assert await pool.release(lease) is True  # hook failure must not break release
@@ -146,13 +146,13 @@ async def test_plugin_hook_exception_is_contained_and_reported(make_pool, purser
 async def test_lease_lifecycle_hooks_fire(make_pool, purser):
     checker = HookAdapter()
     purser.register_adapter(checker)
-    pool = purser.pool("lifecycle", "hooks")
+    pool = purser.ensure_pool("lifecycle", "hooks")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
 
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     assert checker.acquired == ["r1"]
 
-    assert await pool.renew_manual(lease) is True
+    assert isinstance(await pool.renew(lease), float)
     assert checker.renewed == ["r1"]
 
     assert await pool.release(lease) is True
@@ -171,7 +171,7 @@ async def test_lease_lifecycle_hooks_fire(make_pool, purser):
 async def test_switch_declines_and_leaves_resource_untouched(purser):
     checker = SwitchAdapter()
     purser.register_adapter(checker)
-    pool = purser.pool("switch-decline", "switchkind")
+    pool = purser.ensure_pool("switch-decline", "switchkind")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
     assert await pool.switch_resource("r1") is None
     assert (await pool.get("r1")).payload["host"] == "old"
@@ -181,7 +181,7 @@ async def test_switch_mutates_old_resource_in_place(purser):
     checker = SwitchAdapter()
     checker.mode = "inplace"
     purser.register_adapter(checker)
-    pool = purser.pool("switch-inplace", "switchkind")
+    pool = purser.ensure_pool("switch-inplace", "switchkind")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
 
     switched = await pool.switch_resource("r1")
@@ -198,7 +198,7 @@ async def test_switch_replaces_with_new_resource(purser):
     checker = SwitchAdapter()
     checker.mode = "replace"
     purser.register_adapter(checker)
-    pool = purser.pool("switch-replace", "switchkind")
+    pool = purser.ensure_pool("switch-replace", "switchkind")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
 
     switched = await pool.switch_resource("r1")
@@ -210,7 +210,7 @@ async def test_switch_replaces_with_new_resource(purser):
 async def test_switch_rejects_busy_resource(purser):
     checker = SwitchAdapter()
     purser.register_adapter(checker)
-    pool = purser.pool("switch-busy", "switchkind")
+    pool = purser.ensure_pool("switch-busy", "switchkind")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     try:
@@ -235,7 +235,7 @@ class DefaultAdapter(ResourceAdapter):
 
 
 async def test_register_decorator_bare_registers_default():
-    @register
+    @register_default_adapter
     class BareAdapter(DefaultAdapter):
         kind = "bare-default"
 
@@ -249,7 +249,7 @@ async def test_register_decorator_bare_registers_default():
 
 
 async def test_register_decorator_factory_config():
-    @register(region="eu")
+    @register_default_adapter(region="eu")
     class ConfType(DefaultAdapter):
         kind = "conf-default"
 
@@ -261,7 +261,7 @@ async def test_register_decorator_factory_config():
 
 
 async def test_register_defaults_are_per_purser_instances():
-    @register
+    @register_default_adapter
     class StatefulType(DefaultAdapter):
         kind = "stateful-default"
 
@@ -279,36 +279,51 @@ async def test_register_defaults_are_per_purser_instances():
 
 
 def test_register_duplicate_kind_raises():
-    @register
+    @register_default_adapter
     class DupA(DefaultAdapter):
         kind = "dup-default"
 
     with pytest.raises(ConfigError, match="duplicate"):
-        @register
+        @register_default_adapter
         class DupB(DefaultAdapter):
             kind = "dup-default"
 
 
 def test_register_builtin_kind_conflict_raises():
-    @register
-    class ProxyReboot(DefaultAdapter):
-        kind = "proxy"
-
     with pytest.raises(ConfigError, match="builtin"):
-        Purser(maintenance_enabled=False)
+
+        @register_default_adapter
+        class ProxyReboot(DefaultAdapter):
+            kind = "proxy"
 
 
-async def test_register_use_globals_false_skips_defaults():
-    @register
+async def test_default_adapters_builtin_skips_globals():
+    @register_default_adapter
     class SkippedType(DefaultAdapter):
         kind = "skipped-default"
 
-    ps = Purser(maintenance_enabled=False, use_globals=False)
+    ps = Purser(maintenance_enabled=False, default_adapters="builtin")
     try:
+        assert {"proxy", "account"} <= set(ps.adapters.names())
         with pytest.raises(ConfigError):
             ps.adapters.get("skipped-default")
     finally:
         await ps.close()
+
+
+async def test_default_adapters_none_starts_empty():
+    ps = Purser(maintenance_enabled=False, default_adapters="none")
+    try:
+        assert ps.adapters.names() == []
+        with pytest.raises(ConfigError):
+            ps.create_pool("px", "proxy")
+    finally:
+        await ps.close()
+
+
+def test_default_adapters_rejects_unknown_mode():
+    with pytest.raises(ConfigError, match="default_adapters"):
+        Purser(maintenance_enabled=False, default_adapters="bogus")
 
 
 def test_registry_lifecycle():

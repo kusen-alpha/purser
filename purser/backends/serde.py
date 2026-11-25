@@ -1,4 +1,4 @@
-"""Shared row (de)serialization for durable backends (S10).
+"""Shared row (de)serialization for durable backends.
 
 The memory storage keeps live objects; sqlite and mysql persist rows, so
 health/quota/site-failures/meta are stored as JSON.  Keeping the mapping here
@@ -100,7 +100,7 @@ def serialize_row(
         "max_slots": resource.concurrency.max_slots,
         "used_slots": resource.concurrency.used_slots,
         "payload": json_str(
-            codec.encrypt_payload(resource.payload, secret_fields)
+            codec.encrypt_payload(resource._payload_view(), secret_fields)
         ),
         "tags": json_str(sorted(resource.tags)),
         "health": encode_health(resource.health),

@@ -181,7 +181,7 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 
 - 获取、容量、等待、续租、释放全部在调度进程内完成；数据面不按后端分支，已实测 memory/memory、SQLite + Redis、MySQL + Redis 三种组合，另三种组合未单独跑。
 - 幂等获取：同一 `idempotency_key` 返回同一 token 并置 `replayed=True`；进行中的同 key 请求合流，不重复占槽。
-- 幂等释放：token 墓碑（600 s）+ 服务端“token 已不存在即成功”的语义，与进程内 `release` 契约一致；`renew` 对失效 token 仍报冲突。
+- 幂等释放：token 墓碑（600 s）+ 服务端“token 已不存在即成功”的语义，与进程内 `release` 契约一致；`renew` 对失效 token 抛 `LeaseLostError`。
 - 断连回收：租约按连接登记所有权；worker 进程崩溃或连接关闭后，调度进程立即归还其租约，不等待 TTL，也不会被调度进程心跳永久续租。
 - 错误映射：服务端的结构化错误码在客户端重建为对应的 `PurserError` 子类（`PoolExhausted`、`PoolNotFound`、`LeaseConflict` 等）；调度进程不可达或不响应分别抛 `SchedulerUnavailable` / `SchedulerTimeout`。
 - 连接是线程本地、进程本地的：客户端对象可以跨线程使用；`fork` 后通过 PID 检测惰性重连，连接对象从不跨进程 pickle。
@@ -313,7 +313,7 @@ used_slots == sum(slots of authoritative live leases)
 
 本轮 Python 3.11.9 实测：主线程没有 running loop 时构造 `Purser` 和未启动的池可以成功；随后在另一线程统一启动、关闭也能成功。故不能写成“只要主线程构造就必报错”。但把**已启动**实例交给另一 loop，或在没有 running loop 的线程为运行中实例建池，会遇到任务创建或跨 loop 关闭错误。
 
-Python 3.8/3.9 与新版本的锁、信号量绑定时机不同；本轮没有完成所有受支持版本的实机验证。统一在所属 loop 线程内构造、使用和关闭仍是合理的门面约束，它降低兼容风险，而不是依靠一个不成立的绝对报错论证。
+不同 Python 版本的锁、信号量绑定时机可能不同；本轮只对部分受支持版本做了实机验证。统一在所属 loop 线程内构造、使用和关闭仍是合理的门面约束，它降低兼容风险，而不是依靠一个不成立的绝对报错论证。
 
 ### 2.4 生命周期及实例内状态
 
@@ -416,16 +416,16 @@ copy_used=1, core_used=0
 
 ### 3.5 完整公开 API 面
 
-按当前 `facade.py` 的 AST 去除 overload、property、dunder，按 `owner.method` 去重计数：**ResourcePool 39 个、Purser 12 个，合计 51 个**。这是所属类与方法的组合数，不是不同方法名数量；原表并非漏掉十余个方法，而是数量和覆盖口径不准确。
+按当前 `facade.py` 的 AST 去除 overload、property、dunder，按 `owner.method` 去重计数：**ResourcePool 39 个、Purser 10 个，合计 49 个**。这是所属类与方法的组合数，不是不同方法名数量；原表并非漏掉十余个方法，而是数量和覆盖口径不准确。
 
 | 所属对象 | 分组 | 必须纳入适配清单的方法 |
 | --- | --- | --- |
 | Purser | 生命周期 | `start`、`close` |
-| Purser | 适配器 / 池 | `register_adapter`、`create_pool`、`pool`、`get_pool`、`require_pool`、`pool_names`、`delete_pool` |
+| Purser | 适配器 / 池 | `register_adapter`、`create_pool`、`ensure_pool`、`get_pool`、`pools`、`get_pool_names`、`delete_pool` |
 | Purser | 运维 | `report_usage`、`backup`、`restore` |
 | ResourcePool | 生命周期 | `start`、`close`、`reconfigure` |
 | ResourcePool | 读取 | `get`、`require`、`query`、`iter_resources`、`count_matching`、`batches`、`counts`、`stats`、`describe`、`leases` |
-| ResourcePool | 租约 | `acquire`、`lease`、`release`、`release_consumer`、`acquire_many`、`renew_manual` |
+| ResourcePool | 租约 | `acquire`、`lease`、`release`、`release_consumer`、`acquire_many`、`renew` |
 | ResourcePool | 导入 / 验活 | `import_resources`、`generate`、`validate_now`、`validate_jobs`、`validate_job`、`cancel_validate_job` |
 | ResourcePool | 状态 / 资源管理 | `ban`、`unban`、`suspend`、`resume`、`top_up`、`drain`、`cancel_drain`、`restore`、`admin_set_state`、`force_revoke`、`update_resource`、`move_resource`、`recall_batch` |
 | ResourcePool | 维护 | `run_maintenance` |
@@ -459,7 +459,7 @@ copy_used=1, core_used=0
 | 另写同步内核 | 独立维护状态机和后端行为 | 不推荐；无必要扩大正确性验证面 |
 | 同类增加 `_sync` 方法 | 显式平行方法入口 | 可行，但本项目更适合用独立门面类型表达 loop 所有权 |
 
-本轮核对 synchronicity 主分支声明 Python >= 3.10，而 purser 声明 >= 3.8：[项目要求](pyproject.toml#L10)。若考虑引入，需要按实际选择的发布版本重新核对，不能用库名推断兼容性。Python 3.8 没有 `asyncio.to_thread` 与 `loop.shutdown_default_executor`，应设计相应执行器所有权及关闭路径；能力检测跳过某 API 不等于清理已经完成。
+本轮核对 synchronicity 主分支声明 Python >= 3.10，purser 现已将下限提升到 >= 3.10：[项目要求](pyproject.toml#L10)。若考虑引入，仍需按实际选择的发布版本重新核对，不能用库名推断兼容性。Python 3.10 起可直接使用 `asyncio.to_thread` 与 `loop.shutdown_default_executor`；能力检测跳过某 API 不等于清理已经完成。
 
 核对来源：[synchronicity](https://github.com/modal-labs/synchronicity)、[Playwright 同步上下文](https://github.com/microsoft/playwright-python/blob/main/playwright/sync_api/_context_manager.py)、[universalasync](https://github.com/bitcart/universalasync)、[unasync](https://github.com/python-trio/unasync)。这些对比用于说明机制，不作为 purser 正确性的证明。
 

@@ -1,18 +1,16 @@
-"""Account resource adapter (S3): manual validation by default, hooks exposed."""
+"""Account resource adapter: manual validation by default, hooks exposed."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
-from typing_extensions import Annotated
+from typing import Annotated, Any
 
 from purser.adapters.base import ResourceAdapter
 from purser.core.health import HealthReport
 from purser.core.resource import PayloadField, Resource
 
 
-@dataclass
+@dataclass(slots=True)
 class AccountResource(Resource):
     """Typed account resource; ``payload`` merges these fields with custom keys."""
 

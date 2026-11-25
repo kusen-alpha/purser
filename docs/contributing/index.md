@@ -18,7 +18,7 @@ Linux / macOS 把 `.venv\Scripts\` 换成 `.venv/bin/`。`dev` extras 包含测�
 - `mypy purser`（`strict`）零告警；
 - `ruff check .` 零告警；
 - `pytest tests -q --cov=purser --cov-report=term-missing` 通过；
-- CI 的 lint / typecheck / benchmark 与 Python 3.8–3.12 矩阵通过；
+- CI 的 lint / typecheck / benchmark 与 Python 3.10–3.13 矩阵通过；
 - 行为变更同步更新 README 与 `docs/`。
 
 具体命令、真实 Redis/MySQL 集成测试门控与新增测试的写法见[测试与工程规范](testing.md)。
@@ -27,7 +27,8 @@ Linux / macOS 把 `.venv\Scripts\` 换成 `.venv/bin/`。`dev` extras 包含测�
 
 | 目录 | 职责 |
 | --- | --- |
-| `purser/facade.py` | `Purser` / `ResourcePool` 编排：获取、归还、验活、对账 |
+| `purser/facade/` | `Purser` 组合根：池注册表、备份恢复、生命周期 |
+| `purser/pool/` | `ResourcePool` 数据面：获取、归还、验活、对账 |
 | `purser/core/` | 状态机、分配器、租约、健康度、隔离、事件、用量 |
 | `purser/backends/` | 存储（memory/sqlite/mysql）与协调（memory/redis） |
 | `purser/adapters/` | `ResourceAdapter` 基类与内置 proxy/account |

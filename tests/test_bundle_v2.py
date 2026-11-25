@@ -598,10 +598,10 @@ def test_sync_two_phase_bundle():
         ps.register_adapter(SimpleAdapter())
         ps.create_pool("accounts", "sim")
         ps.create_pool("proxies", "sim")
-        ps.pool("accounts").import_resources(
+        ps.get_pool("accounts").import_resources(
             [{"id": "a1"}], import_validate="on_import"
         )
-        ps.pool("proxies").import_resources(
+        ps.get_pool("proxies").import_resources(
             [{"id": "p1", "host": "1.1.1.1"}], import_validate="on_import"
         )
         bundle = ps.acquire_bundle(_pair())

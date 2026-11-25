@@ -1,4 +1,4 @@
-"""Health scoring and the checker protocol (5.3 / X1 / Y6)."""
+"""Health scoring and the checker protocol."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from purser.core.resource import HealthStats, Resource
+from purser.core.resource import HealthStats as HealthStats, Resource
 
 if TYPE_CHECKING:
     RefreshCallback = Callable[[Resource], bool]  # True when a refresh is needed
@@ -30,9 +30,9 @@ class Action(str, enum.Enum):
     DROP = "drop"
 
 
-@dataclass
+@dataclass(slots=True)
 class HealthReport:
-    """One validation verdict (5.3)."""
+    """One validation verdict."""
 
     alive: bool
     latency_ms: float | None = None
@@ -60,18 +60,8 @@ class HealthChecker(Protocol):
     async def validate(self, resource: Resource) -> HealthReport: ...
 
 
-def apply_report(health: HealthStats, report: HealthReport) -> None:
-    """Merge a HealthReport into EWMA stats."""
-
-    health.update(
-        report.alive,
-        latency_ms=report.latency_ms,
-        error=report.error,
-    )
-
-
 class ProbeGuard:
-    """Probe self-check (X1): auto-remove probes that keep failing, and pause
+    """Probe self-check: auto-remove probes that keep failing, and pause
     mass banning when every probe is down.
     """
 
@@ -116,7 +106,7 @@ class ProbeGuard:
 
 
 class ValidationGate:
-    """Adaptive staleness policy (5.3 / S7): when is on-demand refresh due?"""
+    """Adaptive staleness policy: when is on-demand refresh due?"""
 
     def __init__(
         self,
@@ -143,6 +133,6 @@ class ValidationGate:
             return False
         if self.sample >= 1.0:
             return True
-        # Deterministic pseudorandom sampling (Y2): stable per resource.
+        # Deterministic pseudorandom sampling: stable per resource.
         h = sum(resource.id.encode("utf-8")) % 10000 / 10000.0
         return h < self.sample

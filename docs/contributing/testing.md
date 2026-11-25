@@ -22,6 +22,22 @@ Linux / macOS 使用 `.venv/bin/pip`。真实 Redis / MySQL 用例由环境变�
 .venv\Scripts\python -m pytest tests/test_boundary_data_edges.py -q -k "quota"
 ```
 
+## 覆盖率
+
+CI 的 `coverage` job（Python 3.12 + Redis/MySQL）是唯一卡门禁的任务：
+Line+Branch 合计 ≥ 90%，报告以 artifact 上传。本地复现同一口径：
+
+```bash
+# bash
+COVERAGE_PROCESS_START=$PWD/pyproject.toml coverage run -m pytest tests -q
+coverage combine
+coverage report --show-missing
+```
+
+`tests/_coverage_boot/sitecustomize.py` 会随 `PYTHONPATH` 注入 spawn 子进程，
+因此 `purser/local/server.py` 的覆盖率也计入。未配置 Redis/MySQL 时总数天然偏低，
+本地只看趋势与单模块缺口，不据此判断门禁。
+
 ## 测试分层
 
 | 层次 | 代表文件 | 关注点 |
@@ -41,12 +57,12 @@ Linux / macOS 使用 `.venv/bin/pip`。真实 Redis / MySQL 用例由环境变�
 
 - 公共 API 全类型标注，`mypy purser`（`strict`）零告警；
 - `ruff check .` 零告警（`E/F/W/I/UP/B`，line-length 88，豁免 `E501` / `UP009`）；
-- `pytest tests -q --cov=purser --cov-report=term-missing` 通过并上报覆盖率；
-- CI（`.github/workflows/ci.yml`）lint / typecheck / benchmark 与 Python
-  3.8-3.12 测试矩阵全部通过，其中真实 Redis / MySQL 集成用例由
+- `pytest tests -q` 通过；覆盖率 job 达到 Line+Branch 90%（见上节）；
+- CI（`.github/workflows/ci.yml`）lint / typecheck / stress / docs 与 Python
+  3.10–3.14 测试矩阵全部通过，其中真实 Redis / MySQL 集成用例由
   `PURSER_TEST_REDIS_URL` / `PURSER_TEST_MYSQL_URL` 环境变量门控，未设置时自动跳过；
-- 代码改动同步更新 README / docs；变更记录发版时统一写入 GitHub Releases，
-  版本号按语义化递增。
+- 代码改动同步更新 README / docs；`CHANGELOG.md` 是发版唯一来源
+  （GitHub Release 由工作流按小节自动生成），版本号按语义化递增。
 
 ## 真实服务集成
 
@@ -76,11 +92,15 @@ pytest tests/test_redis_real.py -q
 ## 新增测试约定
 
 - 优先扩展已有测试文件：边界用例放 `test_boundary_*.py`，真实后端放 `*_redis*.py` / `test_mysql.py`。
-- 涉及时间时使用可控时钟或短 TTL，不要 `sleep` 固定秒数。
+- 涉及等待时用条件等待（`threading.Event` 握手、轮询到条件成立），不要 `sleep`
+  固定秒数再去断言。仅当语义本身依赖真实时钟（心跳续约、租约过期）时允许固定
+  等待，并在用例内写明原因。
 - 涉及并发时显式设置种子（`test_chaos_storm.py` 的做法），保证可复现。
 - 每个回归用例先断言可失败的旧行为，再修复；提交说明写清根因，不在测试文件里堆变更日志。
 - 涉及槽位时至少断言：`0 <= used_slots <= max_slots`、租约归还后归零、迟到 release 不会误扣。
 
 ## CI
 
-`.github/workflows/ci.yml` 在 Python 3.8–3.12 上运行测试矩阵，另有 Windows 3.11 与 benchmark job；lint/typecheck 使用 3.10。真实 Redis / MySQL 变量未配置时相关用例自动跳过，因此本地通过不等于集成通过。
+`.github/workflows/ci.yml` 在 Python 3.10–3.14 上运行测试矩阵（3.12 由覆盖率 job 覆盖），
+另有 Windows 3.10、stress、docs job；lint/typecheck 使用 3.10。真实 Redis / MySQL 变量
+未配置时相关用例自动跳过，因此本地通过不等于集成通过。每周一另有定时全量运行。

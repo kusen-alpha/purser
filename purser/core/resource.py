@@ -3,30 +3,27 @@
 from __future__ import annotations
 
 import enum
-import re
-import sys
+import inspect
 import time
 import uuid
+import warnings
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import InitVar, asdict, dataclass, field, replace
 from typing import (
+    TYPE_CHECKING,
     Any,
     ClassVar,
-    Optional,
     Protocol,
     TypeVar,
+    cast,
     get_origin,
     runtime_checkable,
 )
+from zoneinfo import ZoneInfo
 
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # pragma: no cover - Python < 3.9
-    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
-
+from purser.core.meta import ResourceMeta
 from purser.core.state import ResourceState
-from purser.errors import ConfigError
 
 _MISSING = object()
 ResourceT = TypeVar("ResourceT", bound="Resource")
@@ -36,6 +33,7 @@ ResourceT = TypeVar("ResourceT", bound="Resource")
 # exposes only the non-system remainder and ``system_meta`` the inverse, so
 # the two namespaces can be told apart instead of living indistinguishably
 # in one bag.
+SCHEDULING_META_KEYS: frozenset[str] = frozenset({"priority", "preference", "group"})
 SYSTEM_META_KEYS: frozenset[str] = frozenset(
     {
         "source",
@@ -72,8 +70,9 @@ SYSTEM_META_KEYS: frozenset[str] = frozenset(
         "quota_reset_at",
         "top_ups",
         "switched_at",
+        "switched_from",
     }
-)
+) | SCHEDULING_META_KEYS
 
 
 def is_system_meta_key(key: str) -> bool:
@@ -91,7 +90,7 @@ def new_trace_id() -> str:
 
 
 class UsageOutcome(str, enum.Enum):
-    """Structured classification of how a leased resource was used (U1)."""
+    """Structured classification of how a leased resource was used."""
 
     OK = "ok"
     CAPTCHA = "captcha"
@@ -104,14 +103,14 @@ class UsageOutcome(str, enum.Enum):
 
 
 class CheckVerdict(str, enum.Enum):
-    """Decision returned by request-level hooks (4.5)."""
+    """Decision returned by request-level hooks."""
 
     PASS = "pass"
     FAIL = "fail"
     BAN = "ban"
 
 
-@dataclass
+@dataclass(slots=True)
 class Concurrency:
     """Slot accounting for EXCLUSIVE (``max_slots == 1``) and SHARED resources."""
 
@@ -142,9 +141,9 @@ class Concurrency:
         self.used_slots -= slots
 
 
-@dataclass
+@dataclass(slots=True)
 class SiteFailure:
-    """Per-target-site failure marker (5.8)."""
+    """Per-target-site failure marker."""
 
     site: str
     count: int = 1
@@ -155,9 +154,9 @@ class SiteFailure:
         return (now or _now()) < self.until
 
 
-@dataclass
+@dataclass(slots=True)
 class HealthStats:
-    """EWMA health score plus latency bookkeeping (5.3 / Y6)."""
+    """EWMA health score plus latency bookkeeping."""
 
     score: float = 0.5          # cold start defaults to the neutral midpoint
     samples: int = 0
@@ -190,9 +189,9 @@ class HealthStats:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class Quota:
-    """Period quota (S16): a daily budget consumed on release and reset daily."""
+    """Period quota: a daily budget consumed on release and reset daily."""
 
     limit: int
     used: int = 0
@@ -240,9 +239,9 @@ def _next_reset(now: float, timezone: str | None = None) -> float:
     return nxt.timestamp()
 
 
-@dataclass
+@dataclass(slots=True)
 class Lease:
-    """A single borrow: the holder's credential and expiry bookkeeping (5.2)."""
+    """A single borrow: the holder's credential and expiry bookkeeping."""
 
     token: str
     pool: str
@@ -295,7 +294,7 @@ class Lease:
         return (now or _now()) >= self.expires_at
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PayloadField:
     """Declarative metadata for one typed payload field.
 
@@ -323,39 +322,6 @@ class PayloadField:
         return value if self.coerce is None else self.coerce(value)
 
 
-def _resolve_annotation(raw: str, cls: type) -> Any:
-    """Evaluate one annotation string in the declaring module's namespace."""
-
-    module = sys.modules.get(cls.__module__)
-    namespace: dict[str, Any] = dict(vars(module)) if module is not None else {}
-    namespace.setdefault("Optional", Optional)
-    try:
-        return eval(raw, namespace)  # noqa: S307 - same contract as get_type_hints
-    except Exception:
-        # Python 3.8/3.9 cannot evaluate PEP 604 unions at runtime (X | None).
-        # Rewrite the optional case so annotation metadata still resolves.
-        if sys.version_info < (3, 10):
-            rewritten = _pep604_compat_rewrite(raw)
-            if rewritten != raw:
-                try:
-                    return eval(rewritten, namespace)  # noqa: S307
-                except Exception:
-                    return None
-        return None
-
-
-def _pep604_compat_rewrite(raw: str) -> str:
-    """Rewrite ``T | None`` / ``None | T`` into ``Optional[T]`` (best effort)."""
-
-    rewritten = re.sub(
-        r"\b([A-Za-z_][\w.]*)\s*\|\s*None\b", r"Optional[\1]", raw
-    )
-    rewritten = re.sub(
-        r"\bNone\s*\|\s*([A-Za-z_][\w.]*)\b", r"Optional[\1]", rewritten
-    )
-    return rewritten
-
-
 def _extract_declared_fields(
     cls: type,
 ) -> tuple[PayloadField, ...] | None:
@@ -369,12 +335,16 @@ def _extract_declared_fields(
     a :class:`ClassVar` field can never carry payload metadata.
     """
 
-    annotations = cls.__dict__.get("__annotations__")
+    try:
+        annotations = inspect.get_annotations(cls, eval_str=True)
+    except (NameError, TypeError) as exc:
+        raise TypeError(
+            f"{cls.__name__}: cannot resolve payload annotations: {exc}"
+        ) from exc
     if not annotations:
         return None
     found: list[PayloadField] = []
-    for name, raw in annotations.items():
-        resolved = raw if not isinstance(raw, str) else _resolve_annotation(raw, cls)
+    for name, resolved in annotations.items():
         metadata = getattr(resolved, "__metadata__", None)
         if not metadata:
             continue
@@ -392,9 +362,9 @@ def _extract_declared_fields(
     return tuple(found) if found else None
 
 
-@dataclass
+@dataclass(slots=True)
 class Resource:
-    """One resource: a proxy, account or custom object (3.2).
+    """One resource: a proxy, account or custom object.
 
     ``payload`` is a derived view: ``_payload`` only keeps custom keys while
     subclasses declare their common fields via ``Annotated[..., PayloadField()]``
@@ -409,7 +379,12 @@ class Resource:
 
     id: str
     kind: str
-    payload: InitVar[dict[str, Any] | None] = None
+    if TYPE_CHECKING:
+        # mypy drops a property that shares its name with an InitVar, so give
+        # the attribute its public view type and keep the InitVar runtime-only.
+        payload: dict[str, Any] = field(default_factory=dict)
+    else:
+        payload: InitVar[dict[str, Any] | None] = None
     _payload: dict[str, Any] = field(default_factory=dict, repr=False, init=False)
     state: ResourceState = ResourceState.NEW
     version: int = 0
@@ -430,7 +405,10 @@ class Resource:
     _payload_field_map: ClassVar[dict[str, PayloadField]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
+        # dataclass(slots=True) recreates the class, so a zero-arg super() here
+        # would keep pointing at the discarded original Resource and reject
+        # every subclass; resolve the base through the module global instead.
+        super(Resource, cls).__init_subclass__(**kwargs)
         declared = _extract_declared_fields(cls)
         if declared is None:
             return
@@ -445,11 +423,13 @@ class Resource:
         cls.typed_payload_fields = tuple(merged)
         cls._payload_field_map = merged
 
-    def __post_init__(self, payload: dict[str, Any] | None) -> None:
+    def __post_init__(self, payload: dict[str, Any] | None = None) -> None:
         # The property shadows the InitVar default, so dataclasses passes the
         # property object itself when the caller omits ``payload``.
         if not isinstance(payload, dict):
             payload = None
+        if not isinstance(self.meta, ResourceMeta):
+            self.meta = ResourceMeta(self.meta or {})
         self._load_payload(payload, overwrite_typed=False)
         self._coerce_typed()
 
@@ -516,6 +496,24 @@ class Resource:
             if spec.coerce is not None:
                 setattr(self, spec.name, self._coerce(spec, value))
 
+    def _payload_view(self) -> dict[str, Any]:
+        """Shallow merged custom + typed payload for internal read-only use.
+
+        Callers must not mutate the result or retain it past the call; public
+        boundaries use the ``payload`` property, which deep-copies this view.
+        """
+
+        if not self.typed_payload_fields:
+            return self._payload
+        merged = dict(self._payload)
+        for name in self.typed_payload_fields:
+            value = getattr(self, name)
+            if value is None:
+                merged.pop(name, None)
+            else:
+                merged[name] = value
+        return merged
+
     @property
     def extra(self) -> dict[str, Any]:
         """Deep copy of the custom keys that have no declared typed field."""
@@ -579,23 +577,17 @@ class Resource:
             clone.payload = dict(payload)
         return clone
 
-    # mypy rejects an InitVar/property pair even though dataclasses allows it.
-    @property  # type: ignore[misc]
-    def payload(self) -> dict[str, Any]:  # noqa: F811
-        """Detached view: mutating it never changes the resource."""
+    if not TYPE_CHECKING:
 
-        data = deepcopy(self._payload)
-        for name in self.typed_payload_fields:
-            value = getattr(self, name)
-            if value is None:
-                data.pop(name, None)
-            else:
-                data[name] = deepcopy(value)
-        return data
+        @property
+        def payload(self) -> dict[str, Any]:  # noqa: F811
+            """Detached view: mutating it never changes the resource."""
 
-    @payload.setter
-    def payload(self, value: dict[str, Any] | None) -> None:
-        self._load_payload(value, overwrite_typed=True)
+            return deepcopy(self._payload_view())
+
+        @payload.setter
+        def payload(self, value: dict[str, Any] | None) -> None:
+            self._load_payload(value, overwrite_typed=True)
 
     @property
     def available_slots(self) -> int:
@@ -624,15 +616,14 @@ class Resource:
     def mark_updated(self, now: float | None = None) -> None:
         self.meta["updated_at"] = now or _now()
 
-    def next_usable_at(
+    def usable_at(
         self, now: float | None = None, consumer: str | None = None
     ) -> float:
-        """Earliest moment this resource may be allocated (F6: max() merge).
+        """Earliest moment this resource may be allocated.
 
-        Only "not usable before" constraints participate: cooldowns, a
-        quarantine stay and consumer-level pauses.  Absolute ``expires_at`` is
-        a deadline, not a wait-until, and is enforced separately by the
-        allocation filter.
+        Merges the stored ``next_available_at`` with consumer cooldowns and a
+        quarantine stay.  An absolute ``expires_at`` is a deadline, not a
+        wait-until, and is enforced separately by the allocation filter.
         """
 
         now = now or _now()
@@ -644,14 +635,27 @@ class Resource:
             v = self.meta.get(key)
             if v is not None:
                 candidates.append(float(v))
-        if self.meta.get("quarantine_until") is not None:
-            candidates.append(float(self.meta["quarantine_until"]))
+        meta = cast(ResourceMeta, self.meta)
+        if meta.quarantine_until is not None:
+            candidates.append(meta.quarantine_until)
         return max(candidates)
 
+    def next_usable_at(
+        self, now: float | None = None, consumer: str | None = None
+    ) -> float:
+        """Deprecated alias for :meth:`usable_at`."""
 
-@dataclass
+        warnings.warn(
+            "Resource.next_usable_at() is deprecated; use usable_at()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.usable_at(now, consumer)
+
+
+@dataclass(slots=True)
 class AcquireRequest:
-    """Everything an acquire operation may need (4.5)."""
+    """Everything an acquire operation may need."""
 
     consumer: str | None = None
     target: str | None = None
@@ -666,7 +670,8 @@ class AcquireRequest:
     ignore_cooldown: bool = False
     resource_id: str | None = None
     required_tag: str | None = None  # tag that must match (hard constraint)
-    affinity: str | None = None
+    affinity: str | None = None  # affinity history key; defaults to consumer
+    idempotency_key: str | None = None  # replay returns the same live lease
 
     def __post_init__(self) -> None:
         if isinstance(self.tags, str):
@@ -686,10 +691,18 @@ class AcquireRequest:
             if not isinstance(self.probe, str) or not self.probe.strip():
                 raise ValueError("AcquireRequest.probe must be a non-empty string")
         if self.affinity is not None:
-            raise ConfigError(
-                "AcquireRequest.affinity is not implemented; enable affinity scoring "
-                "with PoolConfig(affinity_weight=...)"
-            )
+            if not isinstance(self.affinity, str) or not self.affinity.strip():
+                raise ValueError(
+                    "AcquireRequest.affinity must be a non-empty string"
+                )
+        if self.idempotency_key is not None:
+            if (
+                not isinstance(self.idempotency_key, str)
+                or not self.idempotency_key.strip()
+            ):
+                raise ValueError(
+                    "AcquireRequest.idempotency_key must be a non-empty string"
+                )
 
     def ensure_trace(self) -> str:
         if self.trace_id is None:
@@ -698,7 +711,7 @@ class AcquireRequest:
 
 
 def describe_resource(resource: Resource, *, secret: bool = False) -> dict[str, Any]:
-    """Public-facing (masked by default) view of a resource (A1)."""
+    """Public-facing (masked by default) view of a resource."""
 
     payload: dict[str, Any]
     if secret:

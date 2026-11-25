@@ -45,7 +45,7 @@ async def test_affinity_records_and_normalises(make_pool):
 def test_schedule_open_windows(monkeypatch):
     def with_time(hhmm: str):
         monkeypatch.setattr(
-            "purser.facade.time.strftime", lambda fmt, t=None: hhmm
+            "purser.pool.pool.time.strftime", lambda fmt, t=None: hhmm
         )
 
     with_time("03:00")

@@ -141,7 +141,7 @@ UI 侧一致性：`GET /adapters` 会在每个适配器下返回 `validators: [{
 
 ```python
 from dataclasses import dataclass
-from typing_extensions import Annotated
+from typing import Annotated
 from purser import PayloadField, Resource
 
 
@@ -178,23 +178,35 @@ class SmsResource(Resource):
 装饰器注册（推荐）：适配器定义时登记为进程级默认，之后每个 `Purser()` 构造时自动实例化装载，实例互不共享：
 
 ```python
-from purser import register
+from purser import register_default_adapter
 
-@register                      # 无参适配器
+@register_default_adapter                       # 无参适配器
 class SmsAdapter(ResourceAdapter):
     kind = "sms"
 
-@register(probe_targets=["http://example.com:80"])   # 带构造配置
-class ProxyAdapter(ResourceAdapter):
-    ...
+@register_default_adapter(retries=3)            # 带构造配置：参数原样传给适配器构造函数
+class RetrySmsAdapter(ResourceAdapter):
+    kind = "sms-retry"
+
+    def __init__(self, *, retries: int = 1) -> None:
+        self.retries = retries
 ```
 
 ```python
-ps = Purser()                  # 自动装载 @register 的适配器
+ps = Purser()                  # 自动装载默认目录：内置 proxy/account + @register_default_adapter 条目
 pool = ps.create_pool("sms", "sms", config={"max_slots": 2})
 ```
 
-`kind` 在默认目录里重复、或与内置 `proxy` / `account` 冲突时会直接报错；测试/多实例隔离用 `Purser(use_globals=False)` 或 `clear_default_adapters()`。
+`kind` 在默认目录里重复（包括与内置 `proxy` / `account` 冲突）时，`@register_default_adapter` 装饰阶段就会报错；测试/多实例隔离用 `Purser(default_adapters="builtin")`（只装内置）、`Purser(default_adapters="none")`（空注册表）或 `clear_default_adapters()`（清掉 `@register_default_adapter` 条目，保留内置）。
+
+替换内置实现（如自定义探测目标）用实例级注册覆盖同 kind：
+
+```python
+from purser import ProxyAdapter
+
+ps = Purser()
+ps.register_adapter(ProxyAdapter(probe_targets=["http://example.com:80"]))
+```
 
 手动注册（精确控制，优先于默认目录）：
 
@@ -213,7 +225,7 @@ ps.register_adapter(SmsAdapter())
 app = create_app(ps)
 ```
 
-`PURSER_POOLS_FILE` 只恢复池配置，不会注册适配器。需要按 `Purser` 注入运行时依赖（如 `ProxyAdapter(probe_guard=...)`）的适配器，用 `register_adapter` 手动注册，不要用 `@register`。
+`PURSER_POOLS_FILE` 只恢复池配置，不会注册适配器。需要按 `Purser` 注入运行时依赖（如 `ProxyAdapter(probe_guard=...)`）的适配器，用 `register_adapter` 手动注册，不要用 `@register_default_adapter`。
 
 ## 测试建议
 
