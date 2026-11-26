@@ -24,11 +24,45 @@ _T = TypeVar("_T")
 __all__ = ["ThreadPool", "ThreadPurser"]
 
 
+class _ThreadPoolAdmin:
+    """Operator namespace over the loop-owned ``SyncPool.admin``."""
+
+    def __init__(self, pool: ThreadPool) -> None:
+        self._pool = pool
+
+    async def ban(self, resource_id: str, *, reason: str, operator: str = "system") -> None:
+        """Ban one resource after a hard failure or operator decision."""
+
+        await asyncio.to_thread(
+            self._pool._pool.admin.ban, resource_id, reason=reason, operator=operator
+        )
+
+    async def unban(
+        self,
+        resource_id: str,
+        *,
+        reason: str | None = None,
+        operator: str = "system",
+        **kwargs: Any,
+    ) -> Any:
+        """Lift a ban; ``reason`` is only forwarded when supplied."""
+
+        if reason is not None:
+            kwargs["reason"] = reason
+        return await asyncio.to_thread(
+            self._pool._pool.admin.unban,
+            resource_id,
+            operator=operator,
+            **kwargs,
+        )
+
+
 class ThreadPool:
     """Async, awaitable view of a :class:`~purser.sync.SyncPool`."""
 
     def __init__(self, pool: SyncPool) -> None:
         self._pool = pool
+        self.admin = _ThreadPoolAdmin(self)
 
     def __getstate__(self) -> Any:
         raise IsolationConflict(PICKLE_MESSAGE)
@@ -89,32 +123,6 @@ class ThreadPool:
         """Extend one lease and return its new ``expires_at``."""
 
         return await asyncio.to_thread(self._pool.renew, lease, used=used)
-
-    async def ban(self, resource_id: str, *, reason: str, operator: str = "system") -> None:
-        """Ban one resource after a hard failure or operator decision."""
-
-        await asyncio.to_thread(
-            self._pool.ban, resource_id, reason=reason, operator=operator
-        )
-
-    async def unban(
-        self,
-        resource_id: str,
-        *,
-        reason: str | None = None,
-        operator: str = "system",
-        **kwargs: Any,
-    ) -> Any:
-        """Lift a ban; ``reason`` is only forwarded when supplied."""
-
-        if reason is not None:
-            kwargs["reason"] = reason
-        return await asyncio.to_thread(
-            self._pool.unban,
-            resource_id,
-            operator=operator,
-            **kwargs,
-        )
 
     @asynccontextmanager
     async def lease(self, req: Any = None, **kwargs: Any) -> AsyncIterator[SyncLease]:

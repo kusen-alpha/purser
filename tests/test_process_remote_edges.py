@@ -204,9 +204,9 @@ async def test_remote_pool_admin_and_bulk_operations():
         _seed_scheduler(sched)
         pool = connect("p", sched.address)
         try:
-            await pool.ban("r1", reason="risk")
+            await pool.admin.ban("r1", reason="risk")
             assert (await pool.stats())["counts"]["banned"] == 1
-            await pool.unban("r1", reason="cleared", revalidate=False)
+            await pool.admin.unban("r1", reason="cleared", revalidate=False)
             assert (await pool.stats())["counts"].get("banned", 0) == 0
 
             imported = await pool.import_resources([{"id": "r3", "host": "h"}])

@@ -51,6 +51,7 @@ class ImportValidate(_Kind):
     NONE = "none"
     ON_IMPORT = "on_import"
     BATCH = "batch"
+    AUTO = "auto"
 
 
 class ExpirePolicy(_Kind):

@@ -75,7 +75,7 @@ async def test_recall_batch_retire(make_pool):
         batch_id="b-retire",
         import_validate="on_import",
     )
-    report = await pool.recall_batch(
+    report = await pool.admin.recall_batch(
         "b-retire", action="retire", operator="ops", reason="recall"
     )
     assert report["processed"] == 1
@@ -90,7 +90,7 @@ async def test_recall_batch_requalify(make_pool):
         batch_id="b-req",
         import_validate="on_import",
     )
-    report = await pool.recall_batch(
+    report = await pool.admin.recall_batch(
         "b-req", action="requalify", operator="ops", reason="recall"
     )
     assert report["processed"] == 1
@@ -105,7 +105,7 @@ async def test_recall_batch_isolate(make_pool):
         batch_id="b-iso",
         import_validate="on_import",
     )
-    report = await pool.recall_batch(
+    report = await pool.admin.recall_batch(
         "b-iso", action="isolate", operator="ops", reason="hold"
     )
     assert report["processed"] == 1

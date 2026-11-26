@@ -17,56 +17,60 @@ python -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"           # 开发与测试
 ```
 
-内核只依赖 `redis`（协调层）与 `cryptography`（密文字段）；FastAPI/uvicorn
-只在 `serve` 时需要，`httpx`/rich 只在 CLI 时需要。
-
 ```python
 import asyncio
-from purser import AcquireRequest, ProxyResource, Purser, UsageOutcome
+from purser import Purser
 
 async def main():
     ps = Purser()
     pool = ps.create_pool("proxies", "proxy")
     await pool.import_resources(
-        [
-            {"host": "1.2.3.4", "port": 8080, "country": "US", "tags": ["http"]},
-            ProxyResource(
-                id="p2", host="5.6.7.8", port="3128", country="DE",
-                tags=["http"], payload={"isp": "CT"},  # payload 只放自定义键
-            ),
-        ],
-        import_validate="on_import",  # 验活通过后才进入 IDLE、可被分配
+        [{"host": "1.2.3.4", "port": 8080, "country": "US", "tags": ["http"]}]
     )
 
-    async with ps:  # start() 可以晚于 import；退出时自动 close()
-        async with pool.lease(
-            AcquireRequest(consumer="crawler-a", tags=["http"])
-        ) as lease:
-            res = lease.resource  # acquire 时加载的类型化快照，不再多读一次库
-            if res is not None:
-                print(res.host, res.port, res.country, res.extra)  # 3128 已是 int
-            print("租约快照", lease.payload)
-
-        # 手动路径 + 使用结果反馈
-        lease = await pool.acquire(AcquireRequest(consumer="crawler-b"))
-        try:
-            ...
-        finally:
-            await pool.release(lease, outcome=UsageOutcome.OK)
+    async with pool.lease(consumer="crawler-a", tags=["http"]) as lease:
+        res = lease.resource  # acquire 时加载的类型化快照，不再多读一次库
+        print(res.host, res.port, res.country, res.extra)  # 3128 已是 int
 
 asyncio.run(main())
 ```
 
-> `lease.resource` 是本进程 acquire 时加载的类型化快照；需要最新状态，请用
-> `await pool.require(lease.resource_id)`。跨进程租约默认是通用 `Resource`，
-> 通过 `connect(..., resource_types=...)` 或 `LocalSchedulerClient(..., resource_types=...)`
-> 注册类型后才会恢复为子类实例。
+就这么多：首次 `acquire` 会自动启动运行时，结束时用 `await ps.close()`（或
+`async with ps:`）做清理。`lease()` 退出块时无条件归还租约；手动路径用
+`await pool.acquire(consumer=...)` + `await pool.release(lease, outcome=UsageOutcome.OK)`。
+
+低频管理操作（封禁、排空、强制撤销、维护任务）统一放在 `pool.admin` 命名空间，
+让数据面只保留 acquire / lease / release / renew 几个动词：
+
+```python
+await pool.admin.ban("p2", reason="dead upstream")
+await pool.admin.drain("p3", reason="rotate")
+await pool.admin.run_maintenance("validating_gc")
+```
+
+> `tags` 是用户标签，只用于调度筛选；`host` / `port` / `country` / `province` /
+> `city` / `district` 等是类型化字段，读取时自动合并进 `payload`。字典导入中未
+> 声明的键不会丢弃，而是作为自定义 payload 保存，可通过 `Resource.extra` 读取。
+> 字段声明与规范化规则见 [Python API 契约](docs/reference/python-api/resources.md)。
+
+> 导入验活默认 `auto`：≤10 条记录在导入时同步验活（导入返回即可用），更多记录
+> 自动转后台任务（导入立即返回，首次 `acquire()` 等待验活完成）。需要固定行为时
+> 显式传 `import_validate="on_import" | "batch" | "none"`；`none` 只入库，
+> 资源停在 `NEW`，要用 `await pool.admin.validate_now(<id>)` 手动验活。详见
+> [导入与验活](docs/guides/import-and-validate.md)。
+
+> 示例里的 IP 是占位符：会真实验活，请替换成可达代理；想完全离线跑通流程，
+> 参照 [examples/quickstart.py](examples/quickstart.py) 注册一个 `validate()`
+> 恒为 OK 的自定义 `ResourceAdapter`。
+
+> `close()` 之后再 acquire 会抛 `NotStarted`（可从顶层导入）；同一进程内重启
+> 不受支持，新建一个 `Purser` 即可。
 
 ### 同机多进程：`connect()`
 
 调度进程持有唯一的 `Purser`，业务进程用 `connect()` 拿到覆盖数据面与只读目录的异步门面
 （`acquire`/`lease`/`release`/`renew`/`stats`/`query`/`counts`/`get` 等；IPC 调用跑在线程池里，
-不阻塞事件循环）。组合租约、用量报告与备份仍由 `Purser` / `SyncPurser` 提供：
+不阻塞事件循环）：
 
 ```python
 from purser import AcquireRequest, LocalScheduler, connect
@@ -76,7 +80,7 @@ sched.create_pool("proxies", "proxy")
 sched.import_resources("proxies", [{"host": "1.2.3.4", "port": 8080}])
 
 pool = connect("proxies", sched.address)   # 或省略地址，读 PURSER_LOCAL_SCHEDULER
-async with pool.lease(AcquireRequest(consumer="worker")) as lease:
+async with pool.lease(consumer="worker") as lease:
     print(lease.resource_id, lease.payload)
 ```
 
@@ -87,20 +91,6 @@ async with pool.lease(AcquireRequest(consumer="worker")) as lease:
 
 `release(..., outcome=...)` 同时接受 `UsageOutcome` 与字符串值（如 `"banned"`）。异常对象带
 `code` 与 `retryable`，可直接用 `from purser import is_retryable` 驱动重试。
-
-> `import_resources`、查询、状态变更等管理面操作可以在 `start()` 之前执行（适合离线预装数据）；
-> 但 `acquire()` / `lease()` / `acquire_many()` 必须先 `await ps.start()`，否则抛
-> `NotStarted`（可从顶层 `from purser import NotStarted` 导入）。池的 `started` 属性可用于判断运行时是否已就绪。
-
-> `tags` 是用户标签，只用于调度筛选；`host` / `port` / `country` / `province` / `city` /
-> `district` 等是类型化字段，读取时自动合并进 `payload`。字典导入中未声明的键不会被
-> 丢弃，而是作为自定义 payload 保存，可通过 `Resource.extra` 读取；也可以显式构造
-> `ProxyResource(payload={...})`。字段声明与规范化规则见 [Python API 契约](docs/reference/python-api/resources.md)。
-
-> 示例里的 IP 是占位符：`import_validate="on_import"` 会真实验活，请替换成可达代理；
-> 省略该参数时默认走 `batch`（后台验活，首次 `acquire()` 自动等待验活完成）。
-> 想完全离线完成流程，可参照 [examples/quickstart.py](examples/quickstart.py) 注册一个
-> `validate()` 恒为 OK 的自定义 `ResourceAdapter`。
 
 ## 服务模式（REST API + Web UI + CLI）
 
@@ -119,18 +109,12 @@ python -m purser.cli status
 python -m purser.cli ls proxies
 python -m purser.cli lease proxies --consumer demo
 python -m purser.cli release proxies <token>
-python -m purser.cli import proxies proxies.txt          # 默认 batch：后台验活，导入立即返回
+python -m purser.cli import proxies proxies.txt          # 默认 auto：小批量同步验活，大批量转后台
 python -m purser.cli import proxies proxies.txt --import-validate none
 # proxies.txt 每行支持：`host port` / `id host port` / `id protocol host port tag...`；
 # `#` 开头为注释，行首为 `[` 的单行 JSON 数组直接导入
 # 需要“重复提交复用首次结果”时显式加 --idempotency-key <key>（默认每次真正导入）
 ```
-
-> `--import-validate` 三档：`batch`（默认，后台任务验活）、`on_import`（逐条同步验活，
-> 大批量导入会很慢）、`none`（只入库，资源停在 `NEW`，需再调用 `validate` 或重新以
-> `batch` 导入才会进入 `IDLE`）。`NEW` 资源不可被分配；导入默认 `batch`，因此 `acquire()`
-> 会等待后台验活完成。只有显式使用 `import_validate="none"` 且没有验活任务时，
-> `acquire()` 才会立即失败并提示验活方式，而不是一直等待到 `wait_timeout`。
 
 ## 部署与配置
 
@@ -152,34 +136,31 @@ export PURSER_REDIS_URL=redis://localhost:6379
 purser serve --storage sqlite --sqlite-path ./purser.db --coordination redis --redis-url redis://localhost:6379
 ```
 
-> `PURSER_REDIS_URL` 只提供连接串，不会自动切换调度层；跨实例调度仍需
-> `PURSER_COORDINATION=redis`（或 `--coordination redis`）。
-
-嵌入式用法保持不变：
+嵌入式用法一致：
 
 ```python
 # 单机持久化：sqlite 存主数据 + 内存做调度
 ps = Purser(storage="sqlite", coordination="memory",
             sqlite_path="/var/lib/purser/purser.db", audit_path="/var/lib/purser/purser.db")
-pool = ps.create_pool("proxies", "proxy")
 
 # 多实例：sqlite/mysql 存主数据 + redis 做跨实例调度
 ps = Purser(storage="sqlite", coordination="redis",
             sqlite_path="/var/lib/purser/purser.db",
             redis_url="redis://localhost:6379")
-pool = ps.create_pool("proxies", "proxy")
 ```
 
-池级调度参数可直接按需传字段（`ps.create_pool("proxies", "proxy", lease_ttl=120)`），也可选 `profile="validated"` 等场景预设；显式字段始终覆盖预设，完整合并顺序见[配置](docs/reference/configuration.md)。
-
-**存储层（主张：绝不能丢）**：资源基本信息、重要状态、槽位计数、`version` CAS、审计。`sqlite` 用 `resources` / `resource_tags` 两表持久化，payload 密文字段 AES-GCM 落库，单机“重启不丢”；`mysql` 按同一契约实现（`pip install "purser[mysql]"`，aiomysql 懒连接），适合已有 MySQL 基建的多实例存储。**协调层（运行期租约权威，丢失需分级处理）**：在途租约、心跳、等待唤醒、校验缓存，`memory` 单进程、`redis` 跨实例（`redis.asyncio` + 每资源哈希 + token 索引，强制 RESP2 兼容 Redis < 6，连接/操作带 5s 超时 fail-closed，断连抛 `BackendUnavailable`）。两个平面独立取值，行为套件按 存储 × 协调 组合运行；异常重启后 `start()` 会做对账：槽位计数按协调端**当前存活租约之和**对齐（既支持全孤儿归零，也支持“部分租约存活、其余为孤儿”的部分孤儿收敛），资源基本信息不受影响；迟到 release（token 已不在协调端）绝不触碰存储槽位，避免误扣新持有者。注意：**多实例下协调记录丢失会让其他实例看不到在途租约，可能重复占用同一资源**，因此 Redis 必须开启持久化，不能当纯缓存使用；详见 [数据平面与丢失语义](docs/design/data-planes.md)。
+库分两个平面：**存储层**（资源主数据、状态、审计，sqlite/mysql，重启不丢）与**协调层**
+（运行期租约、心跳、唤醒，memory/redis）。池级调度参数可按需传字段
+（`ps.create_pool("proxies", "proxy", lease_ttl=120)`），也可用 `profile="validated"`
+等场景预设；完整字段、合并顺序与丢失语义见[配置](docs/reference/configuration.md)
+与[数据平面](docs/design/data-planes.md)。注意多实例下 Redis 必须开启持久化，不能当纯缓存使用。
 
 ## 更多文档
 
 文档站按“上手 / 指南 / 参考 / 设计 / 贡献”组织：
 
 - [文档首页](docs/index.md)：安装、两个快速开始与按角色划分的文档地图。
-- 指南：[资源可用性判定](docs/guides/availability.md)、[租约生命周期](docs/guides/lease-lifecycle.md)、[导入与验活](docs/guides/import-and-validate.md)、[多实例部署](docs/guides/multi-instance.md)、[同步 Purser](docs/guides/sync-facade.md)。
+- 指南：[资源可用性判定](docs/guides/availability.md)、[租约生命周期](docs/guides/lease-lifecycle.md)、[导入与验活](docs/guides/import-and-validate.md)、[多实例部署](docs/guides/multi-instance.md)、[门面选择](docs/guides/facades.md)。
 - 参考：[Python API](docs/reference/python-api/index.md)、[REST API](docs/reference/rest-api/index.md)、[CLI](docs/reference/cli.md)、[配置](docs/reference/configuration.md)、[内置资源适配器](docs/reference/resource-adapters.md)、[LocalScheduler](docs/reference/local-scheduler.md)、[错误处理](docs/reference/errors.md)、[状态机](docs/reference/state-machine.md)。
 - 设计与内部：[架构](docs/design/architecture.md)、[数据平面与丢失语义](docs/design/data-planes.md)、[算法与不变量](docs/design/algorithms.md)。
 - [贡献指南](docs/contributing/index.md)与[测试规范](docs/contributing/testing.md)。

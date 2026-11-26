@@ -62,22 +62,23 @@
 
 ```python title="main.py"
 import asyncio
-from purser import AcquireRequest, Purser
+from purser import Purser
 
 
 async def main():
     ps = Purser()
     pool = ps.create_pool("proxies", "proxy")
-    await pool.import_resources([...], import_validate="on_import")  # (1)!
+    await pool.import_resources([...])  # (1)!
 
-    async with ps, pool.lease(AcquireRequest(consumer="crawler")) as lease:
+    async with pool.lease(consumer="crawler") as lease:  # (2)!
         print(lease.resource_id, lease.payload)
 
 
 asyncio.run(main())
 ```
 
-1. `[...]` 代表代理记录；完整可运行示例见[嵌入式快速开始](getting-started/quickstart-async.md)。
+1. `[...]` 代表代理记录；小批量默认同步验活，导入返回即可分配。完整可运行示例见[嵌入式快速开始](getting-started/quickstart-async.md)。
+2. 首次获取会自动启动运行时；低频管理操作在 `pool.admin` 命名空间（如 `await pool.admin.ban(...)`）。
 
 ## 文档地图
 

@@ -44,7 +44,7 @@
 
 ## 批量验活任务
 
-`import_resources(import_validate="batch")` 会把本次导入交给后台任务，任务 id 就是导入报告里的 `batch_id`。
+显式 `import_validate="batch"`（以及默认 `auto` 下超过 10 条的导入）会把本次导入交给后台验活任务，任务 id 就是导入报告里的 `batch_id`。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |

@@ -11,6 +11,15 @@ from conftest import seed
 from purser import Allocator, allocator_names, register_allocator
 from purser.core.allocator import AllocationContext
 from purser.errors import BackendUnavailable, ConfigError, PoolExhausted
+from purser.pool.leases import LeaseService
+
+
+async def _wait_queued(pool, count: int, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while len(pool._waiters) < count:
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"only {len(pool._waiters)}/{count} waiters queued")
+        await asyncio.sleep(0.001)
 
 
 async def test_stateless_mode_does_not_occupy(make_pool):
@@ -77,7 +86,11 @@ async def test_idempotent_acquire_replays_live_lease(make_pool):
     assert first.resource_id == second.resource_id
 
 
-async def test_fifo_scheduler_keeps_arrival_order(make_pool):
+async def test_fifo_scheduler_keeps_arrival_order(make_pool, monkeypatch):
+    # The 0.1s serve tick can straddle the release's storage CAS and grant a
+    # later waiter from a fresher read, breaking arrival order under load.
+    # Releases serve inline, so the tick adds nothing but nondeterminism.
+    monkeypatch.setattr(LeaseService, "_SERVE_INTERVAL", 3600.0)
     pool = make_pool(scheduler="fifo")
     await seed(pool, 1)
     held = await pool.acquire(timeout=0)
@@ -93,13 +106,14 @@ async def test_fifo_scheduler_keeps_arrival_order(make_pool):
         asyncio.create_task(waiter("high", 10)),
         asyncio.create_task(waiter("mid", 5)),
     ]
-    await asyncio.sleep(0.05)
+    await _wait_queued(pool, 3)
     await pool.release(held)
     await asyncio.gather(*tasks)
     assert order == ["low", "high", "mid"]
 
 
-async def test_priority_quota_scheduler_honours_priority(make_pool):
+async def test_priority_quota_scheduler_honours_priority(make_pool, monkeypatch):
+    monkeypatch.setattr(LeaseService, "_SERVE_INTERVAL", 3600.0)
     pool = make_pool(scheduler="priority_quota")
     await seed(pool, 1)
     held = await pool.acquire(timeout=0)
@@ -114,7 +128,7 @@ async def test_priority_quota_scheduler_honours_priority(make_pool):
         asyncio.create_task(waiter("low", 0)),
         asyncio.create_task(waiter("high", 10)),
     ]
-    await asyncio.sleep(0.05)
+    await _wait_queued(pool, 2)
     await pool.release(held)
     await asyncio.gather(*tasks)
     assert order == ["high", "low"]

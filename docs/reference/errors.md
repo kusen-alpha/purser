@@ -20,12 +20,12 @@ except PurserError as exc:
 | `PurserError` | 所有错误的基类 | 最终捕获 |
 | `ConfigError` | 池或库配置非法 | 修正 `PoolConfig` / 构造参数 |
 | `IsolationConflict` | 实例被跨线程/进程共享；sync 对象不可 pickle | 每个进程/拥有者单独创建实例 |
-| `NotStarted` | 池运行时未启动 | `await ps.start()` 或 `async with Purser()` |
+| `NotStarted` | 运行时已 `close()`，不支持重启（首次获取会自动启动，无需手动 `start()`） | 重新创建实例，或把运行时操作移到 `close()` 之前 |
 | `PoolNotFound` | 池不存在 | 检查池名或先建池 |
 | `PoolExists` | 同名池已存在 | 复用已有池 |
 | `ResourceNotFound` | 资源不存在 | 检查 `rid` |
 | `PoolEmpty` | 池内没有任何资源 | 先导入资源 |
-| `PoolExhausted` | 等待超时仍未满足请求；池内资源全部为 `NEW` 时立即抛出 | 扩容、缩短占用、提高超时或先验活 |
+| `PoolExhausted` | 等待超时仍未满足请求；池内资源全部为 `NEW` 时立即抛出 | 扩容、缩短占用、提高超时，或先用 `pool.admin.validate_now()` 验活 |
 | `NoSuitableResource` | 候选存在但全部被请求级校验拒绝 | 调整 `target` / 探测配置 |
 | `ResourceBusy` | 定向获取等待超时 | 重试或换资源 |
 | `BundleAcquireFailed` | 跨池组合获取未完成，已拿到的成员已回滚释放 | 补充资源、调整约束或改用 `best_effort` |

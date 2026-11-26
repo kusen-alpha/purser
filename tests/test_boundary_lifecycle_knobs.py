@@ -30,7 +30,7 @@ async def test_expires_in_auto_suspends(make_pool):
         await pool.acquire(AcquireRequest(timeout=0.05))
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.SUSPENDED
-    await pool.resume(rid, operator="ops", reason="back")
+    await pool.admin.resume(rid, operator="ops", reason="back")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
 
@@ -66,7 +66,7 @@ async def test_quota_exhausts_and_top_up_recovers(make_pool, knob):
     await pool.release(lease, used=1)
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.QUOTA_EXHAUSTED
-    await pool.top_up(rid, operator="ops", amount=1)
+    await pool.admin.top_up(rid, operator="ops", amount=1)
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
 

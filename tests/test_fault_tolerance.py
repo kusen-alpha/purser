@@ -106,7 +106,7 @@ async def test_force_revoke_races_release(make_pool):
 
     async def revoke() -> str:
         try:
-            await pool.force_revoke(rid, operator="ops", reason="race")
+            await pool.admin.force_revoke(rid, operator="ops", reason="race")
             return "revoke-won"
         except (LeaseConflict, BadState):
             return "revoke-lost"
@@ -225,7 +225,7 @@ async def test_restart_preserves_banned_state_and_meta(tmp_path, storage_kind, c
     ps1 = _make_sqlite_purser(path, coordination_kind)
     pool = ps1.create_pool("px", "fakecheck")
     [rid] = await seed(pool, n=1)
-    await pool.ban(rid, operator="ops", reason="abuse")
+    await pool.admin.ban(rid, operator="ops", reason="abuse")
     await ps1.close()
 
     ps2 = _make_sqlite_purser(path, coordination_kind)
@@ -234,7 +234,7 @@ async def test_restart_preserves_banned_state_and_meta(tmp_path, storage_kind, c
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.BANNED
         assert res.meta["banned_reason"] == "abuse"
-        await pool2.unban(rid, operator="ops", reason="cleared")
+        await pool2.admin.unban(rid, operator="ops", reason="cleared")
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.IDLE
     finally:
@@ -262,7 +262,7 @@ async def test_restart_preserves_quota_and_usage(tmp_path, storage_kind, coordin
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.QUOTA_EXHAUSTED
         assert res.used_count == 2 and res.usage_quota == 2
-        await pool2.top_up(rid, operator="ops", amount=2)
+        await pool2.admin.top_up(rid, operator="ops", amount=2)
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.IDLE
         assert res.used_count == 0
@@ -278,7 +278,7 @@ async def test_restart_draining_lost_lease_archives(tmp_path, storage_kind, coor
     await ps1.start()
     [rid] = await seed(pool, n=1)
     await pool.acquire(AcquireRequest(consumer="c"))
-    await pool.drain(rid, operator="ops", reason="retiring")
+    await pool.admin.drain(rid, operator="ops", reason="retiring")
     await ps1.close()
 
     ps2 = _make_sqlite_purser(path, coordination_kind)
@@ -298,7 +298,7 @@ async def test_restart_idle_drained_archives(tmp_path, storage_kind, coordinatio
     ps1 = _make_sqlite_purser(path, coordination_kind)
     pool = ps1.create_pool("px", "fakecheck")
     [rid] = await seed(pool, n=1)
-    await pool.drain(rid, operator="ops", reason="retiring-idle")
+    await pool.admin.drain(rid, operator="ops", reason="retiring-idle")
     await ps1.close()
 
     ps2 = _make_sqlite_purser(path, coordination_kind)
@@ -334,7 +334,7 @@ async def test_restart_quarantine_preserved(tmp_path, storage_kind, coordination
             pool2.name, rid, res.version, expect_state=res.state,
             patch=ResourcePatch(meta_patch={"quarantine_until": time.time() - 1.0}),
         )
-        await pool2.run_maintenance("quarantine_gc")
+        await pool2.admin.run_maintenance("quarantine_gc")
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.IDLE
     finally:

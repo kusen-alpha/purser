@@ -7,6 +7,16 @@
 
 ### 变更（破坏性）
 
+- 池对象的 18 个运维方法（`validate_now` / `ban` / `unban` / `suspend` / `resume` /
+  `top_up` / `drain` / `cancel_drain` / `restore_resource` / `admin_set_state` /
+  `force_revoke` / `update_resource` / `switch_resource` / `move_resource` /
+  `recall_batch` / `run_maintenance` / `apply_defaults` / `validate_check`）统一移入
+  `pool.admin` 命名空间：`pool.ban(...)` → `pool.admin.ban(...)`；调度进程 IPC 白名单
+  与 REST 同步拆分，数据面保持精简。`ThreadPurser` / `RemotePool` 同样仅保留
+  `admin.ban` / `admin.unban`。
+- `PoolConfig.import_validate` 默认值 `batch` → `auto`：≤10 条记录导入时同步验活
+  （返回即可分配），更多记录自动转后台验活任务。显式传 `none` / `on_import` /
+  `batch` 的行为不变。
 - 异常统一去掉 `Error` 后缀：`LeaseRevokedError` → `LeaseRevoked`，
   `LeaseLostError` → `LeaseLost`；旧名保留一个发布周期，访问时抛
   `DeprecationWarning`。
@@ -21,6 +31,9 @@
 
 ### 新增
 
+- `acquire()` / `lease()` / `acquire_many()` 首次调用自动启动运行时，不再要求先
+  `await ps.start()`；`close()` 之后的运行时操作仍抛 `NotStarted`（同进程不支持
+  重启）。并发首启由内部锁串行化。
 - `RemotePool` 补齐只读目录面：`kind` / `profile` / `refresh_info` / `get` /
   `require` / `query` / `count_matching` / `counts` / `batches` / `leases` /
   `describe`，门面能力矩阵写入 `docs/guides/facades.md`。
@@ -29,6 +42,10 @@
 
 ### 修复
 
+- `import_validate="on_import"`（含默认 `auto` 的小批量路径）在资源处于
+  `QUOTA_EXHAUSTED` / `SUSPENDED` 等不可验活状态时，不再让单条记录的
+  `BadState` 中断整次导入：与后台任务一致，按记录记入 `report.validation`
+  （`alive=false`、`action="revalidate"`），状态保持不变。
 - 调度进程池调用的 IPC 白名单补齐 `restore_resource`，修复跨进程恢复归档资源
   时的方法名缺口。
 - `ProcessPurser.delete_pool` 的 `operator` 现在真正透传到调度进程。
@@ -37,6 +54,8 @@
 
 ### 文档
 
+- README 黄金路径重写（kwargs 风格、默认导入即验活、`pool.admin` 命名空间示例），
+  quickstart / 门面 / 导入与验活 / 配置参考同步 auto 默认与自动启动行为。
 - 公开门面方法补齐一行式 docstring，`tests/test_public_docstrings.py` 以 AST
   扫描全部包内 docstring，禁止内部设计编号回流。
 

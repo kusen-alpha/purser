@@ -107,4 +107,4 @@ curl -X DELETE "http://127.0.0.1:8000/pools/proxies/leases?consumer=crawler-a&ou
 | 资源忙且等待超时 | `PoolExhausted` → `409` |
 | 定向获取被占用超时 | `ResourceBusy` → `409` |
 | 候选全部被请求级校验拒绝 | `NoSuitableResource` → `409` |
-| 池未启动 | `NotStarted`（嵌入式场景） |
+| 运行时已 `close()`（嵌入式场景，不支持重启） | `NotStarted` |

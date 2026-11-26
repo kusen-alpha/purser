@@ -97,7 +97,7 @@ async def test_import_over_existing_preserves_state_usage(make_pool):
     assert res is not None and res.state is ResourceState.QUOTA_EXHAUSTED
     assert res.used_count == 1
     assert res.payload["host"] == "9.9.9.9"
-    await pool.top_up(rid, operator="ops", amount=1)
+    await pool.admin.top_up(rid, operator="ops", amount=1)
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
 
@@ -146,7 +146,7 @@ async def test_force_revoke_clears_consumer_hold(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     await pool.acquire(AcquireRequest(consumer="c"))
-    await pool.force_revoke(rid, operator="ops", reason="kick")
+    await pool.admin.force_revoke(rid, operator="ops", reason="kick")
     assert pool._consumer_holds.get("c") == set()  # hold cleared
     # The kicked consumer enters a short cooldown (F5): a plain acquire waits.
     with pytest.raises(PoolExhausted):
@@ -162,7 +162,7 @@ async def test_move_then_acquire_from_target(make_pool, purser):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     target = purser.ensure_pool("target", "fakecheck")
-    moved = await pool.move_resource(rid, target, operator="ops", reason="migrate")
+    moved = await pool.admin.move_resource(rid, target, operator="ops", reason="migrate")
     assert moved.id == rid
     lease = await target.acquire(AcquireRequest(consumer="c"))
     assert lease.resource_id == rid

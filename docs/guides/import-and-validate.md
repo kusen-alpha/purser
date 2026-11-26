@@ -1,24 +1,25 @@
 # 导入与验活
 
-导入决定资源“从哪来”，验活决定资源“能否被分配”。两者的边界是三档 `import_validate`。
+导入决定资源“从哪来”，验活决定资源“能否被分配”。两者的边界是 `import_validate` 的取值。
 
-## 三档导入策略
+## 导入策略
 
 | 值 | 行为 | 资源进入可分配状态 |
 | --- | --- | --- |
+| `auto`（默认） | ≤10 条同步验活；更多记录交给后台验活任务 | 同步部分通过后立即 `IDLE`；后台部分任务完成后依次 `IDLE` |
 | `none` | 只入库，停在 `NEW` | 否，需显式验活 |
 | `on_import` | 逐条同步验活，结果写入报告 | 通过后进入 `IDLE` |
 | `batch` | 交给后台验活任务，立即返回 | 任务完成后依次进入 `IDLE` |
 
-省略时取池配置 `import_validate`（默认 `batch`）：导入立即返回，后台验活完成后资源自动进入 `IDLE`；首次 `acquire()` 会等待验活（最长到请求的 `timeout` / 池的 `wait_timeout`）。`on_import` 会显著延长导入时间，适合必须“导入即可用”的小批量场景。
+省略时取池配置 `import_validate`（默认 `auto`）：小批量导入在返回时即已验活可用，大批量导入立即返回、由后台任务验活；首次 `acquire()` 在资源未就绪时会等待（最长到请求的 `timeout` / 池的 `wait_timeout`）。要固定行为时显式传 `on_import`（必须“导入即可用”，大批量会很慢）或 `batch`（导入快、可用性稍后达成）。
 
 ```mermaid
 flowchart TD
     A["purser import / POST resources"] --> B{"import_validate"}
     B -->|none| C["NEW（不可分配）"]
-    B -->|on_import| D["同步 validate()"]
-    B -->|batch| E["后台验活任务"]
-    C -->|"validate_now()"| D
+    B -->|on_import / auto≤10| D["同步 validate()"]
+    B -->|batch / auto>10| E["后台验活任务"]
+    C -->|"admin.validate_now()"| D
     D -->|通过| F["IDLE / FULL（可分配）"]
     D -->|失败| G["QUARANTINED"]
     E -->|通过| F
@@ -28,19 +29,19 @@ flowchart TD
 
 ## NEW 不可分配
 
-`NEW` 不会被周期性维护任务自动推进；它只会在显式 `import_validate="batch"`（默认）或手动 `validate_now()` 时进入验活流程。默认的 `batch` 导入会立即创建后台验活任务，因此资源通常很快变为 `IDLE`；`acquire()` 在资源处于 `NEW`/`VALIDATING` 时会等待验活完成，直到请求超时。
+`NEW` 不会被周期性维护任务自动推进；它只会在默认 `auto`（或显式 `batch` / `on_import`）或手动 `admin.validate_now()` 时进入验活流程。默认导入会立即创建验活流程（小批量同步、大批量后台任务），因此资源通常很快变为 `IDLE`；`acquire()` 在资源处于 `NEW`/`VALIDATING` 时会等待验活完成，直到请求超时。
 
 只有显式使用 `import_validate="none"` 时，资源才会长期停在 `NEW`。此时池内资源全部为 `NEW` 且没有进行中的验活任务，`acquire()` 会立即抛出带操作的 `PoolExhausted`，而不是空等到 `wait_timeout`。推进方式：
 
 ```python
-await pool.validate_now("r1", operator="alice")
+await pool.admin.validate_now("r1", operator="alice")
 ```
 
 或用 `on_import` / `batch` 重新导入。
 
 !!! warning "导入成功不等于资源可用"
 
-    `none` 只完成入库。此时资源停在 `NEW`，既不参与分配，也不会被后台验活自动推进；忘记验活会表现为“池里有资源但一直获取不到”。除非确实要离线预装数据，否则使用默认的 `batch`。
+    `none` 只完成入库。此时资源停在 `NEW`，既不参与分配，也不会被后台验活自动推进；忘记验活会表现为“池里有资源但一直获取不到”。除非确实要离线预装数据，否则保持默认的 `auto`。
 
 ## 嵌入式导入
 
@@ -60,7 +61,7 @@ report = await pool.import_resources(
 print(report.imported, report.updated, report.skipped, report.total)
 print(report.errors)
 print(report.batch_id)
-print(report.validation)   # on_import 的逐条结果
+print(report.validation)   # 同步验活的逐条结果（on_import / auto 小批量）
 ```
 
 `ImportReport` 字段：
@@ -69,7 +70,7 @@ print(report.validation)   # on_import 的逐条结果
 | --- | --- |
 | `imported` / `updated` / `skipped` | 新增 / 覆盖更新 / 去重跳过 |
 | `errors` | 逐条失败：`{line, error}`，部分路径额外带 `id`；`line` 是记录在本次输入中的下标 |
-| `validation` | `on_import` 的 `id / alive / latency_ms / error / action` |
+| `validation` | 同步验活（`on_import` / `auto` ≤10 条）的 `id / alive / latency_ms / error / action` |
 | `batch_id` | `batch` 模式的后台任务 id |
 | `total` | `imported + updated + skipped + len(errors)`，包含失败行 |
 

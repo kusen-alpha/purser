@@ -34,9 +34,9 @@ def _args(file, *, idempotency_key=None):
     )()
 
 
-def test_import_validates_in_background_by_default():
+def test_import_validate_defaults_to_pool_config():
     args = cli._parser().parse_args(["import", "proxies", "p.txt"])
-    assert args.import_validate == "batch"
+    assert args.import_validate is None
 
 
 def test_serve_parser_accepts_persistence_options():

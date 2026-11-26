@@ -13,9 +13,13 @@ from purser import Purser
 from purser.core.resource import AcquireRequest, UsageOutcome
 from purser.core.state import ResourceState
 from purser.errors import BadState, PoolExhausted
+from purser.pool.leases import LeaseService
 
 
-async def test_waiter_timeout_leaves_no_stale_waiter(make_pool):
+async def test_waiter_timeout_leaves_no_stale_waiter(make_pool, monkeypatch):
+    # A serve tick can sweep the cancelled handle between the timeout and the
+    # assertion; releases serve inline, so the tick only adds nondeterminism.
+    monkeypatch.setattr(LeaseService, "_SERVE_INTERVAL", 3600.0)
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     holder = await pool.acquire(AcquireRequest(consumer="holder"))
@@ -33,7 +37,7 @@ async def test_waiter_timeout_leaves_no_stale_waiter(make_pool):
 async def test_directed_acquire_bad_state(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.ban(rid, operator="ops", reason="edge")
+    await pool.admin.ban(rid, operator="ops", reason="edge")
     with pytest.raises(BadState):
         await pool.acquire(AcquireRequest(resource_id=rid, timeout=0.2))
 
@@ -85,12 +89,12 @@ async def test_move_and_update_rejected_while_busy(make_pool, purser):
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     with pytest.raises(BadState):
-        await pool.update_resource(rid, operator="ops", reason="x", tags=frozenset())
+        await pool.admin.update_resource(rid, operator="ops", reason="x", tags=frozenset())
     target = purser.ensure_pool("target", "fakecheck")
     with pytest.raises(BadState):
-        await pool.move_resource(rid, target, operator="ops", reason="x")
+        await pool.admin.move_resource(rid, target, operator="ops", reason="x")
     await pool.release(lease)
-    moved = await pool.move_resource(rid, target, operator="ops", reason="migrate")
+    moved = await pool.admin.move_resource(rid, target, operator="ops", reason="migrate")
     assert moved.id == rid
     assert await pool.get(rid) is None
     res = await target.get(rid)

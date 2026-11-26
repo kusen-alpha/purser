@@ -38,7 +38,7 @@ purser ls proxies --state idle
 purser lease proxies --consumer demo --timeout 10 --keep
 purser release proxies <token> --outcome ok --used 1
 
-purser import proxies proxies.txt                    # 默认 batch
+purser import proxies proxies.txt                    # 默认 auto：≤10 条同步验活，更多走后台任务
 purser import proxies proxies.txt --import-validate none
 purser validate proxies r1 --reason "manual recheck"
 purser ban proxies r1 --reason "captcha storm"

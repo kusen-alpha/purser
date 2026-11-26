@@ -52,6 +52,48 @@ def _resolve_address(
     return resolved
 
 
+class _RemotePoolAdmin:
+    """Operator namespace over the scheduler's admin RPC surface."""
+
+    def __init__(self, pool: RemotePool) -> None:
+        self._pool = pool
+
+    async def ban(
+        self, resource_id: str, *, reason: str, operator: str = "system"
+    ) -> None:
+        """Ban one resource after a hard failure or operator decision."""
+
+        await asyncio.to_thread(
+            self._pool._client.pool_call,
+            self._pool.name,
+            "ban",
+            resource_id,
+            reason=reason,
+            operator=operator,
+        )
+
+    async def unban(
+        self,
+        resource_id: str,
+        *,
+        reason: str | None = None,
+        operator: str = "system",
+        **kwargs: Any,
+    ) -> Any:
+        """Lift a ban; extra keyword arguments are forwarded to the scheduler."""
+
+        if reason is not None:
+            kwargs["reason"] = reason
+        return await asyncio.to_thread(
+            self._pool._client.pool_call,
+            self._pool.name,
+            "unban",
+            resource_id,
+            operator=operator,
+            **kwargs,
+        )
+
+
 class RemotePool:
     """Async, pool-scoped view of a scheduler process.
 
@@ -78,6 +120,7 @@ class RemotePool:
         self._closed = False
         self._kind = kind
         self._profile = profile
+        self.admin = _RemotePoolAdmin(self)
         for kind_name, cls in (resource_types or {}).items():
             client.register_resource_type(kind_name, cls)
 
@@ -147,41 +190,6 @@ class RemotePool:
 
         return await asyncio.to_thread(
             self._client.renew, self.name, lease, used=used
-        )
-
-    async def ban(
-        self, resource_id: str, *, reason: str, operator: str = "system"
-    ) -> None:
-        """Ban one resource after a hard failure or operator decision."""
-
-        await asyncio.to_thread(
-            self._client.pool_call,
-            self.name,
-            "ban",
-            resource_id,
-            reason=reason,
-            operator=operator,
-        )
-
-    async def unban(
-        self,
-        resource_id: str,
-        *,
-        reason: str | None = None,
-        operator: str = "system",
-        **kwargs: Any,
-    ) -> Any:
-        """Lift a ban; extra keyword arguments are forwarded to the scheduler."""
-
-        if reason is not None:
-            kwargs["reason"] = reason
-        return await asyncio.to_thread(
-            self._client.pool_call,
-            self.name,
-            "unban",
-            resource_id,
-            operator=operator,
-            **kwargs,
         )
 
     async def stats(self) -> dict[str, Any]:

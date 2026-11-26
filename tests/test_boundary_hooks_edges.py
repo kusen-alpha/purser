@@ -160,7 +160,7 @@ async def test_lease_lifecycle_hooks_fire(make_pool, purser):
     assert ("r1", UsageOutcome.OK) in checker.released
 
     lease = await pool.acquire(AcquireRequest(consumer="c2"))
-    await pool.force_revoke("r1", reason="admin kick")
+    await pool.admin.force_revoke("r1", reason="admin kick")
     assert ("r1", "admin kick") in checker.revoked
 
     lease = await pool.acquire(AcquireRequest(consumer="c3"))
@@ -173,7 +173,7 @@ async def test_switch_declines_and_leaves_resource_untouched(purser):
     purser.register_adapter(checker)
     pool = purser.ensure_pool("switch-decline", "switchkind")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
-    assert await pool.switch_resource("r1") is None
+    assert await pool.admin.switch_resource("r1") is None
     assert (await pool.get("r1")).payload["host"] == "old"
 
 
@@ -184,7 +184,7 @@ async def test_switch_mutates_old_resource_in_place(purser):
     pool = purser.ensure_pool("switch-inplace", "switchkind")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
 
-    switched = await pool.switch_resource("r1")
+    switched = await pool.admin.switch_resource("r1")
     assert switched is not None and switched.id == "r1"
     assert switched.payload["host"] == "new"
     assert (await pool.get("r1")).payload["host"] == "new"
@@ -201,7 +201,7 @@ async def test_switch_replaces_with_new_resource(purser):
     pool = purser.ensure_pool("switch-replace", "switchkind")
     await pool.import_resources([{"id": "r1"}], import_validate="on_import")
 
-    switched = await pool.switch_resource("r1")
+    switched = await pool.admin.switch_resource("r1")
     assert switched is not None and switched.id == "r1-v2"
     assert (await pool.get("r1")).state is ResourceState.ARCHIVED
     assert (await pool.get("r1-v2")).payload["host"] == "v2"
@@ -215,7 +215,7 @@ async def test_switch_rejects_busy_resource(purser):
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     try:
         with pytest.raises(BadState):
-            await pool.switch_resource("r1")
+            await pool.admin.switch_resource("r1")
     finally:
         await pool.release(lease)
 

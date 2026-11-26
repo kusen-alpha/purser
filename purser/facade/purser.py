@@ -175,6 +175,8 @@ class Purser:
         self._bundle_gc_task: asyncio.Task[Any] | None = None
         self._bundle_service = BundleService(self)
         self._running = False
+        self._ever_started = False
+        self._lifecycle_lock = asyncio.Lock()
         self._install_default_adapters(default_adapters)
 
     def _install_default_adapters(self, mode: str) -> None:
@@ -793,6 +795,7 @@ class Purser:
         if self._running:
             return
         self._running = True
+        self._ever_started = True
         await self.bus.start()
         for pool in self._pools.values():
             await pool.start()

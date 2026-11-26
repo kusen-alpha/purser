@@ -44,16 +44,16 @@ async def embedded() -> None:
     ps = Purser(maintenance_enabled=False)
     ps.register_adapter(LocalChecker())
     pool = ps.create_pool("demo", "local")
+    # 默认 import_validate="auto"：小批量在导入时同步验活，返回即可分配
     await pool.import_resources(
         [
             {"id": "n1", "tags": ["US"]},
             {"id": "n2", "tags": ["EU"]},
             {"id": "n3", "tags": ["US"]},
         ],
-        import_validate="on_import",
     )
-    await ps.start()
 
+    # 首次 acquire/lease 自动启动运行时，无需显式 ps.start()
     async with pool.lease(AcquireRequest(consumer="crawler", tags=["US"])) as lease:
         print(f"拿到 {lease.resource_id} -> {lease.payload}")
         lease.outcome = UsageOutcome.OK
@@ -88,7 +88,7 @@ async def service() -> None:
     with httpx.Client(base_url="http://127.0.0.1:8011", trust_env=False) as client:
         client.post(
             "/pools/demo/resources",
-            json={"records": [{"id": "s1"}, {"id": "s2"}], "import_validate": "on_import"},
+            json={"records": [{"id": "s1"}, {"id": "s2"}]},
         )
         pools = client.get("/pools").json()
         print("== 服务态 ==")
@@ -112,10 +112,7 @@ async def redis_backend() -> None:
     )
     ps.register_adapter(LocalChecker())
     pool = ps.create_pool("shared", "local")
-    await pool.import_resources(
-        [{"id": f"r{i}"} for i in range(3)], import_validate="on_import"
-    )
-    await ps.start()
+    await pool.import_resources([{"id": f"r{i}"} for i in range(3)])
     async with pool.lease(AcquireRequest(consumer="x")) as lease:
         print(f"Redis 池获取 {lease.resource_id}，槽位 {lease.slots}")
     counts = await pool.counts(by_name=True)

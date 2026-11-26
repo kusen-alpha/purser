@@ -16,26 +16,26 @@ WriteAction = Callable[[Any, str, dict[str, Any] | None, str], Any]
 
 def _write_actions() -> dict[str, WriteAction]:
     return {
-        "ban": lambda pool, rid, b, op: pool.ban(
+        "ban": lambda pool, rid, b, op: pool.admin.ban(
             rid, reason=(b or {}).get("reason") or "api ban", operator=op
         ),
-        "unban": lambda pool, rid, b, op: pool.unban(rid, operator=op, reason=(b or {}).get("reason") or "api unban"),
-        "suspend": lambda pool, rid, b, op: pool.suspend(
+        "unban": lambda pool, rid, b, op: pool.admin.unban(rid, operator=op, reason=(b or {}).get("reason") or "api unban"),
+        "suspend": lambda pool, rid, b, op: pool.admin.suspend(
             rid, reason=(b or {}).get("reason") or "api suspend", operator=op
         ),
-        "resume": lambda pool, rid, b, op: pool.resume(rid, operator=op, reason=(b or {}).get("reason") or "api resume"),
-        "top-up": lambda pool, rid, b, op: pool.top_up(
+        "resume": lambda pool, rid, b, op: pool.admin.resume(rid, operator=op, reason=(b or {}).get("reason") or "api resume"),
+        "top-up": lambda pool, rid, b, op: pool.admin.top_up(
             rid, operator=op,
             amount=coerce((b or {}).get("amount"), name="amount", cast=int, minimum=1),
             reason=(b or {}).get("reason") or "api top-up",
         ),
-        "drain": lambda pool, rid, b, op: pool.drain(
+        "drain": lambda pool, rid, b, op: pool.admin.drain(
             rid, reason=(b or {}).get("reason") or "api drain", operator=op
         ),
-        "cancel-drain": lambda pool, rid, b, op: pool.cancel_drain(
+        "cancel-drain": lambda pool, rid, b, op: pool.admin.cancel_drain(
             rid, reason=(b or {}).get("reason") or "api cancel-drain", operator=op
         ),
-        "restore": lambda pool, rid, b, op: pool.restore_resource(rid, operator=op, reason=(b or {}).get("reason") or "api restore"),
+        "restore": lambda pool, rid, b, op: pool.admin.restore_resource(rid, operator=op, reason=(b or {}).get("reason") or "api restore"),
     }
 
 
@@ -56,7 +56,7 @@ def build(ctx: UiContext) -> APIRouter:
         operator, _ = ctx.require(request, write=True)
         pool = ctx.pool_of(pool_name)
         try:
-            lease = await pool.force_revoke(
+            lease = await pool.admin.force_revoke(
                 rid,
                 operator=operator,
                 reason=(body or {}).get("reason") or "api revoke",
@@ -89,7 +89,7 @@ def build(ctx: UiContext) -> APIRouter:
         except PurserError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         try:
-            moved = await pool.move_resource(
+            moved = await pool.admin.move_resource(
                 rid,
                 target,
                 operator=operator,
@@ -119,10 +119,10 @@ def build(ctx: UiContext) -> APIRouter:
             check = (body or {}).get("check")
             try:
                 if check:
-                    report = await pool.validate_check(rid, check)
+                    report = await pool.admin.validate_check(rid, check)
                     audit_action = "validate_check"
                 else:
-                    report = await pool.validate_now(rid, operator=operator)
+                    report = await pool.admin.validate_now(rid, operator=operator)
                     audit_action = "validate"
             except PurserError as exc:
                 raise http_purser_error(exc) from exc
@@ -155,7 +155,7 @@ def build(ctx: UiContext) -> APIRouter:
         if action == "admin-state":
             target = state_value((body or {}).get("target"))
             try:
-                await pool.admin_set_state(
+                await pool.admin.admin_set_state(
                     rid,
                     target=target,
                     operator=operator,

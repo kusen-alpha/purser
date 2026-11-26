@@ -122,6 +122,7 @@ def worker(address):
 | `health()` / `pool_names()` / `stats(pool)` | 观测 |
 | `create_pool(name, kind, *, config=None, profile=None, **overrides)` / `update_pool(name, *, config=None, **overrides)` / `delete_pool(name, force=False)` | 池管理；与 Python/REST 共用同一配置契约 |
 | `import_resources(pool, records, ...)` / `generate(pool, specs)` | 导入与内建生成 |
+| `pool_call(pool, method, ...)` | 调用白名单内的池方法；管理方法（`ban` / `drain` / `validate_now` 等）路由到调度进程的 `pool.admin` |
 | `shutdown()` / `close()` | 关闭调度进程 / 仅断开客户端 |
 
 `RemoteLease` 暴露 `token` / `resource_id` / `consumer` / `slots` / `expires_at` / `payload` / `resource` / `replayed` 等属性，并支持 `with` 与显式 `release()`。它是一次**快照**：调度进程会自动续租，但 worker 手里的 `expires_at` 只在 `acquire()` / `renew()` 时刷新，因此 `expired()` 仅供本地参考。
@@ -139,9 +140,9 @@ async with connect("workers", sched.address) as pool:
     print(await pool.stats())
 ```
 
-`connect(..., resource_types={"proxy": ProxyResource})` 会在该池上注册类型化反序列化；`RemotePool` 同样提供 `acquire` / `release` / `renew` / `stats` / `import_resources` / `generate`。
+`connect(..., resource_types={"proxy": ProxyResource})` 会在该池上注册类型化反序列化；`RemotePool` 同样提供 `acquire` / `release` / `renew` / `stats` / `import_resources` / `generate`，并带有 `admin` 命名空间（当前覆盖 `ban` / `unban`）。
 
-> IPC 客户端只覆盖数据面与基础池管理。强制撤销、封禁、立即验活等管理操作没有对应方法；需要时在调度进程内调用，或改用 `purser serve` 的 REST API。
+> IPC 客户端只覆盖数据面与基础池管理。封禁 / 解封可用 `pool.admin.ban(...)` / `pool.admin.unban(...)`；强制撤销、立即验活等其余管理操作可通过 `client.pool_call(pool, "force_revoke", ...)` 调用（白名单内的管理方法会路由到调度进程的 `pool.admin`），或改用 `purser serve` 的 REST API。
 
 ## 错误
 

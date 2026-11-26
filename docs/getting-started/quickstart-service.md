@@ -39,15 +39,17 @@ purser import proxies proxies.txt
 purser import proxies proxies.txt --import-validate on_import
 ```
 
+`--import-validate` 默认 `auto`（可选 `auto` / `none` / `on_import` / `batch`）：≤10 条同步验活，导入返回即可获取；更多记录自动转后台验活任务。
+
 REST 方式：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/pools/proxies/resources \
   -H "Content-Type: application/json" \
-  -d '{"records": [{"host": "1.2.3.4", "port": 8080}], "import_validate": "batch"}'
+  -d '{"records": [{"host": "1.2.3.4", "port": 8080}]}'
 ```
 
-`batch` 会把本次导入交给后台验活任务，任务 id 就是导入报告里的 `batch_id`。
+`import_validate` 默认 `auto`：这种小批量会在导入时同步验活，导入返回即可获取；大批量（>10 条）自动转后台验活任务，任务 id 就是导入报告里的 `batch_id`，首次获取会等待验活完成。也可显式传 `none` / `on_import` / `batch` 固定行为。
 
 ## 4. 获取与归还
 

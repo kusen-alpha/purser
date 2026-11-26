@@ -41,17 +41,17 @@ Purser(
 
 ```python
 ps = Purser(storage="sqlite", sqlite_path="purser.db")
-await ps.start()      # 幂等
+await ps.start()      # 可选：提前启动（幂等）
 ...
 await ps.close()      # 幂等；关闭池、事件总线与审计
 ```
 
 - `start()` 启动事件总线与所有已注册池；每个池在启动时执行租约对账，随后启动 reaper、后台验活与周期维护。
 - `close()` 先关闭每个池（用 `PoolExhausted` 唤醒全部在途等待者），再停止事件总线并关闭审计。
+- **自动启动**：`acquire()` / `lease()` / `acquire_many()` 首次调用会自动启动运行时（含 `Purser`），因此 `ps.start()` / `async with ps:` 是可选的，用于提前启动与确保退出清理。`close()` 之后再调用运行时操作会抛 `NotStarted`（已关闭，不支持重启）。导入、查询、状态变更等管理面操作无需启动即可用，适合离线预装数据。
 - 推荐 `async with Purser() as ps:`，异常路径也会关闭。
 - `ps.started` 只读，`start()` 后尚未 `close()` 时为 `True`。
 - 启动后创建的池会在后台自动启动；首次获取会等待该池的启动对账完成，而不是与对账竞争。
-- **启动前提**：`acquire()` / `lease()` / `acquire_many()` 要求池已启动，否则抛 `NotStarted`。导入、查询、状态变更等管理面操作在 `start()` 之前仍可用。
 
 ## 池注册表
 

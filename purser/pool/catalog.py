@@ -8,7 +8,8 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Seque
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from purser.backends.base import ResourcePatch
-from purser.config import ImportValidate, _coerce_kind
+from purser.config import IMPORT_VALIDATE_AUTO_MAX, ImportValidate, _coerce_kind
+from purser.core.health import Action
 from purser.core.meta import ResourceMeta
 from purser.core.resource import (
     Concurrency,
@@ -279,6 +280,12 @@ class CatalogService:
             else self.ctx.cfg.import_validate,
             "import_validate",
         )
+        if mode is ImportValidate.AUTO:
+            mode = (
+                ImportValidate.ON_IMPORT
+                if len(records) <= IMPORT_VALIDATE_AUTO_MAX
+                else ImportValidate.BATCH
+            )
         pending_validate: list[str] = []
         for index, record in enumerate(records):
             try:
@@ -351,7 +358,24 @@ class CatalogService:
             if not stored:
                 continue
             if mode is ImportValidate.ON_IMPORT:
-                verdict = await self.validate_now(resource.id, operator=operator)
+                # Batch jobs swallow per-record validate errors; the inline
+                # path must too, or re-importing a QUOTA_EXHAUSTED/SUSPENDED
+                # resource aborts the whole import.
+                try:
+                    verdict = await self.validate_now(resource.id, operator=operator)
+                except Exception as exc:
+                    report.validation.append(
+                        {
+                            "id": resource.id,
+                            "alive": False,
+                            "latency_ms": None,
+                            "error": str(exc),
+                            "action": Action.REVALIDATE.value,
+                        }
+                    )
+                    if fail_fast:
+                        break
+                    continue
                 report.validation.append(
                     {
                         "id": resource.id,

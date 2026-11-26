@@ -181,7 +181,7 @@ def _delete_pool(cfg: dict, name: str) -> None:
         pool = ps.ensure_pool(name, "fakecheck", max_slots=1, lease_ttl=30.0)
         for lease in list(pool.leases()):
             with contextlib.suppress(PurserError):
-                pool.force_revoke(
+                pool.admin.force_revoke(
                     lease.resource_id,
                     operator="cleanup",
                     reason="static-shard cleanup",

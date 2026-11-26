@@ -68,7 +68,7 @@ async def test_quota_reset_is_not_reapplied_within_same_day(make_pool):
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.QUOTA_EXHAUSTED
 
-    assert (await pool.run_maintenance("quota_reset"))["quota_reset"] == 1
+    assert (await pool.admin.run_maintenance("quota_reset"))["quota_reset"] == 1
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
     assert res.quota is not None and res.quota.used == 0
@@ -84,7 +84,7 @@ async def test_quota_reset_is_not_reapplied_within_same_day(make_pool):
     # Same day: reset_daily() refuses, so the resource must stay exhausted
     # instead of being flipped to IDLE with spent quota (which used to make
     # the next acquire fail with PoolExhausted).
-    assert (await pool.run_maintenance("quota_reset"))["quota_reset"] == 0
+    assert (await pool.admin.run_maintenance("quota_reset"))["quota_reset"] == 0
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.QUOTA_EXHAUSTED
     assert res.quota is not None and res.quota.used == 1
@@ -140,7 +140,8 @@ async def test_import_retries_after_stale_snapshot(make_pool, monkeypatch):
 
     monkeypatch.setattr(pool.storage, "get", stale_get)
     report = await pool.import_resources(
-        [{"id": rid, "host": "10.9.9.9", "port": 1}]
+        [{"id": rid, "host": "10.9.9.9", "port": 1}],
+        import_validate="none",
     )
     assert injected["done"] is True
     assert report.updated == 1 and report.imported == 0
@@ -312,11 +313,14 @@ async def test_release_restores_token_when_storage_rejects(make_pool, monkeypatc
 
 async def test_admin_set_state_rejects_unlisted_source(make_pool):
     pool = make_pool()
-    await pool.import_resources([{"id": "new-1", "host": "10.0.0.1", "port": 1}])
+    await pool.import_resources(
+        [{"id": "new-1", "host": "10.0.0.1", "port": 1}],
+        import_validate="none",
+    )
     res = await pool.get("new-1")
     assert res is not None and res.state is ResourceState.NEW
     with pytest.raises(BadState):
-        await pool.admin_set_state(
+        await pool.admin.admin_set_state(
             "new-1",
             target=ResourceState.SUSPENDED,
             operator="ops",
@@ -327,7 +331,7 @@ async def test_admin_set_state_rejects_unlisted_source(make_pool):
 async def test_admin_archive_from_idle(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.admin_set_state(
+    await pool.admin.admin_set_state(
         rid, target=ResourceState.ARCHIVED, operator="ops", reason="delete"
     )
     res = await pool.get(rid)

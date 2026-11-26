@@ -174,11 +174,11 @@ async def test_meta_survives_backends_and_admin_updates(make_pool):
     res = await pool.get(rid)
     assert res is not None and isinstance(res.meta, ResourceMeta)
 
-    res = await pool.update_resource(rid, priority=3, preference=0.75, reason="rank")
+    res = await pool.admin.update_resource(rid, priority=3, preference=0.75, reason="rank")
     assert isinstance(res.meta, ResourceMeta)
     assert res.meta.priority == 3 and res.meta.preference == 0.75
 
-    res = await pool.update_resource(rid, priority=None, preference=None, reason="clear")
+    res = await pool.admin.update_resource(rid, priority=None, preference=None, reason="clear")
     assert isinstance(res.meta, ResourceMeta)
     assert res.meta.priority == 0 and res.meta.preference == 0.0
 
@@ -186,7 +186,7 @@ async def test_meta_survives_backends_and_admin_updates(make_pool):
 async def test_update_resource_scheduling_keys_stay_out_of_user_meta(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.update_resource(
+    await pool.admin.update_resource(
         rid,
         priority=7,
         preference=0.25,
@@ -226,7 +226,7 @@ async def test_switch_resource_marks_switched_from_as_system_meta():
             [{"id": "r1", "host": "127.0.0.1", "port": 1}],
             import_validate="on_import",
         )
-        switched = await pool.switch_resource("r1", operator="ops", reason="rotate")
+        switched = await pool.admin.switch_resource("r1", operator="ops", reason="rotate")
         assert switched is not None and switched.id == "r2"
         res = await pool.get("r2")
         assert res is not None
@@ -239,7 +239,7 @@ async def test_switch_resource_marks_switched_from_as_system_meta():
 async def test_update_resource_sets_and_clears_quota_limit_and_hold(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.update_resource(
+    await pool.admin.update_resource(
         rid,
         quota_limit=4,
         next_available_at=time.time() + 100,
@@ -251,7 +251,7 @@ async def test_update_resource_sets_and_clears_quota_limit_and_hold(make_pool):
     assert res.quota is not None and res.quota.limit == 4
     assert res.next_available_at is not None
 
-    await pool.update_resource(
+    await pool.admin.update_resource(
         rid,
         quota_limit=None,
         next_available_at=None,
@@ -268,7 +268,7 @@ async def test_update_resource_rejects_invalid_quota_limit(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     with pytest.raises(ConfigError):
-        await pool.update_resource(rid, quota_limit=0, reason="bad")
+        await pool.admin.update_resource(rid, quota_limit=0, reason="bad")
 
 
 # -- pool default backfill ---------------------------------------------------
@@ -285,7 +285,7 @@ async def test_apply_defaults_fills_only_missing_values(make_pool):
     assert report.imported == 2
     pool.reconfigure(expires_in=60, usage_quota=5, quota_limit=2)
 
-    result = await pool.apply_defaults()
+    result = await pool.admin.apply_defaults()
     assert result == {"updated": 2}
 
     a = await pool.get("a")
@@ -298,7 +298,7 @@ async def test_apply_defaults_fills_only_missing_values(make_pool):
     assert a.quota is not None and a.quota.limit == 2
     assert b.quota is not None and b.quota.limit == 2
 
-    second = await pool.apply_defaults()
+    second = await pool.admin.apply_defaults()
     assert second == {"updated": 0}
 
 
@@ -318,7 +318,7 @@ async def test_expire_gc_is_disabled_by_default(make_pool):
     )
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(timeout=0.05))
-    result = await pool.run_maintenance("expire_gc")
+    result = await pool.admin.run_maintenance("expire_gc")
     assert result == {"expire_gc": 0}
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.SUSPENDED
@@ -341,7 +341,7 @@ async def test_expire_gc_archives_expired_resources_past_retention(make_pool):
     assert res is not None and res.state is ResourceState.SUSPENDED
     assert res.meta.get("expired_at") is not None
 
-    result = await pool.run_maintenance("expire_gc")
+    result = await pool.admin.run_maintenance("expire_gc")
     assert result == {"expire_gc": 1}
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.ARCHIVED
@@ -350,8 +350,8 @@ async def test_expire_gc_archives_expired_resources_past_retention(make_pool):
 async def test_expire_gc_leaves_manually_suspended_resources_alone(make_pool):
     pool = make_pool(expired_retention=0.0)
     [rid] = await seed(pool, n=1)
-    await pool.suspend(rid, operator="ops", reason="manual hold")
-    result = await pool.run_maintenance("expire_gc")
+    await pool.admin.suspend(rid, operator="ops", reason="manual hold")
+    result = await pool.admin.run_maintenance("expire_gc")
     assert result == {"expire_gc": 0}
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.SUSPENDED
@@ -371,7 +371,7 @@ async def test_expire_gc_respects_retention_within_window(make_pool):
     )
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(timeout=0.05))
-    result = await pool.run_maintenance("expire_gc")
+    result = await pool.admin.run_maintenance("expire_gc")
     assert result == {"expire_gc": 0}
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.SUSPENDED

@@ -99,7 +99,7 @@ async def test_batch_job_counts_dead_resources(purser):
 async def test_batch_job_records_error_for_banned_resources(purser, make_pool):
     pool = make_pool("jobs-err")
     await pool.import_resources(_records("b", 1), import_validate="on_import")
-    await pool.ban("b-0", reason="risk")
+    await pool.admin.ban("b-0", reason="risk")
 
     await pool.import_resources(
         _records("b", 1), import_validate="batch", batch_id="job-err"
@@ -121,7 +121,7 @@ async def test_batch_job_truncates_error_log_to_100():
         records = _records("m", 101)
         await pool.import_resources(records, import_validate="on_import")
         for record in records:
-            await pool.ban(record["id"], reason="risk")
+            await pool.admin.ban(record["id"], reason="risk")
 
         await pool.import_resources(
             records, import_validate="batch", batch_id="job-many"

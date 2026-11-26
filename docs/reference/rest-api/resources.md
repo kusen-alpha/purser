@@ -54,10 +54,11 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/resources \
   }'
 ```
 
-- `import_validate`：`none` / `on_import` / `batch`；省略时取池配置。
+- `import_validate`：`auto` / `none` / `on_import` / `batch`；省略时取池配置（默认 `auto`）。
 - `none` 只入库，资源停在 `NEW`，不可分配。
 - `on_import` 逐条同步验活，结果写入导入报告的 `validation`。
-- `batch` 交给后台验活任务，任务 id 即报告中的 `batch_id`。
+- `batch` 交给后台验活任务，任务 id 即报告中的 `batch_id`（导入立即返回，首次 `acquire` 会等待验活完成）。
+- `auto`（默认）：≤10 条按 `on_import` 同步验活，导入返回即可用；更多记录自动转 `batch` 后台验活任务。
 - `dedup_key` 默认 `"id"`；`fail_fast=true` 遇到首条错误即中断。
 - `records` 中可带资源调度保留键：`max_slots`、`usage_quota`、`quota_limit`、`expires_at`、`next_available_at`、`mutex_group`、`schedule_window`、`priority`、`preference`、`source`。
 

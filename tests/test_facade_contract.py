@@ -23,10 +23,20 @@ from purser import (
     ThreadPool,
     ThreadPurser,
 )
+from purser.pool.admin import PoolAdminView
 from purser.protocols import MISSING
+from purser.remote import _RemotePoolAdmin
+from purser.sync_pool import SyncPoolAdminView
+from purser.thread import _ThreadPoolAdmin
 
 _ASYNC_POOLS = (ResourcePool, ThreadPool, RemotePool)
 _MANAGEMENT = (Purser, ThreadPurser, SyncPurser, ProcessPurser)
+_POOL_ADMIN_VIEWS = (
+    (ResourcePool, PoolAdminView),
+    (ThreadPool, _ThreadPoolAdmin),
+    (RemotePool, _RemotePoolAdmin),
+    (SyncPool, SyncPoolAdminView),
+)
 _CORE_METHODS = (
     "acquire",
     "lease",
@@ -36,7 +46,7 @@ _CORE_METHODS = (
     "import_resources",
     "generate",
 )
-_ADMIN_METHODS = (
+_ADMIN_VIEW_METHODS = (
     "apply_defaults",
     "ban",
     "unban",
@@ -48,6 +58,14 @@ _ADMIN_METHODS = (
     "force_revoke",
     "recall_batch",
     "run_maintenance",
+    "update_resource",
+    "switch_resource",
+    "move_resource",
+    "restore_resource",
+    "validate_now",
+    "validate_check",
+)
+_POOL_SURFACE = (
     "reconfigure",
     "query",
     "count_matching",
@@ -57,12 +75,6 @@ _ADMIN_METHODS = (
     "require",
     "leases",
     "iter_resources",
-    "update_resource",
-    "switch_resource",
-    "move_resource",
-    "restore_resource",
-    "validate_now",
-    "validate_check",
     "validate_job",
     "validate_jobs",
     "cancel_validate_job",
@@ -94,16 +106,27 @@ def test_sync_pool_matches_the_sync_protocol() -> None:
     assert not missing, missing
 
 
-@pytest.mark.parametrize("cls", _ASYNC_POOLS + (SyncPool,))
-def test_every_pool_exposes_ban_and_unban(cls: type) -> None:
-    missing = {"ban", "unban"} - _public_names(cls)
-    assert not missing, missing
+@pytest.mark.parametrize(("pool_cls", "view_cls"), _POOL_ADMIN_VIEWS)
+def test_every_pool_routes_admin_ops_through_an_admin_view(
+    pool_cls: type, view_cls: type
+) -> None:
+    names = _public_names(view_cls)
+    assert {"ban", "unban"} <= names
+    # Thread/Remote admin views mirror the ban/unban pair only; the rest of
+    # their ops never existed on those facades (Remote routes via pool_call).
+    if view_cls in (PoolAdminView, SyncPoolAdminView):
+        assert set(_ADMIN_VIEW_METHODS) <= names
 
 
-@pytest.mark.parametrize("cls", [ResourcePool, SyncPool])
-def test_core_pools_expose_the_admin_plane(cls: type) -> None:
-    missing = set(_ADMIN_METHODS) - _public_names(cls)
-    assert not missing, missing
+@pytest.mark.parametrize(
+    ("pool_cls", "view_cls"),
+    [(ResourcePool, PoolAdminView), (SyncPool, SyncPoolAdminView)],
+)
+def test_core_pools_expose_the_admin_plane(pool_cls: type, view_cls: type) -> None:
+    missing_view = set(_ADMIN_VIEW_METHODS) - _public_names(view_cls)
+    assert not missing_view, missing_view
+    missing_pool = set(_POOL_SURFACE) - _public_names(pool_cls)
+    assert not missing_pool, missing_pool
 
 
 @pytest.mark.parametrize("cls", _MANAGEMENT)

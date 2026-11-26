@@ -51,6 +51,11 @@ MAINTENANCE_NAMES: tuple[str, ...] = (
     "reconcile",
 )
 
+# With ``import_validate="auto"`` (the default), imports up to this many
+# records validate inline; larger batches submit a background validate job so
+# import_resources returns immediately.
+IMPORT_VALIDATE_AUTO_MAX = 10
+
 
 def apply_adapter_defaults(
     cfg: PoolConfig, adapter: ResourceAdapter
@@ -200,10 +205,11 @@ class PoolConfig:
 
     wait_timeout: float = 30.0
     fail_open: bool = False
-    # Default to background validation so an imported pool is usable without
-    # an extra call. ``none`` stays available as an explicit opt-out for
-    # callers that pre-load data offline and validate later.
-    import_validate: ImportValidate = ImportValidate.BATCH
+    # ``auto`` (the default) validates small imports inline so the pool is
+    # usable the moment import_resources returns, and hands large imports to a
+    # background job instead. Explicit ``none`` stays available for callers
+    # that pre-load data offline and validate later.
+    import_validate: ImportValidate = ImportValidate.AUTO
     secret_fields: tuple[str, ...] = ()
     timezone: str = "Asia/Shanghai"
     schema_version: int = 1

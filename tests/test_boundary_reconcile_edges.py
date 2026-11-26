@@ -155,7 +155,7 @@ async def test_reconcile_draining_with_surviving_lease_not_archived(make_pool):
     pool = make_pool("px", max_slots=1)
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="a", slots=1))
-    await pool.drain(rid, operator="ops", reason="sunset")
+    await pool.admin.drain(rid, operator="ops", reason="sunset")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.DRAINING
     assert res.concurrency.used_slots == 1

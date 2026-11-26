@@ -101,19 +101,19 @@ async def test_chaos_storm_invariants(storage_kind, coordination_kind):
                         used=rng.choice([0, 1, 2]),
                     )
                 elif op == "revoke":
-                    await pool.force_revoke(rid, operator="chaos", reason="rain")
+                    await pool.admin.force_revoke(rid, operator="chaos", reason="rain")
                 elif op == "ban":
-                    await pool.ban(rid, operator="chaos", reason="rain")
+                    await pool.admin.ban(rid, operator="chaos", reason="rain")
                 elif op == "unban":
-                    await pool.unban(rid, operator="chaos", reason="rain")
+                    await pool.admin.unban(rid, operator="chaos", reason="rain")
                 elif op == "validate":
-                    await pool.validate_now(rid)
+                    await pool.admin.validate_now(rid)
                 elif op == "drain":
-                    await pool.drain(rid, operator="chaos", reason="rain")
+                    await pool.admin.drain(rid, operator="chaos", reason="rain")
                 elif op == "top-up":
-                    await pool.top_up(rid, operator="chaos", amount=1)
+                    await pool.admin.top_up(rid, operator="chaos", amount=1)
                 elif op == "gc":
-                    await pool.run_maintenance("quarantine_gc")
+                    await pool.admin.run_maintenance("quarantine_gc")
             except ALLOWED_ERRORS:
                 pass
             resources = await pool.query(limit=10_000)
@@ -168,7 +168,7 @@ async def test_chaos_restart_across_churn(tmp_path, storage_kind, coordination_k
             elif held:
                 await pool.release(held.pop())
             elif rng.random() < 0.5:
-                await pool.force_revoke(rid, operator="chaos", reason="restart")
+                await pool.admin.force_revoke(rid, operator="chaos", reason="restart")
         except ALLOWED_ERRORS:
             pass
     # Hard stop with some leases possibly still held.

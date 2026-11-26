@@ -70,7 +70,7 @@ purser serve --host 0.0.0.0 --port 8000
 
 !!! note "控制台只做单条添加"
 
-    控制台不提供批量导入。批量导入请用 `purser import` 或 `POST /pools/{pool}/resources`，并把 `import_validate` 设为 `batch`；导入产生的批次与验活任务会出现在右栏 **批次** 卡片，可在这里查看进度或取消。做法见 [导入与验活](import-and-validate.md)。
+    控制台不提供批量导入。批量导入请用 `purser import` 或 `POST /pools/{pool}/resources`：`import_validate` 默认 `auto`，≤10 条同步验活（导入返回即可用），更多记录自动转后台验活任务；导入产生的批次与验活任务会出现在右栏 **批次** 卡片，可在这里查看进度或取消。做法见 [导入与验活](import-and-validate.md)。
 
 ## 获取与归还租约
 

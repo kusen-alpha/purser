@@ -75,7 +75,7 @@ async def test_force_revoke_specific_token(make_pool):
     first = await pool.acquire(AcquireRequest(consumer="a", timeout=2.0))
     second = await pool.acquire(AcquireRequest(consumer="b", timeout=2.0))
     assert first.token != second.token
-    revoked = await pool.force_revoke(
+    revoked = await pool.admin.force_revoke(
         rid, operator="ops", reason="kick", token=first.token
     )
     assert revoked.token == first.token

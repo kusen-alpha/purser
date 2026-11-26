@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from purser.core.events import EventBus
+
+
+async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError("condition not met before deadline")
+        await asyncio.sleep(0.001)
 
 
 async def test_slow_listener_is_paused_after_repeated_timeouts():
@@ -24,11 +33,14 @@ async def test_slow_listener_is_paused_after_repeated_timeouts():
     bus.subscribe(fast)
     try:
         bus.publish("a", "p")
-        await asyncio.sleep(0.15)  # first timeout, one strike
+        # Fixed sleeps race the dispatcher under load: a publish can land
+        # before strike 2 is recorded or after the cooldown already expired.
+        # Gate each publish on the bus's recorded strike state instead.
+        await _wait_until(lambda: bus._listener_fails.get(id(slow), 0) == 1)
         bus.publish("b", "p")
-        await asyncio.sleep(0.15)  # second timeout -> disabled
+        await _wait_until(lambda: bus._disabled_until.get(id(slow), 0.0) > 0)
         bus.publish("c", "p")
-        await asyncio.sleep(0.15)
+        await _wait_until(lambda: "c" in fast_calls)
         assert "c" in fast_calls  # healthy listener keeps receiving
         assert "c" not in slow_calls  # slow listener is paused
     finally:

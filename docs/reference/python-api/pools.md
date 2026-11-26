@@ -19,7 +19,7 @@ report = await pool.import_resources(
 | `source` | `"manual"` | 写入 `meta["source"]`，用于批次与报表 |
 | `operator` | `"system"` | 审计操作者 |
 | `fail_fast` | `False` | 第一条生成错误后停止；默认收集到 `errors` 继续 |
-| `import_validate` | 池配置（默认 `batch`） | `none` / `on_import` / `batch`，见[导入与验活](../../guides/import-and-validate.md) |
+| `import_validate` | 池配置（默认 `auto`） | `auto` / `none` / `on_import` / `batch`，见[导入与验活](../../guides/import-and-validate.md) |
 | `batch_id` | 自动生成 | 批次标识；同时写入每个资源的 `meta["batch_id"]` |
 
 `dict` 记录中与 payload 字段并列的保留键会被拆出并应用到调度字段：`max_slots`、`usage_quota`、`quota_limit`、`expires_at`、`next_available_at`、`mutex_group`、`schedule_window`、`priority`、`preference`、`source`。`priority` 用于 `static_priority` 分配器，`preference` 用于偏好加分。未显式给 `max_slots` 时使用池配置值；`expires_in`、`usage_quota`、`quota_limit` 等池默认值只在记录未提供时补齐。
@@ -40,7 +40,7 @@ report = await pool.import_resources(
 | `validation` | `on_import` 模式下逐条结果：`id` / `alive` / `latency_ms` / `error` / `action` |
 | `total` | 属性，`imported + updated + skipped + len(errors)` |
 
-`batch` 模式的验活结果不在 `validation` 中，需按 `batch_id` 查询验活任务。
+显式 `batch`（以及默认 `auto` 下超过 10 条自动转后台）的验活结果不在 `validation` 中，需按 `batch_id` 查询验活任务。
 
 ```python
 report = await pool.generate(specs, source="builtin", operator="system")
@@ -78,16 +78,18 @@ async for resource in pool.iter_resources(states=None, tags=None, search=None, b
 
 `PoolStats` 字段：`name` / `kind` / `profile` / `total` / `counts` / `allocatable` / `active_leases` / `waiting` / `avg_health` / `config`。`profile` 只记录创建时选择的具名预设；实际生效值始终以 `config` 为准。`avg_health` 只统计有验活样本的资源，不受分页上限影响；没有样本时为 `None`。
 
-## 运维动作
+## `pool.admin` 管理操作
+
+18 个低频管理操作位于 `pool.admin` 命名空间，方法名不变：`apply_defaults`、`validate_now`、`validate_check`、`ban`、`unban`、`suspend`、`resume`、`top_up`、`drain`、`cancel_drain`、`restore_resource`、`admin_set_state`、`force_revoke`、`update_resource`、`switch_resource`、`move_resource`、`recall_batch`、`run_maintenance`。`SyncPool.admin` 同样提供全部 18 项；`ThreadPool.admin` / `RemotePool.admin` 是轻量镜像，目前只覆盖 `ban` / `unban`（跨进程的其余管理操作可经 `client.pool_call` 路由，见 [LocalScheduler](local-scheduler.md)）；`acquire` / `import_resources` 等数据面方法仍在池顶层。
 
 ```python
-await pool.ban(rid, reason="credential leak")
-await pool.unban(rid, reason="rotated", revalidate=True)
-await pool.suspend(rid, reason="vendor maintenance")
-await pool.resume(rid, reason="back", revalidate=False)
-await pool.top_up(rid, amount=100, reason="paid")
-await pool.drain(rid, reason="retire")
-await pool.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="manual")
+await pool.admin.ban(rid, reason="credential leak")
+await pool.admin.unban(rid, reason="rotated", revalidate=True)
+await pool.admin.suspend(rid, reason="vendor maintenance")
+await pool.admin.resume(rid, reason="back", revalidate=False)
+await pool.admin.top_up(rid, amount=100, reason="paid")
+await pool.admin.drain(rid, reason="retire")
+await pool.admin.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="manual")
 ```
 
 | 方法 | 前置状态 / 约束 | 效果 |
@@ -99,16 +101,16 @@ await pool.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="manual")
 | `top_up` | 资源必须有 `quota` 或 `usage_quota` | `amount` 必须 `> 0`；`QUOTA_EXHAUSTED` 回 `IDLE`，`usage_quota` 同步减少 `used_count` |
 | `drain` | 已 `DRAINING` 时幂等 | 置 `DRAINING`，不再签发新租约；最后一个租约归还后归档 |
 | `cancel_drain` | 必须 `DRAINING` | 经状态机 `UNDRAIN` 回到 `IDLE` / `ACTIVE` |
-| `restore` | 必须 `ARCHIVED` | 置 `VALIDATING` 并立即验活 |
+| `restore_resource` | 必须 `ARCHIVED` | 置 `VALIDATING` 并立即验活 |
 | `admin_set_state` | 目标 ∈ `IDLE` / `SUSPENDED` / `QUOTA_EXHAUSTED` / `VALIDATING` / `ARCHIVED`，且资源不忙 | 按状态机允许的迁移强制置状态；非法迁移抛 `InvalidTransition` / `BadState` |
 | `run_maintenance(name)` | `name` 见下 | 立即执行一次维护扫描，返回 `{任务名: 处理数}` |
 
-`top_up`、`drain`、`cancel_drain`、`restore`、`admin_set_state` 都会唤醒等待队列，让刚恢复可用的槽位被立即分配。
+`admin.top_up`、`admin.drain`、`admin.cancel_drain`、`admin.restore_resource`、`admin.admin_set_state` 都会唤醒等待队列，让刚恢复可用的槽位被立即分配。
 
 ### 修改资源
 
 ```python
-updated = await pool.update_resource(
+updated = await pool.admin.update_resource(
     rid,
     payload={"host": "10.0.0.2"},      # 整体替换 payload
     tags=frozenset({"us"}),           # 整体替换标签
@@ -129,12 +131,12 @@ updated = await pool.update_resource(
 - `payload` / `tags` / `max_slots` 是整体替换；未传则保持。
 - `usage_quota` / `quota_limit` / `expires_at` / `next_available_at` / `mutex_group` / `schedule_window` / `priority` / `preference` 支持“省略保持、传 `None` 清空”。
 - `schedule_window` 必须是两个 `HH:MM` 字符串，支持跨夜窗口。
-- 迁移资源用 `move_resource(rid, target_pool, reason=...)`：资源必须空闲、目标池 kind 相同、目标池不能已有同 id。
+- 迁移资源用 `pool.admin.move_resource(rid, target_pool, reason=...)`：资源必须空闲、目标池 kind 相同、目标池不能已有同 id。轮换端点用 `pool.admin.switch_resource(rid, reason=...)`。
 
 ### 批次召回
 
 ```python
-result = await pool.recall_batch(batch_id, action="retire", reason="vendor batch bad")
+result = await pool.admin.recall_batch(batch_id, action="retire", reason="vendor batch bad")
 ```
 
 `action` 取 `requalify`（逐条 `validate_now`）、`isolate`（按验活失败路径隔离）、`retire`（逐条 `drain`）。返回 `{"action", "batch_id", "processed", "errors"}`。
@@ -151,20 +153,21 @@ result = await pool.recall_batch(batch_id, action="retire", reason="vendor batch
 | `archive_gc` | 归档超过 `archive_retention` 的资源安全擦除 payload 后删除 |
 | `expire_gc` | 过期超过 `expired_retention` 的 `SUSPENDED` 资源归档；需 `expired_retention` 非空才启用，默认关闭 |
 
-`maintenance_enabled=True` 时这些扫描由后台周期任务自动执行；`run_maintenance()` 用于手动触发或测试。
+`maintenance_enabled=True` 时这些扫描由后台周期任务自动执行；`admin.run_maintenance()` 用于手动触发或测试。
 
 ## 验活
 
 ```python
-verdict = await pool.validate_now(rid, operator="alice")
+verdict = await pool.admin.validate_now(rid, operator="alice")
+check = await pool.admin.validate_check(rid, "check_expiry")   # 按名运行单个检查项
 
 jobs = pool.validate_jobs()
 job = pool.validate_job(job_id)
 cancelled = pool.cancel_validate_job(job_id)
 ```
 
-- `validate_now()` 对 `NEW` / `IDLE` 先进入 `VALIDATING` 再执行适配器校验；`ACTIVE` 原地校验，不改变状态。`BANNED`、`DRAINING`、`ARCHIVED`、`SUSPENDED`、`QUOTA_EXHAUSTED` 拒绝。
-- `import_validate="batch"` 创建的后台任务以 `batch_id` 为 job id；任务状态为 `running` / `cancelling` / `completed` / `cancelled`。
+- `admin.validate_now()` 对 `NEW` / `IDLE` 先进入 `VALIDATING` 再执行适配器校验；`ACTIVE` 原地校验，不改变状态。`BANNED`、`DRAINING`、`ARCHIVED`、`SUSPENDED`、`QUOTA_EXHAUSTED` 拒绝。
+- 显式 `import_validate="batch"`（或默认 `auto` 超过 10 条时自动转后台）创建的任务以 `batch_id` 为 job id；任务状态为 `running` / `cancelling` / `completed` / `cancelled`。
 - `validate_jobs()` 按创建时间倒序返回；`validate_job()` 不存在时返回 `None`。
 - `cancel_validate_job()` 停止未开始的条目，在途探测允许完成；未知 job 返回 `None`，已结束 job 返回 `cancelled=False`。
 - `ValidateJobView` 字段：`id` / `pool` / `status` / `total` / `done` / `alive` / `failed` / `skipped` / `errors` / `created_at` / `updated_at` / `operator` / `pending`；取消视图额外带 `cancelled`。

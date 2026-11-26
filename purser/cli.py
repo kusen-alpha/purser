@@ -260,9 +260,10 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("file", nargs="?")
     p.add_argument(
         "--import-validate",
-        default="batch",
-        choices=("none", "on_import", "batch"),
-        help="导入后验活策略；batch 交给后台任务（默认），none 保持 NEW 直到手动验活",
+        default=None,
+        choices=("auto", "none", "on_import", "batch"),
+        help="导入验活策略；auto（默认）≤10 条同步验活、更多走后台任务，"
+        "none 保持 NEW 直到手动验活",
     )
     p.add_argument(
         "--idempotency-key",

@@ -101,9 +101,9 @@ async def test_admin_methods_default_operator_but_require_reason(purser, make_po
     pool = make_pool()
     [rid] = await seed(pool, n=1)
 
-    await pool.suspend(rid, reason="maintenance")
-    await pool.resume(rid)
-    await pool.drain(rid, reason="retired")
+    await pool.admin.suspend(rid, reason="maintenance")
+    await pool.admin.resume(rid)
+    await pool.admin.drain(rid, reason="retired")
 
     operators = {entry.action: entry.operator for entry in purser.audit.entries()}
     assert operators["suspend"] == "system"
@@ -111,7 +111,7 @@ async def test_admin_methods_default_operator_but_require_reason(purser, make_po
     assert operators["drain"] == "system"
 
     with pytest.raises(TypeError):
-        await pool.ban(rid)
+        await pool.admin.ban(rid)
 
 
 async def test_leases_query_lists_active_leases(make_pool):
@@ -292,7 +292,7 @@ async def test_usage_quota_metering(make_pool):
     assert res.state is ResourceState.QUOTA_EXHAUSTED and res.used_count == 2
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(timeout=0))
-    await pool.top_up(rid, operator="ops", amount=2)
+    await pool.admin.top_up(rid, operator="ops", amount=2)
     res = await pool.get(rid)
     assert res.state is ResourceState.IDLE and res.used_count == 0
     lease = await pool.acquire()
@@ -302,11 +302,11 @@ async def test_usage_quota_metering(make_pool):
 async def test_ban_unban_cycle(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.ban(rid, operator="ops", reason="bad behaviour")
+    await pool.admin.ban(rid, operator="ops", reason="bad behaviour")
     assert (await pool.get(rid)).state is ResourceState.BANNED
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(timeout=0))
-    await pool.unban(rid, operator="ops", reason="reviewed")
+    await pool.admin.unban(rid, operator="ops", reason="reviewed")
     assert (await pool.get(rid)).state is ResourceState.IDLE
     lease = await pool.acquire()
     assert lease.resource_id == rid
@@ -315,11 +315,11 @@ async def test_ban_unban_cycle(make_pool):
 async def test_suspend_resume(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.suspend(rid, operator="ops", reason="maintenance")
+    await pool.admin.suspend(rid, operator="ops", reason="maintenance")
     assert (await pool.get(rid)).state is ResourceState.SUSPENDED
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(timeout=0))
-    await pool.resume(rid, operator="ops")
+    await pool.admin.resume(rid, operator="ops")
     assert (await pool.get(rid)).state is ResourceState.IDLE
 
 
@@ -327,13 +327,13 @@ async def test_drain_archives_after_release(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire()
-    await pool.drain(rid, operator="ops", reason="retiring")
+    await pool.admin.drain(rid, operator="ops", reason="retiring")
     await pool.release(lease)
     res = await pool.get(rid)
     assert res.state is ResourceState.ARCHIVED
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(timeout=0))
-    await pool.restore_resource(rid, operator="ops")
+    await pool.admin.restore_resource(rid, operator="ops")
     assert (await pool.get(rid)).state is ResourceState.IDLE
 
 
@@ -341,7 +341,7 @@ async def test_force_revoke(make_pool):
     pool = make_pool()
     await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="victim"))
-    revoked = await pool.force_revoke(
+    revoked = await pool.admin.force_revoke(
         lease.resource_id, operator="admin", reason="emergency"
     )
     assert revoked.token == lease.token
@@ -381,7 +381,25 @@ async def test_import_on_import_records_validation(make_pool):
     assert report.to_dict()["validation"] == report.validation
 
     plain = await pool.import_resources([{"id": "v-3", "host": "127.0.0.1", "port": 3}])
-    assert plain.validation == []
+    # import_validate="auto" (default) validates a small import inline.
+    assert {entry["id"] for entry in plain.validation} == {"v-3"}
+
+
+async def test_import_auto_default_switches_to_background_by_batch_size(make_pool):
+    pool = make_pool()
+    small = await pool.import_resources(
+        [{"id": f"s-{i}", "host": "127.0.0.1", "port": 1} for i in range(10)]
+    )
+    assert len(small.validation) == 10
+
+    large = await pool.import_resources(
+        [{"id": f"l-{i}", "host": "127.0.0.1", "port": 1} for i in range(11)]
+    )
+    assert large.validation == []
+    assert any(
+        job["id"] == large.batch_id and job["total"] == 11
+        for job in pool.validate_jobs()
+    )
 
 
 async def test_quarantine_gc_releases_after_cooloff(make_pool):
@@ -399,7 +417,7 @@ async def test_quarantine_gc_releases_after_cooloff(make_pool):
         expect_state=res.state,
         patch=ResourcePatch(meta_patch={**res.meta, "quarantine_until": time.time() - 1}),
     )
-    await pool.run_maintenance("quarantine_gc")
+    await pool.admin.run_maintenance("quarantine_gc")
     assert (await pool.get(rid)).state is ResourceState.IDLE
 
 
@@ -409,7 +427,7 @@ async def test_periodic_unban_and_quota_reset(make_pool):
     for _ in range(3):
         await pool._on_validation_fail(rid, "bad", operator="system")
     assert (await pool.get(rid)).state is ResourceState.BANNED
-    await pool.run_maintenance("periodic_unban")
+    await pool.admin.run_maintenance("periodic_unban")
     assert (await pool.get(rid)).state is ResourceState.IDLE
 
     qpool = make_pool("q", usage_quota=1)
@@ -417,7 +435,7 @@ async def test_periodic_unban_and_quota_reset(make_pool):
     lease = await qpool.acquire()
     await qpool.release(lease, used=1)
     assert (await qpool.get(rid2)).state is ResourceState.QUOTA_EXHAUSTED
-    await qpool.run_maintenance("quota_reset")
+    await qpool.admin.run_maintenance("quota_reset")
     assert (await qpool.get(rid2)).state is ResourceState.IDLE
 
 
@@ -435,7 +453,7 @@ async def test_validating_gc_times_out(make_pool):
             meta_patch={**res.meta, "validate_started_at": time.time() - 60},
         ),
     )
-    await pool.run_maintenance("validating_gc")
+    await pool.admin.run_maintenance("validating_gc")
     assert (await pool.get(rid)).state is ResourceState.QUARANTINED
 
 
@@ -455,7 +473,7 @@ async def test_events_are_delivered(make_pool, purser):
 
 async def test_audit_hash_chain(make_pool, purser):
     pool = make_pool()
-    await pool.ban((await seed(pool, n=1))[0], operator="alice", reason="x")
+    await pool.admin.ban((await seed(pool, n=1))[0], operator="alice", reason="x")
     entries = purser.audit.entries()
     assert len(entries) >= 2  # create_pool + ban
     assert purser.audit.verify()
@@ -937,7 +955,7 @@ async def test_update_resource_payload_updates_typed_fields(purser):
     await pool.import_resources(
         [{"id": "pu-1", "host": "1.1.1.1", "port": 8080, "note": "old"}]
     )
-    updated = await pool.update_resource(
+    updated = await pool.admin.update_resource(
         "pu-1",
         payload={"host": "2.2.2.2", "port": 3128, "note": "new"},
         operator="tester",

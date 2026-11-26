@@ -219,7 +219,7 @@ def test_force_revoke_release_races_leave_no_ghost(tmp_path):
             ) -> None:
                 barrier.wait(timeout=5)
                 try:
-                    pool.force_revoke(rid, operator="ops", reason="race")
+                    pool.admin.force_revoke(rid, operator="ops", reason="race")
                     outcomes["revoke"] = "ok"
                 except (LeaseConflict, BadState):
                     outcomes["revoke"] = "lost"

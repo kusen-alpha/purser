@@ -362,32 +362,32 @@ def test_admin_methods_forward(sync_ps):
     pool = sync_ps.create_pool("p", "fakecheck")
     seed(pool, 3)
 
-    pool.ban("r0", reason="risk")
+    pool.admin.ban("r0", reason="risk")
     assert pool.require("r0").state is ResourceState.BANNED
-    pool.unban("r0", reason="safe", revalidate=False)
+    pool.admin.unban("r0", reason="safe", revalidate=False)
     assert pool.require("r0").state is ResourceState.VALIDATING
-    assert pool.validate_now("r0").alive is True
+    assert pool.admin.validate_now("r0").alive is True
     assert pool.require("r0").state is ResourceState.IDLE
 
-    pool.suspend("r1", reason="hold")
+    pool.admin.suspend("r1", reason="hold")
     assert pool.require("r1").state is ResourceState.SUSPENDED
-    pool.resume("r1", reason="back")
+    pool.admin.resume("r1", reason="back")
     assert pool.require("r1").state is ResourceState.IDLE
 
-    updated = pool.update_resource("r1", tags={"eu"}, reason="retag")
+    updated = pool.admin.update_resource("r1", tags={"eu"}, reason="retag")
     assert updated.tags == frozenset({"eu"})
 
     other = sync_ps.create_pool("q", "fakecheck")
-    moved = pool.move_resource("r1", other, reason="rebalance")
+    moved = pool.admin.move_resource("r1", other, reason="rebalance")
     assert moved.id == "r1" and other.require("r1").id == "r1"
     assert pool.get("r1") is None
 
     lease = other.acquire(consumer="c")
-    revoked = other.force_revoke(lease.resource_id, reason="kick")
+    revoked = other.admin.force_revoke(lease.resource_id, reason="kick")
     assert revoked.token == lease.token
     assert other.leases() == []
 
-    counts = other.run_maintenance("quota_reset")
+    counts = other.admin.run_maintenance("quota_reset")
     assert isinstance(counts, dict)
 
     jobs = pool.validate_jobs()

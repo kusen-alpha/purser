@@ -44,12 +44,14 @@ ps = SyncPurser(
     storage="sqlite",
     sqlite_path="purser.db",
 )
-ps.start()                  # 幂等
+ps.start()                  # 可选：提前启动（幂等）
 ...
 ps.close()                  # 幂等；关闭后调用其他方法抛 RuntimeError
 ```
 
 构造参数中除 `startup_timeout` / `close_timeout` / `callback_workers` 外，其余原样传给 `Purser`。
+
+与异步内核一致，`pool.acquire()` / `pool.lease()` / `pool.acquire_many()` 首次调用会自动启动运行时（也会自动启动 Purser），`ps.start()` 是可选的提前启动；`close()` 之后再调用会抛 `RuntimeError`（不支持重启）。
 
 ## API 映射
 
@@ -63,6 +65,7 @@ ps.close()                  # 幂等；关闭后调用其他方法抛 RuntimeErr
 | `await pool.acquire_many(n, ...)` | `pool.acquire_many(n, ...)` → `SyncBatchLease` |
 | `await pool.release(lease, ...)` | `pool.release(lease, ...)` |
 | `await pool.release_consumer(...)` | `pool.release_consumer(...)` |
+| `await pool.admin.ban(...)` 等管理操作 | `pool.admin.ban(...)` 等管理操作（`SyncPool.admin` 镜像 `ResourcePool.admin`，方法名不变） |
 | `await pool.renew(lease)` | `pool.renew(lease)` → 新的 `expires_at` |
 | `pool.iter_resources(...)` | `pool.iter_resources(...)` → `SyncResourceIterator` |
 | `ps.bus.subscribe(listener)` | `ps.subscribe(callback)` → `SyncSubscription` |

@@ -131,7 +131,7 @@ async def test_manual_check_runs_only_that_check_and_skips_state(purser):
     )
     checker.calls.clear()
 
-    report = await pool.validate_check("r1", "check_expiry")
+    report = await pool.admin.validate_check("r1", "check_expiry")
     assert report.alive and report.latency_ms == 3.0
     assert checker.calls == ["expiry"]
 
@@ -149,7 +149,7 @@ async def test_unknown_validator_raises(purser):
     )
 
     with pytest.raises(ConfigError):
-        await pool.validate_check("r1", "nope")
+        await pool.admin.validate_check("r1", "nope")
 
 
 def test_ui_lists_and_runs_validators():

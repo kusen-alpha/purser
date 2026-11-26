@@ -16,7 +16,7 @@ from purser.core.state import ResourceState
 from purser.errors import NotStarted, PoolExhausted
 
 
-async def test_runtime_ops_require_start_management_ops_do_not():
+async def test_runtime_ops_auto_start_management_ops_do_not():
     ps = Purser(maintenance_enabled=False)
     ps.register_adapter(FakeChecker())
     pool = ps.create_pool("proxies", "fakecheck")
@@ -31,20 +31,18 @@ async def test_runtime_ops_require_start_management_ops_do_not():
         assert await pool.get("p1") is not None
         assert len(await pool.query()) == 1
 
-        with pytest.raises(NotStarted) as acquire_err:
-            await pool.acquire(AcquireRequest(consumer="c"))
-        assert "await ps.start()" in str(acquire_err.value)
-        with pytest.raises(NotStarted):
-            await pool.acquire_many(1)
-        with pytest.raises(NotStarted):
-            async with pool.lease(AcquireRequest(consumer="c")):
-                pass
-
-        await ps.start()
-        assert ps.started is True and pool.started is True
+        # First runtime use auto-starts the Purser; no explicit start() needed.
         lease = await pool.acquire(AcquireRequest(consumer="c"))
         assert lease.resource_id == "p1"
         await pool.release(lease)
+        assert ps.started is True and pool.started is True
+
+        async with pool.lease(AcquireRequest(consumer="c")) as lease:
+            assert lease.resource_id == "p1"
+
+        batch = await pool.acquire_many(1)
+        assert len(batch) == 1
+        await batch.release_all(pool)
     finally:
         await ps.close()
 
@@ -119,8 +117,8 @@ async def test_concurrent_duplicate_maintenance_safe(make_pool):
         patch=ResourcePatch(meta_patch={"quarantine_until": time.time() - 1.0}),
     )
     results = await asyncio.gather(
-        pool.run_maintenance("quarantine_gc"),
-        pool.run_maintenance("quarantine_gc"),
+        pool.admin.run_maintenance("quarantine_gc"),
+        pool.admin.run_maintenance("quarantine_gc"),
     )
     # Concurrent duplicate sweeps are idempotent: at least one moved it and no
     # double-transition corrupts the resource (a second run re-applies IDLE).

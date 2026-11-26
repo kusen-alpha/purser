@@ -212,10 +212,10 @@ async def test_connect_exposes_an_async_pool_facade():
             stats = await pool.stats()
             assert isinstance(stats, dict)
 
-            await pool.ban("r1", reason="contract")
+            await pool.admin.ban("r1", reason="contract")
             banned = await pool.stats()
             assert banned["counts"]["banned"] == 1
-            await pool.unban("r1")
+            await pool.admin.unban("r1")
             unbanned = await pool.stats()
             assert unbanned["counts"].get("banned", 0) == 0
         finally:

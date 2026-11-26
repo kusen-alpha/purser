@@ -16,27 +16,27 @@ flowchart LR
     F --> G
 ```
 
-## 启动前提
+## 运行时启动
 
-`acquire()` / `lease()` / `acquire_many()` 要求运行时已启动：
+`acquire()` / `lease()` / `acquire_many()` 首次调用会自动启动运行时（也会自动启动 Purser），不再要求先 `await ps.start()`。`async with Purser() as ps:` 仍推荐使用——它负责提前启动并确保退出时清理：
 
 ```python
-async with Purser() as ps:      # start() + close()
+async with Purser() as ps:      # 可选：提前启动 + 退出时 close()
     ...
 ```
 
-或在导入之后显式启动：
+如需先离线导入再使用，也可以显式启动：
 
 ```python
 ps = Purser()
 pool = ps.create_pool("proxies", "proxy")
 await pool.import_resources(records, import_validate="on_import")
-await ps.start()
+await ps.start()                # 可选：提前启动（幂等）
 ...
 await ps.close()
 ```
 
-未启动时调用会抛 `NotStarted`，消息里带修复提示。导入、查询、状态变更等管理面操作在 `start()` 之前仍可用。
+`ps.close()` 之后再调用运行时操作会抛 `NotStarted`（已关闭，不支持重启），消息里带修复提示。导入、查询、状态变更等管理面操作无需启动即可用。
 
 ## 推荐路径：上下文管理器
 
@@ -118,15 +118,15 @@ lease = await pool.acquire(AcquireRequest(resource_id="r42", timeout=5))
 
 ```python
 # 不带 token：只撤销该资源的任意一条租约（并发资源可能仍有其它租约）
-await pool.force_revoke("r42", operator="alice", reason="credential leak")
+await pool.admin.force_revoke("r42", operator="alice", reason="credential leak")
 
 # 带 token：精确撤销指定租约
-await pool.force_revoke("r42", operator="alice", reason="single lease", token="l_...")
+await pool.admin.force_revoke("r42", operator="alice", reason="single lease", token="l_...")
 
 # 需要撤销该资源的全部租约时，由调用方遍历当前租约，并容忍并发归还
 for lease in list(await pool.leases("r42")):
     try:
-        await pool.force_revoke(
+        await pool.admin.force_revoke(
             "r42", operator="alice", reason="credential leak", token=lease.token
         )
     except LeaseConflict:
@@ -142,7 +142,7 @@ for lease in list(await pool.leases("r42")):
 
 | 异常 | 场景 |
 | --- | --- |
-| `NotStarted` | 池未启动 |
+| `NotStarted` | 运行时已 `close()`，不支持重启 |
 | `PoolEmpty` | 池内没有资源，立即失败 |
 | `PoolExhausted` | 等待超时；资源停在 `NEW` 且无验活任务时也会立即抛出（`VALIDATING` 期间会等待） |
 | `ResourceBusy` | 定向获取超时 |

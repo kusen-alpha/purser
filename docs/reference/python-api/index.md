@@ -33,7 +33,7 @@ from purser import (
 | 对象 | 页面 | 职责 |
 | --- | --- | --- |
 | `Purser` | [Purser](purser.md) | 生命周期、池注册表、适配器注册、用量报表、备份恢复、事件/审计/指标 |
-| `ResourcePool` | [ResourcePool](pools.md) | 导入、查询、遍历、统计、运维动作、验活任务、维护扫描 |
+| `ResourcePool` | [ResourcePool](pools.md) | 导入、查询、遍历、统计等数据面方法，以及 `pool.admin` 管理操作、验活任务、维护扫描 |
 | `AcquireRequest` / `Lease` / `BatchLease` | [AcquireRequest / Lease / BatchLease](acquisition.md) | 获取参数、租约字段、续约、归还、批量与强制撤销 |
 | `Resource` / `ResourceAdapter` / `PayloadField` | [Resource / ResourceAdapter](resources.md) | 资源字段、类型化 payload、插件钩子与注册 |
 | `StorageBackend` / `Coordination` | [StorageBackend / Coordination](backends.md) | 两个数据平面的契约、内置实现与对账语义 |
@@ -66,11 +66,12 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`pool.lease()` 在退出时一定归还；`async with Purser()` 在退出时关闭池、事件总线与审计。未调用 `Purser.start()` 时，`acquire()` / `lease()` / `acquire_many()` 抛 `NotStarted`，而导入、查询与状态变更仍可用于离线预装数据。
+`pool.lease()` 在退出时一定归还；`async with Purser()` 在退出时关闭池、事件总线与审计。首次 `acquire()` / `lease()` / `acquire_many()` 会自动启动运行时，`Purser.start()` 是可选的提前启动；`close()` 之后再调用运行时操作会抛 `NotStarted`（不支持重启），而导入、查询与状态变更始终可用于离线预装数据。
 
 ## 通用约定
 
-- **操作者与原因**：嵌入式管理方法的 `operator` 默认 `"system"`；`ban`、`suspend`、`drain`、`admin_set_state`、`force_revoke`、`update_resource`、`move_resource`、`recall_batch` 的 `reason` 必填。REST 层的 `operator` 来自 `X-Operator` 头（缺省 `api`）。
+- **操作者与原因**：嵌入式管理方法的 `operator` 默认 `"system"`；`pool.admin` 的 `ban`、`suspend`、`drain`、`admin_set_state`、`force_revoke`、`update_resource`、`move_resource`、`recall_batch` 的 `reason` 必填。REST 层的 `operator` 来自 `X-Operator` 头（缺省 `api`）。
+- **管理操作命名空间**：18 个低频管理操作（`apply_defaults`、`ban`、`drain`、`validate_now`、`force_revoke`、`run_maintenance` 等）位于 `pool.admin`，方法名不变；数据面方法（`acquire`、`release`、`import_resources`、`stats` 等）仍在池顶层。`SyncPool` / `ThreadPool` / `RemotePool` 同样提供 `.admin`。
 - **返回值视图**：`stats()`、`report_usage()`、`validate_job*()` 返回 `TypedDict` 视图（运行时是普通 `dict`，可直接 JSON 序列化）；资源对象返回类型化 `Resource` 子类。
 - **状态与异常**：状态取值见[状态机](../state-machine.md)，异常清单与 REST 状态码映射见[错误处理](../errors.md)。
 - **数据平面**：池的 `storage` / `coordination` 是两个独立平面；丢失语义与多实例风险见[数据平面与丢失语义](../../design/data-planes.md)。
@@ -82,7 +83,7 @@ asyncio.run(main())
 | 页面 | 内容 |
 | --- | --- |
 | [Purser](purser.md) | 构造参数、启动/关闭、池管理、报表、备份恢复、运行时属性 |
-| [ResourcePool](pools.md) | 导入与去重、查询与遍历、运维动作、验活任务、维护扫描 |
+| [ResourcePool](pools.md) | 导入与去重、查询与遍历、`pool.admin` 管理操作、验活任务、维护扫描 |
 | [AcquireRequest / Lease / BatchLease](acquisition.md) | 请求字段、获取失败矩阵、租约与批量、强制撤销 |
 | [Resource / ResourceAdapter](resources.md) | `Resource` 字段与属性、`PayloadField`、`ResourceAdapter` 钩子 |
 | [StorageBackend / Coordination](backends.md) | 后端选择、两个 ABC 契约、对账 |

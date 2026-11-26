@@ -60,20 +60,20 @@ async def test_top_up_rejects_nonpositive(make_pool):
     pool = make_pool(usage_quota=1)
     [rid] = await seed(pool, n=1)
     with pytest.raises(ConfigError):
-        await pool.top_up(rid, operator="ops", amount=0)
+        await pool.admin.top_up(rid, operator="ops", amount=0)
     with pytest.raises(ConfigError):
-        await pool.top_up(rid, operator="ops", amount=-1)
-    await pool.top_up(rid, operator="ops")  # full reset
+        await pool.admin.top_up(rid, operator="ops", amount=-1)
+    await pool.admin.top_up(rid, operator="ops")  # full reset
 
 
 async def test_update_resource_rejects_bad_max_slots(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     with pytest.raises(ConfigError):
-        await pool.update_resource(rid, operator="ops", reason="x", max_slots=0)
+        await pool.admin.update_resource(rid, operator="ops", reason="x", max_slots=0)
     with pytest.raises(ConfigError):
-        await pool.update_resource(rid, operator="ops", reason="x", max_slots=-1)
-    updated = await pool.update_resource(rid, operator="ops", reason="x", max_slots=2)
+        await pool.admin.update_resource(rid, operator="ops", reason="x", max_slots=-1)
+    updated = await pool.admin.update_resource(rid, operator="ops", reason="x", max_slots=2)
     assert updated.concurrency.max_slots == 2
 
 
@@ -87,8 +87,8 @@ async def test_empty_import_report(make_pool):
 async def test_drain_idempotent(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.drain(rid, operator="ops", reason="once")
-    await pool.drain(rid, operator="ops", reason="twice")  # no-op, no error
+    await pool.admin.drain(rid, operator="ops", reason="once")
+    await pool.admin.drain(rid, operator="ops", reason="twice")  # no-op, no error
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.DRAINING
 
@@ -97,11 +97,11 @@ async def test_restore_archived_requalifies(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    await pool.drain(rid, operator="ops", reason="retire")
+    await pool.admin.drain(rid, operator="ops", reason="retire")
     await pool.release(lease)
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.ARCHIVED
-    await pool.restore_resource(rid, operator="ops", reason="back")
+    await pool.admin.restore_resource(rid, operator="ops", reason="back")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
 

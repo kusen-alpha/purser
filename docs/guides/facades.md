@@ -2,6 +2,8 @@
 
 purser 只有一个内核，但内核可以跑在三种运行时里：当前事件循环、专属线程、专属进程。门面族把三种运行时包装成同一套调用约定，让你按部署形态换一个类，业务代码不用改。
 
+日常只需要两个入口：单进程用 `Purser`，跨进程共享用 `LocalScheduler` + `connect()`；`SyncPurser` / `ThreadPurser` / `ProcessPurser` 是为同步代码、跨线程共享等特殊形态准备的备选项。
+
 ## 为什么没有 `AsyncPurser`
 
 `Purser` 本身就是异步的：它的池数据面全是 `async`，直接在当前事件循环里运行。`EmbeddedPurser` 只是 `Purser` 的别名，用来说明“内核嵌入本进程”，两者行为完全一致。
@@ -19,7 +21,7 @@ purser 只有一个内核，但内核可以跑在三种运行时里：当前事�
 
 - 管理方法（`register_adapter`、`create_pool`、`ensure_pool`、`get_pool`、`get_pool_names`，只读属性 `pools`）是同步调用；
 - `delete_pool()` 是异步的（要关闭池任务与后端连接）：`Purser` / `ThreadPurser` / `ProcessPurser` 用 `await`，`SyncPurser` 为同步调用；
-- 池对象都提供同一套异步数据方法（`acquire` / `release` / `renew` / `stats` / `import_resources` / `generate` / `ban` / `unban`、以及 `lease()` 异步上下文）；
+- 池对象都提供同一套异步数据方法（`acquire` / `release` / `renew` / `stats` / `import_resources` / `generate`、以及 `lease()` 异步上下文）；运维操作统一放在 `pool.admin` 命名空间（`validate_now` / `ban` / `drain` 等 18 项）；
 - `RemotePool` 经 IPC 在调度进程中执行数据面与只读目录方法（`query` / `counts` / `get` / `require` / `count_matching` / `batches` / `leases` / `describe`），并在 `connect()` 时做一次 `stats` 往返以填充 `kind` / `profile`；
 - 内嵌与线程门面的池提供 `start()` / `close()`（`async`，也可 `async with`）；`RemotePool` 的池生命周期归调度进程，客户端只负责关闭连接（`await pool.aclose()`，或 `async with`）。
 
@@ -30,8 +32,7 @@ purser 只有一个内核，但内核可以跑在三种运行时里：当前事�
 | 数据面（`acquire` / `release` / `renew` / `lease`） | 支持 | 支持（阻塞） | 支持（IPC） |
 | 导入（`import_resources` / `generate`） | 支持 | 支持 | 支持（IPC） |
 | 只读目录（`query` / `counts` / `get` / `require` / `count_matching` / `batches` / `leases` / `describe`） | 支持 | 支持 | 支持（IPC） |
-| 基础运维（`ban` / `unban`） | 支持 | 支持 | 支持（IPC） |
-| 其余运维（`suspend` / `drain` / `top_up` / `switch_resource` 等） | 支持 | 支持 | 未暴露 |
+| 运维（`pool.admin`） | `ResourcePool` 18 项；`ThreadPool` 仅 `ban` / `unban` | 18 项 | 仅 `ban` / `unban`（其余经 `pool_call` 路由） |
 | 组合租约（`acquire_many` / bundles） | 支持 | 支持 | 未暴露 |
 | 报告 / 备份 / 事件（`report_usage` / `backup` / `restore_backup` / `events`） | 属 `Purser` 管理层 | 属 `SyncPurser` 管理层 | 未提供 |
 
@@ -111,10 +112,11 @@ ps.register_adapter(AdapterSpec.of(MyAdapter, region="cn"))
 ## 如何选择
 
 ```text
-内核要在本进程内，业务是 async        → Purser
+内核要在本进程内，业务是 async        → Purser（默认选择）
+内核要在别的进程，多个 worker 共享    → LocalScheduler + connect()
 内核要在本进程内，业务是同步代码      → SyncPurser
 内核要在本进程内，但要跨线程给 async 用 → ThreadPurser
-内核要在子进程，多个 worker 共享      → ProcessPurser
+子进程形态但想要 Purser 同款管理面    → ProcessPurser
 ```
 
 pcrawl 是这套约定的一个使用者：`PurserRuntime` 做运行模式选择（inline/async → `EmbeddedPurser`，thread/process → `ProcessPurser`），并把 `purser_runtime` 以统一门面交给 Spiders。多线程模式仍走 `ProcessPurser`，以保证与多进程一致的行为；`ThreadPurser` 目前不接入 pcrawl。

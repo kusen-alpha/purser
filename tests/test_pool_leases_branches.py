@@ -108,7 +108,7 @@ async def test_renew_after_force_revoke_reports_lease_lost(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    await pool.force_revoke(rid, reason="ops")
+    await pool.admin.force_revoke(rid, reason="ops")
 
     with pytest.raises(LeaseLost):
         await pool.renew(lease)
@@ -214,7 +214,7 @@ async def test_release_after_force_revoke_is_accepted(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    await pool.force_revoke(rid, reason="ops")
+    await pool.admin.force_revoke(rid, reason="ops")
 
     assert await pool.release(lease) is True
     assert await _slots(pool, rid) == 0
@@ -336,7 +336,7 @@ async def test_release_consuming_usage_quota_applies_cooldown(make_pool):
 async def test_release_consuming_period_quota_flips_state(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.update_resource(rid, quota_limit=1, reason="test")
+    await pool.admin.update_resource(rid, quota_limit=1, reason="test")
     lease = await pool.acquire(AcquireRequest(consumer="c"))
 
     assert await pool.release(lease, used=1) is True
@@ -447,7 +447,7 @@ async def test_stateless_commit_rejects_unfit_resources(make_pool):
     assert await pool._lease._commit(
         AcquireRequest(resource_id=rid, required_tag="gold"), rid
     ) is None
-    await pool.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="test")
+    await pool.admin.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="test")
     assert await pool._lease._commit(plain, rid) is None
 
 
@@ -774,7 +774,7 @@ async def test_directed_acquire_reports_validating_resource(make_pool):
 async def test_directed_acquire_reports_suspended_state(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="test")
+    await pool.admin.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="test")
 
     with pytest.raises(BadState):
         await pool.acquire(AcquireRequest(resource_id=rid))
@@ -958,7 +958,7 @@ async def test_commit_rejects_mutex_group_conflict(make_pool):
     pool = make_pool()
     rids = await seed(pool, n=2)
     for rid in rids:
-        await pool.update_resource(rid, mutex_group="g", reason="test")
+        await pool.admin.update_resource(rid, mutex_group="g", reason="test")
     held = await pool.acquire(AcquireRequest(consumer="c"))
     other = next(rid for rid in rids if rid != held.resource_id)
 
@@ -1128,7 +1128,7 @@ async def test_skip_reasons_cover_every_blocker(make_pool):
     ) == "contention"
 
     for rid in rids:
-        await pool.update_resource(rid, mutex_group="g", reason="test")
+        await pool.admin.update_resource(rid, mutex_group="g", reason="test")
     held = await pool.acquire(AcquireRequest(consumer="c"))
     other = next(rid for rid in rids if rid != held.resource_id)
     stored = await pool.storage.get(pool.name, other)

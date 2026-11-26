@@ -78,7 +78,7 @@ async def test_concurrent_validate_now_no_stuck(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     reports = await asyncio.gather(
-        pool.validate_now(rid), pool.validate_now(rid)
+        pool.admin.validate_now(rid), pool.admin.validate_now(rid)
     )
     assert all(isinstance(r, HealthReport) and r.alive for r in reports)
     res = await pool.get(rid)
@@ -94,7 +94,7 @@ async def test_top_up_races_acquire(make_pool):
     assert res is not None and res.state is ResourceState.QUOTA_EXHAUSTED
 
     results = await asyncio.gather(
-        pool.top_up(rid, operator="ops", amount=1),
+        pool.admin.top_up(rid, operator="ops", amount=1),
         pool.acquire(AcquireRequest(timeout=0.3)),
         return_exceptions=True,
     )
@@ -136,7 +136,7 @@ async def test_double_force_revoke_race(make_pool):
 
     async def revoke() -> str:
         try:
-            await pool.force_revoke(rid, operator="ops", reason="race")
+            await pool.admin.force_revoke(rid, operator="ops", reason="race")
             return "won"
         except (LeaseConflict, Exception):
             return "lost"
@@ -184,7 +184,7 @@ async def test_restart_lost_archived_by_gc(tmp_path, storage_kind, coordination_
     ps2 = build()
     try:
         pool2 = ps2.create_pool("px", "fakecheck")
-        await pool2.run_maintenance("lost_gc")
+        await pool2.admin.run_maintenance("lost_gc")
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.ARCHIVED
     finally:
@@ -228,7 +228,7 @@ async def test_restart_validating_stale_gced(tmp_path, storage_kind, coordinatio
     ps2 = build()
     try:
         pool2 = ps2.create_pool("px", "fakecheck")
-        await pool2.run_maintenance("validating_gc")
+        await pool2.admin.run_maintenance("validating_gc")
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.QUARANTINED
     finally:

@@ -28,6 +28,7 @@ from purser import (
     SyncPurser,
     UsageOutcome,
 )
+from purser.sync_pool import SyncPoolAdminView
 
 REAL_REDIS_URL = os.environ.get("PURSER_TEST_REDIS_URL")
 MYSQL_URL = os.environ.get("PURSER_TEST_MYSQL_URL")
@@ -76,6 +77,11 @@ POOL_METHODS = {
     "lease",
     "release",
     "release_consumer",
+    "acquire_many",
+    "renew",
+}
+
+ADMIN_METHODS = {
     "validate_now",
     "ban",
     "unban",
@@ -91,8 +97,6 @@ POOL_METHODS = {
     "move_resource",
     "recall_batch",
     "run_maintenance",
-    "acquire_many",
-    "renew",
 }
 
 PURSER_METHODS = {
@@ -172,6 +176,9 @@ def seed(pool: SyncPool, n: int = 2, *, prefix: str = "r") -> list[str]:
 
 def test_public_api_surface():
     assert POOL_METHODS <= {name for name in dir(SyncPool) if not name.startswith("_")}
+    assert ADMIN_METHODS <= {
+        name for name in dir(SyncPoolAdminView) if not name.startswith("_")
+    }
     assert PURSER_METHODS <= {
         name for name in dir(SyncPurser) if not name.startswith("_")
     }
@@ -367,28 +374,28 @@ def test_admin_surface(sync_backend, pool_name):
     pool = ps.create_pool(pool_name("p"), "fakecheck")
     seed(pool, 3)
 
-    pool.ban("r0", reason="risk")
+    pool.admin.ban("r0", reason="risk")
     assert pool.require("r0").state is ResourceState.BANNED
-    pool.unban("r0", reason="safe", revalidate=False)
-    assert pool.validate_now("r0").alive is True
+    pool.admin.unban("r0", reason="safe", revalidate=False)
+    assert pool.admin.validate_now("r0").alive is True
     assert pool.require("r0").state is ResourceState.IDLE
 
-    pool.suspend("r1", reason="hold")
+    pool.admin.suspend("r1", reason="hold")
     assert pool.require("r1").state is ResourceState.SUSPENDED
-    pool.resume("r1", reason="back")
+    pool.admin.resume("r1", reason="back")
     assert pool.require("r1").state is ResourceState.IDLE
 
-    updated = pool.update_resource("r1", tags={"eu"}, reason="retag")
+    updated = pool.admin.update_resource("r1", tags={"eu"}, reason="retag")
     assert updated.tags == frozenset({"eu"})
 
     other = ps.create_pool(pool_name("q"), "fakecheck")
-    pool.move_resource("r1", other, reason="rebalance")
+    pool.admin.move_resource("r1", other, reason="rebalance")
     assert other.require("r1").id == "r1"
 
     lease = other.acquire(consumer="c")
-    revoked = other.force_revoke(lease.resource_id, reason="kick")
+    revoked = other.admin.force_revoke(lease.resource_id, reason="kick")
     assert revoked.token == lease.token
     assert other.leases() == []
 
-    assert isinstance(other.run_maintenance("quota_reset"), dict)
+    assert isinstance(other.admin.run_maintenance("quota_reset"), dict)
     assert isinstance(pool.validate_jobs(), list)

@@ -26,7 +26,7 @@ async def test_archived_import_is_skipped(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    await pool.drain(rid, operator="ops", reason="retire")
+    await pool.admin.drain(rid, operator="ops", reason="retire")
     await pool.release(lease)
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.ARCHIVED

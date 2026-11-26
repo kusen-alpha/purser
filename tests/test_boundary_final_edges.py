@@ -32,8 +32,8 @@ async def test_force_revoke_draining_archives(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     await pool.acquire(AcquireRequest(consumer="victim"))
-    await pool.drain(rid, operator="ops", reason="retiring")
-    await pool.force_revoke(rid, operator="ops", reason="kick-drain")
+    await pool.admin.drain(rid, operator="ops", reason="retiring")
+    await pool.admin.force_revoke(rid, operator="ops", reason="kick-drain")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.ARCHIVED
     assert res.concurrency.used_slots == 0

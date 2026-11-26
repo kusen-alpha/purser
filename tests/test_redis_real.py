@@ -259,7 +259,7 @@ async def test_cross_instance_visibility_revoke_and_stale_release(
                 AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=0.5)
             )
 
-        revoked = await pool_b.force_revoke("r0", operator="test", reason="real redis")
+        revoked = await pool_b.admin.force_revoke("r0", operator="test", reason="real redis")
         assert revoked.token == lease_a.token
         res = await pool_b.get("r0")
         assert res is not None and res.concurrency.used_slots == 0

@@ -34,6 +34,7 @@ class SyncPool:
     def __init__(self, owner: SyncPurser, pool: ResourcePool) -> None:
         self._owner = owner
         self._pool = pool
+        self.admin = SyncPoolAdminView(self)
 
     def __getstate__(self) -> Any:
         raise IsolationConflict(PICKLE_MESSAGE)
@@ -266,30 +267,6 @@ class SyncPool:
             lambda: self._pool.generate(copied, source=source, operator=operator)
         )
 
-    def apply_defaults(
-        self,
-        *,
-        operator: str = "system",
-        reason: str = "apply pool defaults",
-    ) -> dict[str, int]:
-        """Backfill pool defaults onto resources that lack them."""
-
-        return self._snapshot_call(
-            lambda: self._pool.apply_defaults(operator=operator, reason=reason)
-        )
-
-    def validate_now(self, resource_id: str, *, operator: str = "system") -> Any:
-        """Validate one resource immediately and apply the verdict."""
-
-        return self._snapshot_call(
-            lambda: self._pool.validate_now(resource_id, operator=operator)
-        )
-
-    def validate_check(self, resource_id: str, check: str) -> Any:
-        """Run one named check without changing the resource state."""
-
-        return self._snapshot_call(lambda: self._pool.validate_check(resource_id, check))
-
     # -- acquire / release ------------------------------------------------
     def acquire(self, req: Any = None, **kwargs: Any) -> SyncLease:
         """Acquire one lease and return a blocking handle."""
@@ -388,12 +365,48 @@ class SyncPool:
             lambda: self._pool.renew(authoritative, used=used)
         )
 
+
+class SyncPoolAdminView:
+    """Operator namespace mirroring ``ResourcePool.admin`` for sync callers."""
+
+    def __init__(self, sync_pool: SyncPool) -> None:
+        self._sp = sync_pool
+
+    # -- validation --------------------------------------------------------
+
+    def apply_defaults(
+        self,
+        *,
+        operator: str = "system",
+        reason: str = "apply pool defaults",
+    ) -> dict[str, int]:
+        """Backfill pool defaults onto resources that lack them."""
+
+        return self._sp._snapshot_call(
+            lambda: self._sp._pool.admin.apply_defaults(operator=operator, reason=reason)
+        )
+
+    def validate_now(self, resource_id: str, *, operator: str = "system") -> Any:
+        """Validate one resource immediately and apply the verdict."""
+
+        return self._sp._snapshot_call(
+            lambda: self._sp._pool.admin.validate_now(resource_id, operator=operator)
+        )
+
+    def validate_check(self, resource_id: str, check: str) -> Any:
+        """Run one named check without changing the resource state."""
+
+        return self._sp._snapshot_call(
+            lambda: self._sp._pool.admin.validate_check(resource_id, check)
+        )
+
     # -- state / resource management --------------------------------------
+
     def ban(self, resource_id: str, *, reason: str, operator: str = "system") -> None:
         """Ban one resource after a hard failure or operator decision."""
 
-        self._owner._submit(
-            lambda: self._pool.ban(resource_id, reason=reason, operator=operator)
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.ban(resource_id, reason=reason, operator=operator)
         )
 
     def unban(
@@ -406,8 +419,8 @@ class SyncPool:
     ) -> None:
         """Lift a ban; ``revalidate=True`` parks it in VALIDATING first."""
 
-        self._owner._submit(
-            lambda: self._pool.unban(
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.unban(
                 resource_id, operator=operator, reason=reason, revalidate=revalidate
             )
         )
@@ -417,8 +430,8 @@ class SyncPool:
     ) -> None:
         """Temporarily remove a resource from allocation without banning it."""
 
-        self._owner._submit(
-            lambda: self._pool.suspend(resource_id, operator=operator, reason=reason)
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.suspend(resource_id, operator=operator, reason=reason)
         )
 
     def resume(
@@ -431,8 +444,8 @@ class SyncPool:
     ) -> None:
         """Return a suspended resource to allocation (optionally re-validating)."""
 
-        self._owner._submit(
-            lambda: self._pool.resume(
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.resume(
                 resource_id, operator=operator, reason=reason, revalidate=revalidate
             )
         )
@@ -447,8 +460,8 @@ class SyncPool:
     ) -> None:
         """Replenish a quota-exhausted resource and return it to IDLE."""
 
-        self._owner._submit(
-            lambda: self._pool.top_up(
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.top_up(
                 resource_id, operator=operator, amount=amount, reason=reason
             )
         )
@@ -456,8 +469,8 @@ class SyncPool:
     def drain(self, resource_id: str, *, operator: str = "system", reason: str) -> None:
         """Stop new acquires; the resource archives once its leases drain."""
 
-        self._owner._submit(
-            lambda: self._pool.drain(resource_id, operator=operator, reason=reason)
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.drain(resource_id, operator=operator, reason=reason)
         )
 
     def cancel_drain(
@@ -469,8 +482,8 @@ class SyncPool:
     ) -> None:
         """Undo a drain and return the resource to allocation."""
 
-        self._owner._submit(
-            lambda: self._pool.cancel_drain(
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.cancel_drain(
                 resource_id, operator=operator, reason=reason
             )
         )
@@ -480,8 +493,10 @@ class SyncPool:
     ) -> None:
         """Restore an archived resource through VALIDATING."""
 
-        self._owner._submit(
-            lambda: self._pool.restore_resource(resource_id, operator=operator, reason=reason)
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.restore_resource(
+                resource_id, operator=operator, reason=reason
+            )
         )
 
     def admin_set_state(
@@ -494,8 +509,8 @@ class SyncPool:
     ) -> None:
         """Force a state the operator chooses; only safe targets are accepted."""
 
-        self._owner._submit(
-            lambda: self._pool.admin_set_state(
+        self._sp._owner._submit(
+            lambda: self._sp._pool.admin.admin_set_state(
                 resource_id, target=target, operator=operator, reason=reason
             )
         )
@@ -510,8 +525,8 @@ class SyncPool:
     ) -> Lease:
         """Revoke one live lease immediately and return the released snapshot."""
 
-        return self._snapshot_call(
-            lambda: self._pool.force_revoke(
+        return self._sp._snapshot_call(
+            lambda: self._sp._pool.admin.force_revoke(
                 resource_id, operator=operator, reason=reason, token=token
             )
         )
@@ -537,8 +552,8 @@ class SyncPool:
             "reason": reason,
         }
         kwargs.update(copy.deepcopy(optional))
-        return self._snapshot_call(
-            lambda: self._pool.update_resource(resource_id, **kwargs)
+        return self._sp._snapshot_call(
+            lambda: self._sp._pool.admin.update_resource(resource_id, **kwargs)
         )
 
     def switch_resource(
@@ -550,8 +565,10 @@ class SyncPool:
     ) -> Resource | None:
         """Switch an ACTIVE resource to its alternate endpoint/payload."""
 
-        return self._snapshot_call(
-            lambda: self._pool.switch_resource(resource_id, operator=operator, reason=reason)
+        return self._sp._snapshot_call(
+            lambda: self._sp._pool.admin.switch_resource(
+                resource_id, operator=operator, reason=reason
+            )
         )
 
     def move_resource(
@@ -566,10 +583,10 @@ class SyncPool:
 
         if not isinstance(target_pool, SyncPool):
             raise TypeError("target_pool must be a SyncPool")
-        if target_pool._owner is not self._owner:
+        if target_pool._owner is not self._sp._owner:
             raise ValueError("target_pool belongs to a different SyncPurser")
-        return self._snapshot_call(
-            lambda: self._pool.move_resource(
+        return self._sp._snapshot_call(
+            lambda: self._sp._pool.admin.move_resource(
                 resource_id, target_pool._pool, operator=operator, reason=reason
             )
         )
@@ -584,14 +601,15 @@ class SyncPool:
     ) -> dict[str, Any]:
         """Re-quarantine or archive resources from one import batch."""
 
-        return self._snapshot_call(
-            lambda: self._pool.recall_batch(
+        return self._sp._snapshot_call(
+            lambda: self._sp._pool.admin.recall_batch(
                 batch_id, action=action, operator=operator, reason=reason
             )
         )
 
     # -- maintenance ------------------------------------------------------
+
     def run_maintenance(self, name: str) -> dict[str, int]:
         """Run one named maintenance sweep now and return its counters."""
 
-        return self._snapshot_call(lambda: self._pool.run_maintenance(name))
+        return self._sp._snapshot_call(lambda: self._sp._pool.admin.run_maintenance(name))

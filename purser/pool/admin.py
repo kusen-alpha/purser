@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from purser.backends.base import ResourcePatch
+from purser.core.health import HealthReport
 from purser.core.meta import ResourceMeta
 from purser.core.resource import (
     Concurrency,
@@ -737,3 +738,237 @@ class AdminService:
             except Exception as exc:
                 report["errors"].append({"rid": resource.id, "error": str(exc)})
         return report
+
+
+class PoolAdminView:
+    """Operator namespace exposed as ``pool.admin``.
+
+    Lifecycle, repair and maintenance actions live here so the pool's
+    data-plane surface (acquire / lease / release / renew) stays small.
+    """
+
+    def __init__(self, pool: ResourcePool) -> None:
+        self._pool = pool
+
+    # -- validation --------------------------------------------------------
+
+    async def validate_now(
+        self,
+        resource_id: str,
+        *,
+        operator: str = "system",
+    ) -> HealthReport:
+        """Validate one resource immediately and apply the verdict."""
+
+        return await self._pool._validation.validate_now(resource_id, operator=operator)
+
+    async def validate_check(self, resource_id: str, check: str) -> HealthReport:
+        """Run one named check without changing the resource state."""
+
+        return await self._pool._validation.validate_check(resource_id, check)
+
+    async def apply_defaults(
+        self,
+        *,
+        operator: str = "system",
+        reason: str = "apply pool defaults",
+    ) -> dict[str, int]:
+        """Backfill pool defaults onto resources that lack them."""
+
+        return await self._pool._catalog.apply_defaults(operator=operator, reason=reason)
+
+    # -- lifecycle operations ----------------------------------------------
+
+    async def ban(self, resource_id: str, *, reason: str, operator: str = "system") -> None:
+        """Ban one resource after a hard failure or operator decision."""
+
+        await self._pool._admin.ban(resource_id, reason=reason, operator=operator)
+
+    async def unban(
+        self,
+        resource_id: str,
+        *,
+        operator: str = "system",
+        reason: str = "manual unban",
+        revalidate: bool = True,
+    ) -> None:
+        """Lift a ban; ``revalidate=True`` parks it in VALIDATING first."""
+
+        await self._pool._admin.unban(
+            resource_id, operator=operator, reason=reason, revalidate=revalidate
+        )
+
+    async def suspend(
+        self, resource_id: str, *, operator: str = "system", reason: str
+    ) -> None:
+        """Temporarily remove a resource from allocation without banning it."""
+
+        await self._pool._admin.suspend(resource_id, operator=operator, reason=reason)
+
+    async def resume(
+        self,
+        resource_id: str,
+        *,
+        operator: str = "system",
+        reason: str = "manual resume",
+        revalidate: bool = False,
+    ) -> None:
+        """Return a suspended resource to allocation (optionally re-validating)."""
+
+        await self._pool._admin.resume(
+            resource_id, operator=operator, reason=reason, revalidate=revalidate
+        )
+
+    async def top_up(
+        self,
+        resource_id: str,
+        *,
+        operator: str = "system",
+        amount: int | None = None,
+        reason: str = "manual top_up",
+    ) -> None:
+        """Replenish a quota-exhausted resource and return it to IDLE."""
+
+        await self._pool._admin.top_up(resource_id, operator=operator, amount=amount, reason=reason)
+
+    async def drain(
+        self, resource_id: str, *, operator: str = "system", reason: str
+    ) -> None:
+        """Stop new acquires; the resource archives once its leases drain."""
+
+        await self._pool._admin.drain(resource_id, operator=operator, reason=reason)
+
+    async def cancel_drain(
+        self,
+        resource_id: str,
+        *,
+        operator: str = "system",
+        reason: str = "cancel drain",
+    ) -> None:
+        """Undo a drain and return the resource to allocation."""
+
+        await self._pool._admin.cancel_drain(resource_id, operator=operator, reason=reason)
+
+    async def restore_resource(
+        self,
+        resource_id: str,
+        *,
+        operator: str = "system",
+        reason: str = "manual restore",
+    ) -> None:
+        """Restore an archived resource through VALIDATING."""
+
+        await self._pool._admin.restore_resource(resource_id, operator=operator, reason=reason)
+
+    async def admin_set_state(
+        self,
+        resource_id: str,
+        *,
+        target: ResourceState,
+        operator: str = "system",
+        reason: str,
+    ) -> None:
+        """Force a state the operator chooses; only safe targets are accepted."""
+
+        await self._pool._admin.admin_set_state(
+            resource_id, target=target, operator=operator, reason=reason
+        )
+
+    async def force_revoke(
+        self,
+        resource_id: str,
+        *,
+        operator: str = "system",
+        reason: str,
+        token: str | None = None,
+    ) -> Lease:
+        """Revoke one live lease immediately and return the released snapshot."""
+
+        return await self._pool._admin.force_revoke(
+            resource_id, operator=operator, reason=reason, token=token
+        )
+
+    async def update_resource(
+        self,
+        resource_id: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        tags: frozenset[str] | None = None,
+        max_slots: int | None = None,
+        usage_quota: Any = _MISSING,
+        quota_limit: Any = _MISSING,
+        expires_at: Any = _MISSING,
+        next_available_at: Any = _MISSING,
+        mutex_group: Any = _MISSING,
+        schedule_window: Any = _MISSING,
+        priority: Any = _MISSING,
+        preference: Any = _MISSING,
+        operator: str = "system",
+        reason: str,
+    ) -> Resource:
+        """Patch scheduling fields; omitted fields keep their value."""
+
+        return await self._pool._admin.update_resource(
+            resource_id,
+            payload=payload,
+            tags=tags,
+            max_slots=max_slots,
+            usage_quota=usage_quota,
+            quota_limit=quota_limit,
+            expires_at=expires_at,
+            next_available_at=next_available_at,
+            mutex_group=mutex_group,
+            schedule_window=schedule_window,
+            priority=priority,
+            preference=preference,
+            operator=operator,
+            reason=reason,
+        )
+
+    async def switch_resource(
+        self,
+        resource_id: str,
+        *,
+        operator: str = "system",
+        reason: str = "manual switch",
+    ) -> Resource | None:
+        """Switch an ACTIVE resource to its alternate endpoint/payload."""
+
+        return await self._pool._admin.switch_resource(
+            resource_id, operator=operator, reason=reason
+        )
+
+    async def move_resource(
+        self,
+        resource_id: str,
+        target_pool: ResourcePool,
+        *,
+        operator: str = "system",
+        reason: str,
+    ) -> Resource:
+        """Move a resource to another pool owned by the same Purser."""
+
+        return await self._pool._admin.move_resource(
+            resource_id, target_pool, operator=operator, reason=reason
+        )
+
+    async def recall_batch(
+        self,
+        batch_id: str,
+        *,
+        action: str = "requalify",
+        operator: str = "system",
+        reason: str,
+    ) -> dict[str, Any]:
+        """Re-quarantine or archive resources from one import batch."""
+
+        return await self._pool._admin.recall_batch(
+            batch_id, action=action, operator=operator, reason=reason
+        )
+
+    # -- maintenance ---------------------------------------------------------
+
+    async def run_maintenance(self, name: str) -> dict[str, int]:
+        """Run one named maintenance sweep now and return its counters."""
+
+        return await self._pool._maintenance.run(name)

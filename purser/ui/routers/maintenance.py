@@ -149,7 +149,7 @@ def build(ctx: UiContext) -> APIRouter:
         errors: list[dict[str, Any]] = []
         async for resource in pool.iter_resources(states=states):
             try:
-                await pool.drain(resource.id, operator=operator, reason=reason)
+                await pool.admin.drain(resource.id, operator=operator, reason=reason)
                 drained.append(resource.id)
             except PurserError as exc:
                 errors.append({"rid": resource.id, "error": str(exc)})
@@ -168,7 +168,7 @@ def build(ctx: UiContext) -> APIRouter:
         operator, _ = ctx.require(request, write=True)
         pool = ctx.pool_of(pool_name)
         try:
-            result = await pool.run_maintenance(task)
+            result = await pool.admin.run_maintenance(task)
         except PurserError as exc:
             raise http_purser_error(exc) from exc
         ps.audit.record(
@@ -193,7 +193,7 @@ def build(ctx: UiContext) -> APIRouter:
                 status_code=422, detail="batch_id must be a non-empty string"
             )
         try:
-            return await pool.recall_batch(
+            return await pool.admin.recall_batch(
                 batch_id,
                 action=body.get("action", "requalify"),
                 operator=operator,

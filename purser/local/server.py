@@ -74,6 +74,28 @@ _POOL_CALL_METHODS = frozenset(
     }
 )
 
+# Admin methods resolve against ``pool.admin`` instead of the pool itself.
+_POOL_ADMIN_METHODS = frozenset(
+    {
+        "validate_now",
+        "ban",
+        "unban",
+        "suspend",
+        "resume",
+        "top_up",
+        "drain",
+        "cancel_drain",
+        "restore_resource",
+        "admin_set_state",
+        "force_revoke",
+        "update_resource",
+        "switch_resource",
+        "move_resource",
+        "recall_batch",
+        "run_maintenance",
+    }
+)
+
 
 def _scheduler_main(
     address: SchedulerAddress,
@@ -411,7 +433,8 @@ class _Service:
     def _pool_call(self, request: dict[str, Any]) -> dict[str, Any]:
         pool = self._purser.get_pool(str(request["pool"]))
         method = str(request.get("method") or "")
-        if method not in _POOL_CALL_METHODS or not hasattr(pool, method):
+        target = pool.admin if method in _POOL_ADMIN_METHODS else pool
+        if method not in _POOL_CALL_METHODS or not hasattr(target, method):
             raise ConfigError(
                 f"pool method {method!r} is not exposed over the local scheduler"
             )
@@ -425,7 +448,7 @@ class _Service:
             from purser.local.client import _resource_from_dict
 
             args[0] = _resource_from_dict(args[0])
-        value = getattr(pool, method)(*args, **kwargs)
+        value = getattr(target, method)(*args, **kwargs)
         return {"value": _pool_value(value, pool)}
 
     def _import(self, request: dict[str, Any]) -> dict[str, Any]:

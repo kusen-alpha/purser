@@ -251,7 +251,7 @@ def test_delete_drain_failure_maps_to_conflict(make_client):
     async def refuse(*args, **kwargs):
         raise BadState("cannot drain right now")
 
-    ps.get_pool("p").drain = refuse
+    ps.get_pool("p").admin.drain = refuse
     resp = client.delete("/pools/p/resources/r-1", headers=ADMIN)
     assert resp.status_code == 409
     assert resp.json()["detail"] == "cannot drain right now"
@@ -603,14 +603,14 @@ def test_drain_pool_defaults_and_state_validation(make_client):
 def test_drain_pool_collects_per_resource_errors(make_client):
     client, ps = _setup(make_client)
     pool = ps.get_pool("p")
-    original = pool.drain
+    original = pool.admin.drain
 
     async def flaky(rid, *, operator="system", reason=""):
         if rid == "r-1":
             raise BadState("refusing drain")
         return await original(rid, operator=operator, reason=reason)
 
-    pool.drain = flaky
+    pool.admin.drain = flaky
     resp = client.post("/pools/p/drain", headers=ADMIN)
     assert resp.status_code == 200, resp.text
     body = resp.json()

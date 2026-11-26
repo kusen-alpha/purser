@@ -102,7 +102,7 @@ class SmsAdapter(ResourceAdapter):
 
 新增的 5 个租约级钩子默认都是空实现，按调度路径依次触发：`on_acquire`（签发）、`on_renew`（每次续租）、`before_release`（归还前，持约者还没放手）、`on_revoke`（`force_revoke` 踢人）、`on_lease_lost`（超时/心跳失败被回收）。它们只做观察与副作用，不改变内核的槽位与状态流转。
 
-`switch` 是预留的切换/轮换扩展点（默认返回 `None`）。覆写时由你决定切换逻辑：直接改 `resource` 的数据并返回它，池会原地更新该行；或返回一个全新的 `Resource`，池会导入新行并把旧行归档。对应的池方法是 `switch_resource(rid, reason=...)`，忙（有活跃租约）或终态（archived/draining/banned/lost）会拒绝切换。
+`switch` 是预留的切换/轮换扩展点（默认返回 `None`）。覆写时由你决定切换逻辑：直接改 `resource` 的数据并返回它，池会原地更新该行；或返回一个全新的 `Resource`，池会导入新行并把旧行归档。对应的池方法是 `pool.admin.switch_resource(rid, reason=...)`，忙（有活跃租约）或终态（archived/draining/banned/lost）会拒绝切换。
 
 ## 命名校验项（validator 装饰器）
 
@@ -131,8 +131,8 @@ class SmsAdapter(ResourceAdapter):
 | `name` | 方法名 | 检查项名称，适配器内唯一；同类重名在类创建时抛 `ConfigError` |
 | `both` | `False` | 是否自动并入生命周期验活 |
 
-- `both=True`：执行 `validate_now()` / `import_validate="on_import"` / 后台验活时，先按声明顺序逐个运行这些检查项，首个失败即短路；失败与 `validate()` 失败同流程，进入 `QUARANTINED`、连续失败升级 `BANNED`。组合发生在 `validate_with_checks()`，覆写 `validate()` 无需自己处理。
-- `both=False`：只做注册（供 UI `GET /adapters` 展示），不自动执行；需要时用 `await pool.validate_check(rid, "check_expiry")` 按名运行单条，只返回 `HealthReport`，不写健康统计、不改状态。
+- `both=True`：执行 `admin.validate_now()` / `import_validate="on_import"` / 后台验活时，先按声明顺序逐个运行这些检查项，首个失败即短路；失败与 `validate()` 失败同流程，进入 `QUARANTINED`、连续失败升级 `BANNED`。组合发生在 `validate_with_checks()`，覆写 `validate()` 无需自己处理。
+- `both=False`：只做注册（供 UI `GET /adapters` 展示），不自动执行；需要时用 `await pool.admin.validate_check(rid, "check_expiry")` 按名运行单条，只返回 `HealthReport`，不写健康统计、不改状态。
 - 检查项沿 MRO 合并，子类同名覆盖父类；必须是 `async` 方法，否则在类创建时报 `TypeError`。
 
 UI 侧一致性：`GET /adapters` 会在每个适配器下返回 `validators: [{"name", "both"}]`；`POST /pools/{pool}/resources/{rid}/validate` 带 `{"check": "name"}` 触发单条检查（只出报告，审计动作 `validate_check`），不带 `check` 时仍是完整生命周期验活。

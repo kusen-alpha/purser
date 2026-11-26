@@ -6,18 +6,20 @@ orthogonal planes: a durable storage plane (memory / sqlite) for master data
 and important state, plus a transient coordination plane (memory / redis) for
 in-flight leases, heartbeats and wake-ups.
 
-Quick start::
+Quick start (the runtime auto-starts on first acquire)::
 
-    from purser import AcquireRequest, Purser
+    from purser import Purser
 
     ps = Purser()
-    pool = ps.create_pool("proxies", "proxy", lease_ttl=120)
-    # Or start from a named scenario and override only what differs:
-    # pool = ps.create_pool("proxies", "proxy", profile="basic", lease_ttl=120)
+    pool = ps.create_pool("proxies", "proxy")
     await pool.import_resources([{"host": "1.2.3.4", "port": 8080}])
-    async with ps:
-        async with pool.lease(AcquireRequest(consumer="crawler-a")) as proxy:
-            print(proxy.payload)
+    async with pool.lease(consumer="crawler-a") as lease:
+        print(lease.resource_id, lease.payload)
+
+Low-frequency operator work (ban / drain / revoke / maintenance) lives on
+``pool.admin`` so the data plane stays small::
+
+    await pool.admin.ban("p2", reason="dead upstream")
 
 Synchronous facade (blocking calls from any thread)::
 
@@ -151,87 +153,51 @@ EmbeddedPurser = Purser
 __version__ = "0.5.0"
 
 __all__ = [
+    # Core path: embedded async facade + multi-process connect().
     "Purser",
-    "EmbeddedPurser",
-    "ThreadPurser",
-    "ThreadPool",
-    "ProcessPurser",
-    "PurserProtocol",
-    "PoolProtocol",
-    "SyncPoolProtocol",
-    "AdapterSpec",
-    "load_adapter",
     "ResourcePool",
+    "connect",
+    "RemotePool",
+    "LocalScheduler",
+    "AcquireRequest",
+    "Lease",
+    "LeaseView",
     "BatchLease",
-    "BundleLease",
-    "BundleRequest",
-    "BundleSlot",
-    "MatchRule",
-    "BundleAcquireFailed",
-    "BundleFairness",
-    "BundleQuotaExceeded",
+    "Resource",
+    "ProxyResource",
+    "AccountResource",
+    "ResourceAdapter",
+    "UsageOutcome",
+    "HealthReport",
     "ImportReport",
+    "PurserError",
+    "is_retryable",
+    # Sync facade.
     "SyncPurser",
     "SyncPool",
     "SyncLease",
     "SyncBatchLease",
     "SyncResourceIterator",
     "SyncSubscription",
-    "LocalScheduler",
+    # Alternative runtimes (thread / process facades, scheduler errors).
+    "ThreadPurser",
+    "ThreadPool",
+    "ProcessPurser",
     "SchedulerAddress",
     "SchedulerProtocolError",
     "SchedulerTimeout",
     "SchedulerUnavailable",
-    "RemotePool",
-    "connect",
-    "PoolConfig",
-    "POOL_PROFILES",
-    "Weights",
-    "StorageKind",
-    "CoordinationKind",
-    "SchedulerKind",
-    "AcquireMode",
-    "UnbanMode",
-    "ImportValidate",
-    "ExpirePolicy",
-    "BundleMode",
-    "Allocator",
-    "allocator_names",
-    "register_allocator",
-    "MemoryStorage",
-    "SqliteStorage",
-    "MySqlStorage",
-    "MemoryCoordination",
-    "RedisCoordination",
-    "Resource",
+    # Adapters and typed resources.
+    "AdapterSpec",
+    "load_adapter",
     "PayloadField",
-    "Lease",
-    "LeaseView",
-    "AcquireRequest",
-    "CheckVerdict",
-    "HealthReport",
-    "UsageOutcome",
-    "ResourceState",
-    "PoolStats",
-    "UsageReport",
-    "UsageWindow",
-    "UsageTotals",
-    "UsageGroup",
-    "ActiveUsage",
-    "ActiveUsageGroup",
-    "PoolUsage",
-    "ValidateJobView",
-    "ValidateJobCancelView",
-    "ValidateJobError",
-    "ResourceAdapter",
     "register_default_adapter",
     "validator",
     "clear_default_adapters",
     "ProxyAdapter",
-    "ProxyResource",
     "AccountAdapter",
-    "AccountResource",
-    "PurserError",
+    "CheckVerdict",
+    # Error taxonomy.
     "ConfigError",
     "IsolationConflict",
     "NotStarted",
@@ -254,7 +220,53 @@ __all__ = [
     "VersionConflict",
     "BackendUnavailable",
     "error_by_code",
-    "is_retryable",
+    # Pool configuration.
+    "PoolConfig",
+    "POOL_PROFILES",
+    "Weights",
+    "StorageKind",
+    "CoordinationKind",
+    "SchedulerKind",
+    "AcquireMode",
+    "UnbanMode",
+    "ImportValidate",
+    "ExpirePolicy",
+    "BundleMode",
+    # Allocators.
+    "Allocator",
+    "allocator_names",
+    "register_allocator",
+    # Storage / coordination backends.
+    "MemoryStorage",
+    "SqliteStorage",
+    "MySqlStorage",
+    "MemoryCoordination",
+    "RedisCoordination",
+    # Bundles (atomic cross-pool acquisition).
+    "BundleLease",
+    "BundleRequest",
+    "BundleSlot",
+    "MatchRule",
+    "BundleFairness",
+    "BundleAcquireFailed",
+    "BundleQuotaExceeded",
+    # Views, protocols and compatibility aliases.
+    "PoolStats",
+    "UsageReport",
+    "UsageWindow",
+    "UsageTotals",
+    "UsageGroup",
+    "ActiveUsage",
+    "ActiveUsageGroup",
+    "PoolUsage",
+    "ValidateJobView",
+    "ValidateJobCancelView",
+    "ValidateJobError",
+    "ResourceState",
+    "PurserProtocol",
+    "PoolProtocol",
+    "SyncPoolProtocol",
+    "EmbeddedPurser",
 ]
 
 

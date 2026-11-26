@@ -498,7 +498,7 @@ class BundleService:
                     if pool is None:
                         continue
                     try:
-                        await pool.force_revoke(
+                        await pool.admin.force_revoke(
                             member.rid,
                             operator="system",
                             reason="bundle_gc",

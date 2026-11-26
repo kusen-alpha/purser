@@ -71,14 +71,25 @@ class LifecycleService:
             return
         if pool._started:
             return
-        if pool.purser.started:
+        purser = pool.purser
+        if purser.started:
             await self.start()
             return
-        raise NotStarted(
-            pool.name,
-            operation=operation,
-            sync=bool(getattr(pool.purser, "_sync_mode", False)),
-        )
+        if purser._ever_started:
+            # close() was called; restarting a closed runtime is not supported
+            # (sqlite connections are already torn down).
+            raise NotStarted(
+                pool.name,
+                operation=operation,
+                sync=bool(getattr(purser, "_sync_mode", False)),
+            )
+        # First runtime use: auto-start the Purser so scripts do not need to
+        # know about start()/NotStarted.  The lock serializes concurrent
+        # acquisitions so two waiters cannot race the Purser-level startup.
+        async with purser._lifecycle_lock:
+            if not purser.started:
+                await purser.start()
+        await self.start()
 
     async def close(self) -> None:
         pool = self.pool

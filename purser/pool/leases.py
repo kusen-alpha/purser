@@ -240,7 +240,7 @@ class LeaseService:
                 raise PoolExhausted(
                     f"pool {self.ctx.name} has {total} resource(s) but none is validated "
                     "(all in NEW); the pool was imported with import_validate='none'. "
-                    "Call await pool.validate_now(<id>) per resource, or re-import "
+                    "Call await pool.admin.validate_now(<id>) per resource, or re-import "
                     "with import_validate='batch'."
                 )
             if timeout <= 0:
@@ -556,7 +556,7 @@ class LeaseService:
                 if resource.state is ResourceState.NEW and job is None:
                     raise PoolExhausted(
                         f"resource {rid} is NEW (never validated); call "
-                        f"await pool.validate_now({rid!r}) or re-import with "
+                        f"await pool.admin.validate_now({rid!r}) or re-import with "
                         "import_validate='batch'"
                     )
                 if deadline - time.monotonic() <= 0:

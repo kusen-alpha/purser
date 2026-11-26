@@ -38,18 +38,19 @@ await pool.import_resources(
         {"id": "r1", "tags": ["US"]},
         {"id": "r2", "tags": ["EU"]},
     ],
-    import_validate="on_import",   # 验活通过后才进入 IDLE
 )
 ```
 
-导入、查询、状态变更等管理面操作可以在 `start()` 之前执行，适合离线预装数据。
+导入默认 `import_validate="auto"`：这种小批量会在导入时同步验活，`import_resources`
+返回即可分配；大批量（>10 条）自动转后台任务。导入、查询等管理面操作始终可以
+在启动之前执行，适合离线预装数据。
 
 ## 3. 获取与归还
 
+首次 `acquire` 会自动启动运行时，不需要显式调用 `ps.start()`：
+
 ```python
 from purser import AcquireRequest, UsageOutcome
-
-await ps.start()
 
 async with pool.lease(AcquireRequest(consumer="crawler", tags=["US"])) as lease:
     print(lease.resource_id, lease.payload)
@@ -88,8 +89,10 @@ python examples/quickstart.py
 
 ## 常见边界
 
-- `acquire()` / `lease()` / `acquire_many()` 要求池已启动，否则抛 `NotStarted`。
-- 导入默认 `import_validate="batch"`：资源先后台验活，`acquire()` 会等待到请求超时；若显式用 `import_validate="none"`，资源停在 `NEW`，`acquire()` 立即抛带修复提示的 `PoolExhausted`。
+- `acquire()` / `lease()` / `acquire_many()` 首次调用会自动启动运行时（含 `Purser`）；
+  `ps.start()` 是可选的提前启动。`close()` 之后再获取会抛 `NotStarted`，同进程不支持重启。
+- 导入默认 `import_validate="auto"`：≤10 条同步验活，更多走后台任务，`acquire()` 会等待到请求超时；
+  若显式用 `import_validate="none"`，资源停在 `NEW`，`acquire()` 立即抛带修复提示的 `PoolExhausted`。
 - 租约默认 TTL 60 秒，心跳按 TTL/3 续约；建池时直接传 `lease_ttl=...`，或事后 `pool.reconfigure(lease_ttl=...)`。需要常见默认值时再加 `profile="validated"` 等可选预设，见[配置](../reference/configuration.md)。
 
 继续阅读：[租约生命周期](../guides/lease-lifecycle.md)、[导入与验活](../guides/import-and-validate.md)。

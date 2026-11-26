@@ -145,7 +145,7 @@ class Backend:
             )
             for lease in list(pool.leases()):
                 with contextlib.suppress(PurserError):
-                    pool.force_revoke(
+                    pool.admin.force_revoke(
                         lease.resource_id,
                         operator="cleanup",
                         reason="cross-instance cleanup",
@@ -230,7 +230,7 @@ def test_cross_instance_force_revoke_and_stale_release(backend):
     lease_a = pool_a.acquire(
         AcquireRequest(resource_id="r0", consumer="a", slots=1, timeout=2.0)
     )
-    revoked = pool_b.force_revoke(
+    revoked = pool_b.admin.force_revoke(
         "r0", operator="test", reason="cross-instance", token=lease_a.token
     )
     assert revoked.token == lease_a.token

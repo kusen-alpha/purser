@@ -42,6 +42,7 @@ lease = await pool.acquire(
 ```
 
 - `acquire()` 通过构造新请求合并 `**kwargs`，因此 `AcquireRequest.__post_init__` 的校验同样生效（例如 `tags` 传字符串会抛 `TypeError`）；同一个请求对象可以安全复用。
+- 首次 `acquire()` / `lease()` / `acquire_many()` 会自动启动运行时（含 `Purser`），`ps.start()` 是可选的提前启动；`close()` 之后再调用运行时操作会抛 `NotStarted`（已关闭，不支持重启）。
 - 未知 `kwargs` 抛 `TypeError`；`slots <= 0`、`use_limit < 0` 抛 `ConfigError`。
 - 同一 consumer 重复获取同一资源时，默认返回已有租约；`allow_duplicate=True` 才允许第二份租约。
 - 传入 `idempotency_key` 时，同池同 key 的重复调用返回同一份仍存活的租约；并发同 key 只执行一次获取。
@@ -53,7 +54,7 @@ lease = await pool.acquire(
 | 情况 | 异常 |
 | --- | --- |
 | 池内没有任何资源 | `PoolEmpty` |
-| 资源停在 `NEW` 且没有进行中的验活任务（显式 `import_validate="none"`） | `PoolExhausted`（提示调用 `validate_now()` 或改用 `batch`） |
+| 资源停在 `NEW` 且没有进行中的验活任务（显式 `import_validate="none"`） | `PoolExhausted`（提示调用 `pool.admin.validate_now()` 或改用 `batch`） |
 | 资源正在验活（`VALIDATING` / 后台任务运行中） | 等待至 timeout；超时抛 `PoolExhausted` 并带任务进度 |
 | 资源忙且等待超时 | `PoolExhausted`（消息附带被跳过的过滤原因，如 `tags=1`、`cooldown=2`） |
 | `timeout <= 0` 且无法立即满足 | `PoolExhausted` |
@@ -61,10 +62,10 @@ lease = await pool.acquire(
 | `scheduler="token_bucket"` 且等待令牌超时 | `PoolExhausted`（提示建议重试等待秒数） |
 | 定向获取的资源不存在 | `ResourceNotFound` |
 | 定向获取的资源处于不可分配状态（如 `QUARANTINED`） | `BadState` |
-| 定向获取的目标在 `NEW` / `VALIDATING` | 先等待验活；`NEW` 且无验活任务时立即抛 `PoolExhausted`（提示 `validate_now()`） |
+| 定向获取的目标在 `NEW` / `VALIDATING` | 先等待验活；`NEW` 且无验活任务时立即抛 `PoolExhausted`（提示 `pool.admin.validate_now()`） |
 | 定向获取被占用且等待超时 | `ResourceBusy` |
 | 候选全部被请求级校验拒绝 | `NoSuitableResource` |
-| 池未启动 | `NotStarted` |
+| 运行时已 `close()`（不支持重启） | `NotStarted` |
 
 定向获取（`resource_id`）不走分配器，但仍检查状态、槽位与重复持有；等待期间每 0.1 秒复查一次，直到 timeout。
 
@@ -152,7 +153,7 @@ await pool.release(lease, outcome=UsageOutcome.RATE_LIMITED, used=1)
 ## 强制撤销
 
 ```python
-revoked = await pool.force_revoke(
+revoked = await pool.admin.force_revoke(
     "r42", operator="alice", reason="credential leak", token=lease.token
 )
 ```
@@ -166,7 +167,7 @@ revoked = await pool.force_revoke(
 ```python
 for lease in list(await pool.leases("r42")):
     try:
-        await pool.force_revoke(
+        await pool.admin.force_revoke(
             "r42", operator="alice", reason="credential leak", token=lease.token
         )
     except LeaseConflict:

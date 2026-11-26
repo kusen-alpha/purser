@@ -64,14 +64,13 @@ from purser.errors import (
     ResourceNotFound,
 )
 from purser.facade._helpers import (
-    _MISSING,
     BatchLease,
     _now,
 )
 from purser.isolation import (
     PICKLE_MESSAGE,
 )
-from purser.pool.admin import AdminService
+from purser.pool.admin import AdminService, PoolAdminView
 from purser.pool.catalog import CatalogService
 from purser.pool.context import PoolContext
 from purser.pool.leases import LeaseService
@@ -210,7 +209,7 @@ class ResourcePool:
             serve_waiters=self._notify_waiters,
             active_leases=self._leases.active,
             release=self.release,
-            revoke=self.force_revoke,
+            revoke=self._admin.force_revoke,
             is_degraded=self._lease.is_degraded,
             reconcile=self._reconcile_sweep,
         )
@@ -226,9 +225,10 @@ class ResourcePool:
             self._ctx,
             self._state,
             waiters=self._waiters,
-            validate_now=self.validate_now,
+            validate_now=self._validation.validate_now,
             start_validate_job=self._start_validate_job,
         )
+        self.admin = PoolAdminView(self)
         self._register_scheduler()
 
     def __getstate__(self) -> Any:
@@ -259,7 +259,7 @@ class ResourcePool:
 
     def _make_maintenance(self, name: str) -> Callable[[], Any]:
         async def runner() -> None:
-            await self.run_maintenance(name)
+            await self._maintenance.run(name)
 
         return runner
 
@@ -575,16 +575,6 @@ class ResourcePool:
             specs, source=source, operator=operator
         )
 
-    async def apply_defaults(
-        self,
-        *,
-        operator: str = "system",
-        reason: str = "apply pool defaults",
-    ) -> dict[str, int]:
-        """Backfill pool defaults onto resources that lack them."""
-
-        return await self._catalog.apply_defaults(operator=operator, reason=reason)
-
     async def _restore_resources(
         self, records: Sequence[Any], *, conflict: str, operator: str
     ) -> dict[str, Any]:
@@ -710,21 +700,6 @@ class ResourcePool:
 
     # -- validation --------------------------------------------------------
 
-    async def validate_now(
-        self,
-        resource_id: str,
-        *,
-        operator: str = "system",
-    ) -> HealthReport:
-        """Validate one resource immediately and apply the verdict."""
-
-        return await self._validation.validate_now(resource_id, operator=operator)
-
-    async def validate_check(self, resource_id: str, check: str) -> HealthReport:
-        """Run one named check without changing the resource state."""
-
-        return await self._validation.validate_check(resource_id, check)
-
     async def _on_validation_ok(self, resource_id: str, report: HealthReport) -> None:
         await self._validation.on_ok(resource_id, report)
 
@@ -776,200 +751,6 @@ class ResourcePool:
         return await self._state.cas(
             resource_id, patch, expect_state=expect_state, attempts=attempts
         )
-
-    async def ban(self, resource_id: str, *, reason: str, operator: str = "system") -> None:
-        """Ban one resource after a hard failure or operator decision."""
-
-        await self._admin.ban(resource_id, reason=reason, operator=operator)
-
-    async def unban(
-        self,
-        resource_id: str,
-        *,
-        operator: str = "system",
-        reason: str = "manual unban",
-        revalidate: bool = True,
-    ) -> None:
-        """Lift a ban; ``revalidate=True`` parks it in VALIDATING first."""
-
-        await self._admin.unban(
-            resource_id, operator=operator, reason=reason, revalidate=revalidate
-        )
-
-    async def suspend(
-        self, resource_id: str, *, operator: str = "system", reason: str
-    ) -> None:
-        """Temporarily remove a resource from allocation without banning it."""
-
-        await self._admin.suspend(resource_id, operator=operator, reason=reason)
-
-    async def resume(
-        self,
-        resource_id: str,
-        *,
-        operator: str = "system",
-        reason: str = "manual resume",
-        revalidate: bool = False,
-    ) -> None:
-        """Return a suspended resource to allocation (optionally re-validating)."""
-
-        await self._admin.resume(
-            resource_id, operator=operator, reason=reason, revalidate=revalidate
-        )
-
-    async def top_up(
-        self,
-        resource_id: str,
-        *,
-        operator: str = "system",
-        amount: int | None = None,
-        reason: str = "manual top_up",
-    ) -> None:
-        """Replenish a quota-exhausted resource and return it to IDLE."""
-
-        await self._admin.top_up(resource_id, operator=operator, amount=amount, reason=reason)
-
-    async def drain(
-        self, resource_id: str, *, operator: str = "system", reason: str
-    ) -> None:
-        """Stop new acquires; the resource archives once its leases drain."""
-
-        await self._admin.drain(resource_id, operator=operator, reason=reason)
-
-    async def cancel_drain(
-        self,
-        resource_id: str,
-        *,
-        operator: str = "system",
-        reason: str = "cancel drain",
-    ) -> None:
-        """Undo a drain and return the resource to allocation."""
-
-        await self._admin.cancel_drain(resource_id, operator=operator, reason=reason)
-
-    async def restore_resource(
-        self,
-        resource_id: str,
-        *,
-        operator: str = "system",
-        reason: str = "manual restore",
-    ) -> None:
-        """Restore an archived resource through VALIDATING."""
-
-        await self._admin.restore_resource(resource_id, operator=operator, reason=reason)
-
-    async def admin_set_state(
-        self,
-        resource_id: str,
-        *,
-        target: ResourceState,
-        operator: str = "system",
-        reason: str,
-    ) -> None:
-        """Force a state the operator chooses; only safe targets are accepted."""
-
-        await self._admin.admin_set_state(
-            resource_id, target=target, operator=operator, reason=reason
-        )
-
-    async def force_revoke(
-        self,
-        resource_id: str,
-        *,
-        operator: str = "system",
-        reason: str,
-        token: str | None = None,
-    ) -> Lease:
-        """Revoke one live lease immediately and return the released snapshot."""
-
-        return await self._admin.force_revoke(
-            resource_id, operator=operator, reason=reason, token=token
-        )
-
-    async def update_resource(
-        self,
-        resource_id: str,
-        *,
-        payload: dict[str, Any] | None = None,
-        tags: frozenset[str] | None = None,
-        max_slots: int | None = None,
-        usage_quota: Any = _MISSING,
-        quota_limit: Any = _MISSING,
-        expires_at: Any = _MISSING,
-        next_available_at: Any = _MISSING,
-        mutex_group: Any = _MISSING,
-        schedule_window: Any = _MISSING,
-        priority: Any = _MISSING,
-        preference: Any = _MISSING,
-        operator: str = "system",
-        reason: str,
-    ) -> Resource:
-        """Patch scheduling fields; omitted fields keep their value."""
-
-        return await self._admin.update_resource(
-            resource_id,
-            payload=payload,
-            tags=tags,
-            max_slots=max_slots,
-            usage_quota=usage_quota,
-            quota_limit=quota_limit,
-            expires_at=expires_at,
-            next_available_at=next_available_at,
-            mutex_group=mutex_group,
-            schedule_window=schedule_window,
-            priority=priority,
-            preference=preference,
-            operator=operator,
-            reason=reason,
-        )
-
-    async def switch_resource(
-        self,
-        resource_id: str,
-        *,
-        operator: str = "system",
-        reason: str = "manual switch",
-    ) -> Resource | None:
-        """Switch an ACTIVE resource to its alternate endpoint/payload."""
-
-        return await self._admin.switch_resource(
-            resource_id, operator=operator, reason=reason
-        )
-
-    async def move_resource(
-        self,
-        resource_id: str,
-        target_pool: ResourcePool,
-        *,
-        operator: str = "system",
-        reason: str,
-    ) -> Resource:
-        """Move a resource to another pool owned by the same Purser."""
-
-        return await self._admin.move_resource(
-            resource_id, target_pool, operator=operator, reason=reason
-        )
-
-    async def recall_batch(
-        self,
-        batch_id: str,
-        *,
-        action: str = "requalify",
-        operator: str = "system",
-        reason: str,
-    ) -> dict[str, Any]:
-        """Re-quarantine or archive resources from one import batch."""
-
-        return await self._admin.recall_batch(
-            batch_id, action=action, operator=operator, reason=reason
-        )
-
-    # -- periodic maintenance ---------------------------------------------
-
-    async def run_maintenance(self, name: str) -> dict[str, int]:
-        """Run one named maintenance sweep now and return its counters."""
-
-        return await self._maintenance.run(name)
 
     # -- misc --------------------------------------------------------------
 

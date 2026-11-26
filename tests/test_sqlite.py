@@ -140,7 +140,7 @@ async def test_redis_coordination_survives_restart(tmp_path):
         # The lease is still alive in redis, so reconciliation keeps the slot.
         res = await pool2.get("r1")
         assert res is not None and res.state is ResourceState.FULL
-        revoked = await pool2.force_revoke("r1", operator="ops", reason="restart check")
+        revoked = await pool2.admin.force_revoke("r1", operator="ops", reason="restart check")
         assert revoked.token == lease.token
         res = await pool2.get("r1")
         assert res.state is ResourceState.IDLE

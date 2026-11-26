@@ -206,7 +206,7 @@ def build(ctx: UiContext) -> APIRouter:
                 else coerce(value, name="preference", cast=float)
             )
         try:
-            updated = await pool.update_resource(
+            updated = await pool.admin.update_resource(
                 rid,
                 payload=payload,
                 tags=tags,
@@ -233,12 +233,12 @@ def build(ctx: UiContext) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"resource {rid!r} not found")
         if resource.concurrency.used_slots > 0:
             try:
-                await pool.drain(rid, operator=operator, reason="api delete")
+                await pool.admin.drain(rid, operator=operator, reason="api delete")
             except PurserError as exc:
                 raise http_purser_error(exc) from exc
             return {"ok": True, "rid": rid, "state": "draining"}
         try:
-            await pool.admin_set_state(
+            await pool.admin.admin_set_state(
                 rid,
                 target=ResourceState.ARCHIVED,
                 operator=operator,

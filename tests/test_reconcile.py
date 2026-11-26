@@ -28,7 +28,7 @@ async def test_sweep_resets_orphaned_slots(make_pool, monkeypatch):
     assert (await pool.get(rid)).concurrency.used_slots == 1
 
     await asyncio.sleep(0.1)
-    assert await pool.run_maintenance("reconcile") == {"reconcile": 1}
+    assert await pool.admin.run_maintenance("reconcile") == {"reconcile": 1}
 
     res = await pool.get(rid)
     assert res is not None
@@ -43,7 +43,7 @@ async def test_sweep_skips_recent_activity(make_pool):
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     await _orphan(pool, lease)
 
-    assert await pool.run_maintenance("reconcile") == {"reconcile": 0}
+    assert await pool.admin.run_maintenance("reconcile") == {"reconcile": 0}
     assert (await pool.get(rid)).concurrency.used_slots == 1
 
 
@@ -53,7 +53,7 @@ async def test_sweep_keeps_live_leases(make_pool, monkeypatch):
     [rid] = await seed(pool, n=1)
     await pool.acquire(AcquireRequest(consumer="c"))
 
-    assert await pool.run_maintenance("reconcile") == {"reconcile": 0}
+    assert await pool.admin.run_maintenance("reconcile") == {"reconcile": 0}
     assert (await pool.get(rid)).concurrency.used_slots == 1
 
 
@@ -68,7 +68,7 @@ async def test_sweep_is_leader_gated(make_pool, monkeypatch):
         return False
 
     monkeypatch.setattr(pool._coordination, "try_leader", secondary)
-    assert await pool.run_maintenance("reconcile") == {"reconcile": 0}
+    assert await pool.admin.run_maintenance("reconcile") == {"reconcile": 0}
     assert (await pool.get(rid)).concurrency.used_slots == 1
 
 

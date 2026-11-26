@@ -66,7 +66,8 @@ class IsolationConflict(ConfigError):
 
 
 class NotStarted(PurserError):
-    """Pool runtime is not started; the facade must be started before use."""
+    """Runtime operations were attempted after ``close()`` (or before start
+    on a backend that cannot auto-start)."""
 
     code = "not_started"
 

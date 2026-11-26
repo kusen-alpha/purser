@@ -30,7 +30,7 @@ async def test_move_collision_rejected(make_pool, purser):
     target = purser.ensure_pool("target", "fakecheck")
     await target.import_resources([{"id": rid, "host": "9.9.9.9", "port": 9}])
     with pytest.raises(BadState):
-        await pool.move_resource(rid, target, operator="ops", reason="x")
+        await pool.admin.move_resource(rid, target, operator="ops", reason="x")
     assert await pool.get(rid) is not None
     res = await target.get(rid)
     assert res is not None and res.payload["host"] == "9.9.9.9"  # target untouched
@@ -41,13 +41,13 @@ async def test_admin_set_state_busy_rejected(make_pool):
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     with pytest.raises(BadState):
-        await pool.admin_set_state(rid, target=ResourceState.IDLE, operator="ops", reason="x")
+        await pool.admin.admin_set_state(rid, target=ResourceState.IDLE, operator="ops", reason="x")
     with pytest.raises(BadState):
-        await pool.admin_set_state(
+        await pool.admin.admin_set_state(
             rid, target=ResourceState.SUSPENDED, operator="ops", reason="x"
         )
     await pool.release(lease)
-    await pool.admin_set_state(
+    await pool.admin.admin_set_state(
         rid, target=ResourceState.SUSPENDED, operator="ops", reason="ok"
     )
     res = await pool.get(rid)
@@ -58,7 +58,7 @@ async def test_ban_revokes_active_leases(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    await pool.ban(rid, operator="ops", reason="abuse")
+    await pool.admin.ban(rid, operator="ops", reason="abuse")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.BANNED
     assert res.concurrency.used_slots == 0
@@ -140,7 +140,9 @@ async def test_restart_new_state_preserved(tmp_path, storage_kind, coordination_
 
     ps1 = build()
     pool = ps1.create_pool("px", "fakecheck")
-    await pool.import_resources([{"id": "r1", "host": "1.1.1.1", "port": 1}])
+    await pool.import_resources(
+        [{"id": "r1", "host": "1.1.1.1", "port": 1}], import_validate="none"
+    )
     rid = "r1"
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.NEW
@@ -151,7 +153,7 @@ async def test_restart_new_state_preserved(tmp_path, storage_kind, coordination_
         pool2 = ps2.create_pool("px", "fakecheck")
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.NEW
-        await pool2.validate_now(rid)
+        await pool2.admin.validate_now(rid)
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.IDLE
     finally:
@@ -179,7 +181,7 @@ async def test_restart_suspended_and_resume(tmp_path, storage_kind, coordination
     ps1 = build()
     pool = ps1.create_pool("px", "fakecheck")
     [rid] = await seed(pool, n=1)
-    await pool.suspend(rid, operator="ops", reason="maintenance")
+    await pool.admin.suspend(rid, operator="ops", reason="maintenance")
     await ps1.close()
 
     ps2 = build()
@@ -187,7 +189,7 @@ async def test_restart_suspended_and_resume(tmp_path, storage_kind, coordination
         pool2 = ps2.create_pool("px", "fakecheck")
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.SUSPENDED
-        await pool2.resume(rid, operator="ops", reason="back")
+        await pool2.admin.resume(rid, operator="ops", reason="back")
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.IDLE
     finally:
