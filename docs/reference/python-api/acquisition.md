@@ -69,7 +69,7 @@ lease = await pool.acquire(
 
 定向获取（`resource_id`）不走分配器，但仍检查状态、槽位与重复持有；等待期间每 0.1 秒复查一次，直到 timeout。
 
-## 批量获取
+## 批量获取 {#batch-acquire}
 
 ```python
 batch = await pool.acquire_many(
@@ -132,12 +132,12 @@ await pool.release(lease, outcome=UsageOutcome.RATE_LIMITED, used=1)
 ```
 
 - `renew()` 用于长任务显式保活；常规场景交给心跳。拒绝续约会抛 `LeaseLimitReached` 或 `LeaseLost`，不会再静默返回 `False`。
-- `release()` 的 `outcome` 省略时使用 `lease.outcome`；`used` 省略时按 `lease.used or 1` 计量。`used < 0` 或非 `UsageOutcome` 值抛 `ConfigError`。
+- `release()` 的 `outcome` 省略时使用 `lease.outcome`；`used` 省略时按 `lease.used or 1` 计量。`used < 0` 或非 `UsageOutcome` 值抛 `ConfigError`。注意 `pool.lease()` 上下文管理器固定传 `used=lease.used`（默认 0），所以该路径默认记 0；要统计真实用量，需在块内设置 `lease.used`。
 - 归还成功后返回 `True`。如果 token 已不在协调端（被强制撤销、过期、其他实例先归还或协调层被清空），归还**幂等返回 `True`**，且不会扣减存储槽位，避免影响新持有者。
 - token 仍在协调端但存储侧槽位对不上时抛 `LeaseConflict`。
 - `await pool.release_consumer(consumer, outcome=UsageOutcome.OK)` 归还该 consumer 在当前池的全部活跃租约，返回归还列表。
 
-### `UsageOutcome` 副作用
+### `UsageOutcome` 副作用 {#usageoutcome}
 
 | 结果 | 主要副作用 |
 | --- | --- |
@@ -176,4 +176,4 @@ for lease in list(await pool.leases("r42")):
 
 ## 相关事件
 
-获取、归还、过期、失联、强制撤销分别发布 `lease_acquired` / `lease_released` / `lease_expired` / `lease_lost` / `lease_revoked`；事件字段与回放接口见 [REST 事件](../rest-api/events.md)。
+获取、归还、过期、失联、强制撤销分别发布 `lease_acquired` / `lease_released` / `lease_expired` / `lease_lost` / `lease_revoked`；事件字段与回放接口见 [Events](../rest-api/events.md)。

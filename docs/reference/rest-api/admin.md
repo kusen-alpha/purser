@@ -1,20 +1,22 @@
-# 管理
+# Admin
+
+管理端点：健康探针（`/healthz`、`/readyz`、`/service`）、指标、审计校验与备份恢复，以及事件历史。
 
 ## 端点
 
-| 方法 | 路径 | 鉴权 | 说明 |
-| --- | --- | --- | --- |
-| `GET` | `/healthz` | 无 | 存活探针 |
-| `GET` | `/readyz` | 无 | 就绪探针，返回池列表 |
-| `GET` | `/service` | 读 | 版本、运行时长、后端、适配器与维护开关 |
-| `GET` | `/metrics` | 无 | Prometheus 文本指标 |
-| `GET` | `/metrics/snapshot` | 读 | 计数器与直方图快照 |
-| `GET` | `/audit` | 读 | 审计分页 |
-| `GET` | `/audit/verify` | 读 | 校验哈希链 |
-| `GET` | `/adapters` | 读 | 已注册适配器及字段 |
-| `GET` | `/config/schema` | 读 | 池配置与资源调度字段 schema |
-| `GET` | `/backup` | admin | 全量导出（含明文密钥） |
-| `POST` | `/restore` | 写 | 导入备份；支持 `Idempotency-Key` |
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/healthz` | 存活探针（无鉴权） |
+| `GET` | `/readyz` | 就绪探针，返回池列表（无鉴权） |
+| `GET` | `/service` | 版本、运行时长、后端、适配器与维护开关（需读权限） |
+| `GET` | `/metrics` | Prometheus 文本指标（无鉴权） |
+| `GET` | `/metrics/snapshot` | 计数器与直方图快照（需读权限） |
+| `GET` | `/audit` | 审计分页（需读权限） |
+| `GET` | `/audit/verify` | 校验哈希链（需读权限） |
+| `GET` | `/adapters` | 已注册适配器及字段（需读权限） |
+| `GET` | `/config/schema` | 池配置与资源调度字段 schema（需读权限） |
+| `GET` | `/backup` | 全量导出，含明文密钥（需 admin） |
+| `POST` | `/restore` | 导入备份；支持 `Idempotency-Key`（需写权限） |
 
 ## 健康与指标
 
@@ -68,7 +70,7 @@ curl http://127.0.0.1:8000/config/schema
 
 `GET /backup` 需要 admin（只读密钥 403，未带密钥 401）。导出所有池的配置、资源（**含明文密钥**）以及池级活动租约摘要：
 
-```json
+```text
 {
   "format": "purser-backup",
   "version": 1,

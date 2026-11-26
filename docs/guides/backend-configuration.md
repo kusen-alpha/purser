@@ -4,12 +4,7 @@ Purser 把状态拆成两个独立平面：**存储层（storage）** 保存资�
 
 ## 平面组合
 
-| 存储层 | 协调层 | 适合 |
-| --- | --- | --- |
-| `memory` | `memory` | 本地开发、测试、单进程 demo |
-| `sqlite` | `memory` | 单机持久化，仍只有一个调度进程 |
-| `sqlite` / `mysql` | `redis` | 多实例共享、横向扩容 |
-| `mysql` | `memory` | 单实例、复用已有 MySQL 基建 |
+存储层与协调层的组合、选型与丢失语义只有一份，见[数据平面与丢失语义](../design/data-planes.md#selection)。本页只讲怎么配。
 
 ## 场景一：本地开发（memory + memory）
 
@@ -53,11 +48,11 @@ purser serve
 准备与注意：
 
 - `storage="sqlite"` 必须提供 `sqlite_path`，否则抛 `ConfigError`，不会静默退回内存；
-- 默认值 `:memory:` 意味着"不落盘"，想持久化必须显式给文件路径；
+- `sqlite_path` 没有默认值，想持久化必须显式给文件路径；
 - 敏感字段在库内 AES-GCM 加密，密钥由 `PURSER_SECRET_KEY` 提供，或用 sqlite 同目录自动生成的密钥；
 - 数据库文件要纳入备份与权限管理，见 [运维操作](operations.md)。
 
-## 场景三：多实例（sqlite / mysql + redis）
+## 场景三：多实例（sqlite / mysql + redis） {#multi-instance-setup}
 
 多个进程共享同一批资源：存储用共享的 sqlite / mysql，调度用 redis。协调 Redis 必须按持久化组件部署（AOF），不能当纯缓存。
 
@@ -94,7 +89,7 @@ pool = ps.create_pool("proxies", "proxy")
 
 准备与注意：
 
-- Redis 推荐独立 DB（如 `/2`）与 `key_prefix`，避免与其它业务混用；开启 AOF（`appendfsync everysec` 或更强）并纳入高可用方案；
+- Redis 推荐独立 DB（如 `/2`），避免与其它业务混用；当前公开接口不暴露 key 前缀，键统一以 `purser:` 开头。开启 AOF（`appendfsync everysec` 或更强）并纳入高可用方案；
 - MySQL 需先建库（utf8mb4），连接失败抛 `BackendUnavailable`；id 超过 255 字符需要投影；
 - 强制 RESP2 以兼容 Redis < 6，连接与操作带 5 秒超时，fail-closed；
 - 同一进程内不要创建两个共享同一后端的实例，会抛 `IsolationConflict`。
@@ -121,3 +116,5 @@ curl http://127.0.0.1:8000/readyz
 curl http://127.0.0.1:8000/service    # 每个实例的 storage / coordination 必须一致
 curl http://127.0.0.1:8000/audit/verify
 ```
+
+相关页面：[多实例部署](multi-instance.md)、[数据平面与丢失语义](../design/data-planes.md)、[配置参考](../reference/configuration.md)、[安全模型](security.md)。

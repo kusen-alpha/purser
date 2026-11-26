@@ -11,7 +11,7 @@
 ```
 
 - 每个 `SyncPurser` 独占一个事件循环线程（`purser-sync-loop`）。
-- 所有公开方法都是阻塞调用，超时抛 `TimeoutError`。
+- 所有公开方法都是阻塞调用，超时抛 `TimeoutError`；多个调用线程可以共享同一个 `SyncPurser` / `SyncPool`。
 - 事件订阅回调在固定大小线程池里执行（默认 4 个 worker），参数是深拷贝的事件快照。
 - 返回值也是深拷贝快照：修改返回的 `Resource` 不会写回存储，需调用更新 API。
 
@@ -33,6 +33,43 @@ with SyncPurser() as ps:
 ```
 
 `SyncPurser` 与 `SyncPool` 都支持上下文管理器；`SyncPool.lease()` 是 `@contextmanager`，退出时自动归还。`SyncLease` 本身是快照代理，不是上下文管理器。
+
+## 线程池示例 {#threadpool}
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+from purser import AcquireRequest, SyncPurser, UsageOutcome
+
+
+def crawl(task_id: int) -> str:
+    with pool.lease(AcquireRequest(consumer=f"crawler-{task_id}", tags=("http",))) as lease:
+        proxy = lease.payload
+        # ... 这里做真实请求 ...
+        lease.outcome = UsageOutcome.OK
+    return lease.resource_id
+
+
+with SyncPurser(callback_workers=8) as ps:
+    pool = ps.create_pool("proxies", "proxy")
+    pool.import_resources([...], import_validate="on_import")
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        ids = list(ex.map(crawl, range(80)))
+```
+
+- `with SyncPurser() as ps:` 已完成 `start()`，退出时自动 `close()`。
+- 多个线程可以同时持有同一条并发资源（按 `max_slots` 计数）；独占资源拿不到时进入公平等待队列，超时抛异常。
+- `SyncLease` / `SyncResourceIterator` / `SyncSubscription` 在拿到它的线程内使用和关闭，不要跨线程传递。
+
+## 线程安全边界
+
+| 对象 | 是否可跨线程共享 | 说明 |
+| --- | --- | --- |
+| `SyncPurser` | 可以 | 内部统一走专属事件循环，阻塞调用天然串行 |
+| `SyncPool` | 可以 | 同上；建池后全局复用 |
+| `SyncLease` | 不建议 | 在获取它的线程内完成使用与归还 |
+| 返回的 `Resource` / `payload` | 不建议 | 深拷贝快照，跨线程传递会看到过期数据；写回必须走 API |
 
 ## 生命周期
 
@@ -94,7 +131,7 @@ sub.close()
 ## 隔离与序列化
 
 - `SyncPurser` / `SyncPool` **不可 pickle，也不可跨进程传递**，尝试序列化抛 `IsolationConflict`。
-- 每个进程各自创建实例；需要跨进程共享同一资源集合时使用 `LocalScheduler`。
+- 每个进程各自创建实例；需要跨进程共享同一资源集合时使用 `LocalScheduler`。完整边界见[门面族：进程边界](facades.md#process-boundary)。
 - 不能从专属事件循环线程内部调用同步 API；正常业务代码不会遇到，自定义线程回调时需注意。
 
 ## 常见问题

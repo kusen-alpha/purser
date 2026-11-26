@@ -19,7 +19,7 @@ except PurserError as exc:
 | --- | --- | --- |
 | `PurserError` | 所有错误的基类 | 最终捕获 |
 | `ConfigError` | 池或库配置非法 | 修正 `PoolConfig` / 构造参数 |
-| `IsolationConflict` | 实例被跨线程/进程共享；sync 对象不可 pickle | 每个进程/拥有者单独创建实例 |
+| `IsolationConflict` | pickle / 跨进程传递，或同进程多个实例共享后端或适配器 | 每个进程单独创建实例；同线程共享一个实例是推荐用法 |
 | `NotStarted` | 运行时已 `close()`，不支持重启（首次获取会自动启动，无需手动 `start()`） | 重新创建实例，或把运行时操作移到 `close()` 之前 |
 | `PoolNotFound` | 池不存在 | 检查池名或先建池 |
 | `PoolExists` | 同名池已存在 | 复用已有池 |
@@ -53,9 +53,11 @@ except PurserError as exc:
 | 状态码 | 条件 |
 | --- | --- |
 | `404` | `ResourceNotFound`、`PoolNotFound` |
-| `422` | `ConfigError`、`BadPayload`，以及字段校验失败 |
-| `409` | 其余状态/租约冲突（含 `PoolExhausted`、`LeaseConflict`、`BadState`、`NotStarted`、`IsolationConflict`） |
+| `422` | `ConfigError`（含 `IsolationConflict`）、`BadPayload`，以及字段校验失败 |
+| `409` | 其余状态/租约冲突（含 `PoolExhausted`、`LeaseConflict`、`BadState`、`NotStarted`、`BackendUnavailable`） |
 | `401` / `403` | 鉴权失败或角色权限不足 |
+
+响应体为 `{"detail": "..."}`，不携带 `code` / `retryable` 字段；字段校验失败的 `detail` 是数组。完整约定见 [REST API](rest-api/index.md)。
 
 重试建议：
 

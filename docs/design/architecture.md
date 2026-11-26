@@ -1,5 +1,7 @@
 # 架构
 
+本页描述分层、模块边界与运行形态；不变量与算法见[算法与不变量](algorithms.md)，两个平面的丢失语义见[数据平面](data-planes.md)。
+
 ## 分层
 
 ```mermaid
@@ -47,12 +49,9 @@ flowchart TB
 
 ## 存储层 × 协调层
 
-| 平面 | 实现 | 保存内容 | 丢失后果 |
-| --- | --- | --- | --- |
-| 存储层 | `memory` / `sqlite` / `mysql` | 资源主数据、重要状态、槽位计数、`version` CAS、审计 | 业务事故，必须持久化 |
-| 协调层 | `memory` / `redis` | 在途租约、心跳、等待唤醒、校验缓存 | 单实例可对账重建；多实例丢失可能重复占用，详见[数据平面](data-planes.md) |
+两个平面独立取值：**存储层**（`memory` / `sqlite` / `mysql`）保存资源主数据、状态、槽位计数、`version` CAS 与审计，丢失即业务事故；**协调层**（`memory` / `redis`）保存在途租约、心跳与唤醒，单实例可对账重建、多实例丢失可能重复占用。职责边界、丢失等级与选型见[数据平面与丢失语义](data-planes.md)。
 
-两个平面独立取值，行为测试按 存储 × 协调 的笛卡尔积运行。关键约束：
+关键约束：
 
 - 写路径带版本 CAS，跨实例防丢更新（`VersionConflict`）。
 - 协调端断连 fail-closed，抛 `BackendUnavailable`，不静默降级。
@@ -84,62 +83,11 @@ flowchart TB
 
 `SyncPurser` 独占一个事件循环线程，把 async 内核包装成阻塞 API；适合同步代码或线程池环境，但实例不可跨进程共享，也不可 pickle（`IsolationConflict`）。
 
-## 代码目录
+## 代码组织
 
-```text
-purser/
-  __init__.py            # 公共导出
-  facade/                # Purser 组合根与共享 helper
-  pool/                  # ResourcePool 数据面
-  config.py              # PoolConfig / 字段 schema / 场景预设
-  sync.py                # SyncPurser / SyncPool / SyncLease
-  authority.py           # 进程内权威/单例约束
-  binding.py             # worker 绑定
-  isolation.py           # 跨进程共享与 pickle 防护
-  idempotency.py         # 幂等键存储
-  crypto.py              # AES-GCM 敏感字段加密
-  metrics.py             # 计数器/直方图
-  core/
-    state.py             # ResourceState + 转移表
-    resource.py          # Resource / PayloadField(Annotated schema) / Lease / AcquireRequest
-    allocator.py         # 分配器协议与内置策略
-    lease.py             # LeaseManager / 租约回收器
-    health.py            # HealthReport / 验活调度
-    quarantine.py        # 退避策略
-    scheduler.py         # 周期任务
-    audit.py             # 哈希链审计
-    events.py            # EventBus
-    usage.py             # 用量账本
-    views.py             # 报表 TypedDict
-  backends/
-    base.py              # StorageBackend / Coordination 协议
-    memory.py            # 内存存储
-    sqlite.py            # SQLite 存储 + 版本 CAS
-    mysql.py             # MySQL 存储
-    coordination.py      # Memory / Redis 协调
-    serde.py             # 资源序列化
-  adapters/
-    base.py              # ResourceAdapter 基类与注册表
-    proxy.py             # 代理适配器
-    account.py           # 账号适配器
-  local/
-    protocol.py          # 本地调度协议
-    server.py            # 本地调度服务
-    client.py            # 本地调度客户端
-    scheduler.py         # LocalScheduler
-  ui/
-    server.py            # FastAPI 应用与路由
-    static/              # 单页控制台
-  cli.py                 # rich CLI
-```
+- `facade/`：`Purser` 组合根与共享 helper；`pool/`：`ResourcePool` 数据面与管理面。
+- `core/`：状态机、分配器、租约、验活、隔离、事件、审计、用量账本。
+- `backends/`：存储与协调实现；`adapters/`：资源插件；`local/`：同机 IPC 调度。
+- `config.py` 与 `config_schema.py`：`PoolConfig`、字段 schema 与场景预设。
 
-## 实现范围
-
-- **M0 内核**：状态机、分配器、租约、公平队列、事件、审计。
-- **M1 插件与验活**：请求级按站校验、配额/计量、冷却、导入去重、payload 加密、幂等、trace 事件。
-- **M2 分布式**：Redis + Lua CAS + hash tag + fail-closed、重启对账。
-- **M3 操作台**：REST + Web UI + CLI + 健康探针 + 指标。
-- **持久化**：SQLite / MySQL 存储、审计落库、备份恢复。
-- **同步 Purser**：独立事件循环线程、回调线程池、跨进程隔离。
-
-P2/P3 项（配置门控自动抢占、blue-green 迁移、事件游标增强等）按设计文档预留；组合租约 bundle 已落地（单调度进程内原子获取 + 失败回滚 + `MatchRule` 约束派生 + REST `bundle` 字段 + `max_retries` 抖动重试 + 锚点排序约束）；跨实例严格两阶段（`bundle_mode="two_phase"`）与整体公平配额（`bundle_fairness`）也已实现，默认关闭，用法见[组合租约指南](../guides/bundle-leases.md)。
+目录树与逐文件说明见[贡献指南](../contributing/index.md)。里程碑与 P2/P3 预留项记录在归档的 `docs/design/design-doc.md`（不发布到站点）。

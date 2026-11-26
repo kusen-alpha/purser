@@ -1,4 +1,6 @@
-# 资源
+# Resources
+
+资源端点：导入、读取、更新、删除与状态动作（封禁、暂停、配额、退役、迁移）。
 
 ## 端点
 
@@ -10,7 +12,7 @@
 | `PUT` | `/pools/{pool}/resources/{rid}` | 更新 payload / tags / 配额 / 调度参数 |
 | `DELETE` | `/pools/{pool}/resources/{rid}` | 有租约则退役，否则归档 |
 | `POST` | `/pools/{pool}/resources/{rid}/{action}` | 状态动作，见下表 |
-| `POST` | `/pools/{pool}/resources/{rid}/revoke` | 强制撤销租约，需 `reason` |
+| `POST` | `/pools/{pool}/resources/{rid}/revoke` | 强制撤销租约；`reason` 可选，默认 `api revoke` |
 | `POST` | `/pools/{pool}/resources/{rid}/move` | 迁移到目标池 |
 | `GET` | `/pools/{pool}/batches` | 导入批次列表 |
 

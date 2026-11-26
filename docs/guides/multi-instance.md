@@ -4,42 +4,11 @@
 
 ## 平面组合
 
-| 存储层（system of record） | 协调层（scheduling） | 形态 |
-| --- | --- | --- |
-| `memory` | `memory` | 单进程，最小依赖 |
-| `sqlite` | `memory` | 单机持久化，仍只有一个调度进程 |
-| `sqlite` / `mysql` | `redis` | 多实例共享，横向扩容 |
-| `mysql` | `memory` | 单实例持久化，使用现有 MySQL 基建 |
+存储层与协调层的组合、各自保存什么、丢失后能否对账，统一见[数据平面与丢失语义](../design/data-planes.md)；环境变量与逐场景配置见[后端配置示例](backend-configuration.md#multi-instance-setup)。
 
-## 服务配置
+`PURSER_REDIS_URL` 只提供连接串，**不会**自动切换协调层；多实例必须同时设置 `PURSER_COORDINATION=redis`（或 `--coordination redis`）。
 
-```bash
-# 多实例：sqlite + redis
-export PURSER_STORAGE=sqlite
-export PURSER_SQLITE_PATH=/var/lib/purser/purser.db
-export PURSER_COORDINATION=redis
-export PURSER_REDIS_URL=redis://localhost:6379
-purser serve --host 0.0.0.0
-
-# 或使用 MySQL
-export PURSER_STORAGE=mysql
-export PURSER_MYSQL_URL=mysql://user:pass@host/db
-```
-
-`PURSER_REDIS_URL` 只提供连接串，**不会**自动切换协调层；必须同时设置 `PURSER_COORDINATION=redis`（或 `--coordination redis`）。
-
-嵌入式等价写法：
-
-```python
-ps = Purser(
-    storage="sqlite",
-    coordination="redis",
-    sqlite_path="/var/lib/purser/purser.db",
-    redis_url="redis://localhost:6379",
-)
-```
-
-## 重启对账
+## 重启对账 {#restart-reconcile}
 
 异常重启后，`Pool.start()` 会：
 
@@ -51,13 +20,13 @@ ps = Purser(
 
 !!! danger "多实例下协调记录丢失 = 重复占用"
 
-    多实例场景下，协调记录丢失会让其他实例看不到在途租约，同一资源可能被重复并发使用。生产环境必须把 Redis 当持久化组件部署（开启 AOF 或等价的持久化策略），不能当纯缓存。
+    协调记录丢失会让其他实例看不到在途租约，同一资源可能被重复并发使用。生产环境必须把 Redis 当持久化组件部署，完整语义见[数据平面：多实例丢失](../design/data-planes.md#redis-persistence)。
 
 ## fail-closed
 
 协调端连接或操作失败时抛 `BackendUnavailable`，不会静默降级为本地内存状态。Redis 连接与操作带 5 秒超时，强制 RESP2 以兼容 Redis < 6。
 
-需要“协调端抖动时本实例继续工作”的场景，可以显式开启 `PoolConfig(fail_open=True)`：注册、续租、归还遇到 `BackendUnavailable` 时不再抛错，而是记录 `pool.<name>.fail_open_total`、发布 `coordination_degraded` 事件，并按本地状态继续。此时其他实例看不到本实例的新租约，可能重复占用同一资源——只建议在同实例独占资源、或短时抖动可接受的部署中开启；默认仍是 fail-closed。
+需要“协调端抖动时本实例继续工作”的场景，可以显式开启 `PoolConfig(fail_open=True)`：注册、续约、归还遇到 `BackendUnavailable` 时不再抛错，而是记录 `pool.<name>.fail_open_total`、发布 `coordination_degraded` 事件，并按本地状态继续。此时其他实例看不到本实例的新租约，可能重复占用同一资源——只建议在同实例独占资源、或短时抖动可接受的部署中开启；默认仍是 fail-closed。
 
 ## 优雅停机
 
@@ -65,10 +34,7 @@ ps = Purser(
 
 ## 隔离约束
 
-- **同一进程内**的两个 `Purser` 实例不能共享 SQLite 文件、MySQL 库、Redis DB 或适配器实例；半共享会产生无法对账的租约/槽位视图，库会在装配时抛 `IsolationConflict`。
-- **一个实例不能跨进程共享**：不可 pickle；`fork` 继承的实例在子进程首次调用时报错。
-- 需要跨进程共享同一资源集合时，使用 `LocalScheduler`，而不是传递 `Purser` 对象。
-- `PURSER_ALLOW_SHARED_BACKENDS=1` 只对“一个进程内模拟多主机”的测试脚手架放宽后端身份校验，不会允许跨进程共享实例。
+同一进程内的两个实例不能共享后端或适配器，实例也不能跨进程传递；完整规则与 `PURSER_ALLOW_SHARED_BACKENDS` 的适用范围见[门面族：进程边界](facades.md#process-boundary)。跨进程共享同一资源集合用 `LocalScheduler`。
 
 ## 锁与重试
 
@@ -85,3 +51,5 @@ curl http://127.0.0.1:8000/audit/verify
 ```
 
 `/service` 返回当前 `storage` / `coordination` 与池列表，用于确认每个实例确实接入了同一套后端。
+
+相关页面：[后端配置示例](backend-configuration.md)、[数据平面与丢失语义](../design/data-planes.md)、[生产检查清单](production-checklist.md)、[可观测性](observability.md)。

@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-26
+
+本次发布把一批运维方法收进 `pool.admin`，导入默认改为 `auto`，并让租约首次调用自动启动运行时。
+
 ### 变更（破坏性）
 
 - 池对象的 18 个运维方法（`validate_now` / `ban` / `unban` / `suspend` / `resume` /

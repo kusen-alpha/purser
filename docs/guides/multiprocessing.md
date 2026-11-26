@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 同主机多 worker 共享一批代理/账号，不想引 Redis | `LocalScheduler` | `purser.local` |
 | 跨主机、多实例横向扩容，需要 REST / Web UI | `purser serve` + Redis | [多实例部署](multi-instance.md) |
-| 仅单进程内多线程 | `SyncPurser` | [同步 Purser](sync-facade.md) / [多线程使用](threading.md) |
+| 仅单进程内多线程 | `SyncPurser` | [同步 Purser：线程池示例](sync-facade.md#threadpool) |
 
 ## 同主机：LocalScheduler
 
@@ -63,7 +63,7 @@ if __name__ == "__main__":
 多实例部署见 [多实例部署](multi-instance.md)：每个实例连同一套 `sqlite` / `mysql` + `redis`，通过 REST API 或各实例自己的客户端共享同一资源集合。此时注意：
 
 - `PURSER_REDIS_URL` 只提供连接串，**不会**自动切换协调层；必须同时设置 `PURSER_COORDINATION=redis`；
-- 协调层 Redis 必须按持久化组件部署（AOF），丢失在途租约会导致同一资源被并发使用；
+- 协调层 Redis 必须按持久化组件部署（AOF），丢失在途租约会导致同一资源被并发使用，见[数据平面](../design/data-planes.md#redis-persistence)；
 - worker 与实例之间不传 purser 对象，只通过服务地址交互。
 
 ## 常见问题

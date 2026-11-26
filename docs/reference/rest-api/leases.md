@@ -1,4 +1,6 @@
-# 租约
+# Leases
+
+租约端点：获取（含批量）、列表与详情、续约、归还。租约由任一实例签发，读写都走协调层。
 
 ## 端点
 
@@ -42,7 +44,7 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/leases \
 | `mode` | `atomic` | 批量模式：`atomic` / `best_effort` |
 | `n_min` | `null` | `best_effort` 的最低数量 |
 
-`probe` 可传目标 URL，启用“取得前按目标实时验活”（同 `AcquireRequest.probe`）；`affinity` 仍是未实现的保留字段，传入返回 `422`。
+`probe` 可传目标 URL，启用“取得前按目标实时验活”（同 `AcquireRequest.probe`）。Python API 的 `AcquireRequest.affinity` 已支持按自定义键复用亲和历史；REST 请求体仍不接受 `affinity`，传入返回 `422`。
 
 响应：
 
@@ -51,18 +53,25 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/leases \
   "leases": [
     {
       "token": "l_...",
-      "pool": "proxies",
       "resource_id": "r2",
       "consumer": "crawler-a",
       "slots": 1,
       "started_at": 1731000000.0,
       "expires_at": 1731000060.0,
-      "heartbeat_at": 1731000000.0
+      "priority": 0,
+      "use_limit": null,
+      "used": 0,
+      "target": null,
+      "trace_id": "t_...",
+      "outcome": "ok",
+      "payload": {"host": "10.0.0.2", "port": 8080}
     }
   ],
   "count": 1
 }
 ```
+
+单个租约视图不含 `pool`；组合租约响应的每个成员会额外带 `pool` 区分来源池。`payload` 在非 admin 请求中会被掩码。
 
 批量获取额外返回 `requested` / `mode` / `n_min`。`atomic` 任一项不足则整体回滚；`best_effort` 低于 `n_min` 抛 `PoolExhausted`。
 

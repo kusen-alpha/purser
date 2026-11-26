@@ -7,6 +7,7 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - "purser/ui/static/**"
+      - "scripts/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -30,6 +31,8 @@ jobs:
           cache: pip
       - name: Install
         run: pip install -e ".[docs]"
+      - name: docs check (links, anchors, catalogs)
+        run: python scripts/check_docs.py
       - name: mkdocs build --strict
         run: mkdocs build --strict
       - name: Deploy to GitHub Pages

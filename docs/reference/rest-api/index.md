@@ -1,6 +1,6 @@
 # REST API
 
-`purser serve` 启动的 FastAPI 应用同时服务 REST API、Web 控制台（`/`）与 OpenAPI 文档（`/docs`）。本组页面按资源组分组织端点；端点级签名以 OpenAPI 为准。
+`purser serve` 启动的 FastAPI 应用同时服务 REST API、Web 控制台（`/`）与 OpenAPI 文档（`/docs`）。本组页面按资源组组织端点；端点级签名以 OpenAPI 为准。
 
 ## 基础约定
 
@@ -26,17 +26,21 @@
 
 完整异常清单见 [错误处理](../errors.md)。
 
+业务错误统一返回 `{"detail": "..."}`；业务异常不携带 `PurserError.code` / `retryable`。FastAPI 参数校验失败时，`detail` 为字段错误数组。需要结构化错误码时使用 Python API 的 `error_by_code` / `is_retryable`。
+
 ## 幂等
 
 创建池、导入资源、获取租约、恢复备份支持 `Idempotency-Key` 头：同一键重复提交返回首次结果；租约与恢复场景会额外带 `"replayed": true`。
+
+默认 TTL 为 600 秒，只有成功结果会写入缓存，失败请求不占用键。租约键按 `lease:<pool>:<role>:<key>`、恢复按 `restore:<role>:<key>` 组合，创建池与导入资源直接使用请求头值，因此同键应在全局唯一，跨池复用会命中旧结果。当前没有进行中请求的合流：并发提交同一键可能各自执行，后完成者覆盖缓存。单进程使用内存存储；多实例部署需让 `Purser` 共享 Redis 存储。
 
 ## 端点地图
 
 | 资源组 | 页面 | 主要路径 |
 | --- | --- | --- |
-| 池 | [pools](pools.md) | `/pools`、`/pools/{pool}`、`/pools/{pool}/drain`、`/pools/{pool}/recall`、`/pools/{pool}/maintenance/{task}` |
-| 资源 | [resources](resources.md) | `/pools/{pool}/resources`、`/pools/{pool}/resources/{rid}`、动作与 `revoke`、`move`、`admin-state` |
-| 租约 | [leases](leases.md) | `/pools/{pool}/leases`、`/pools/{pool}/leases/{token}`、`/renew` |
-| 事件 | [events](events.md) | `/pools/{pool}/events`、`/pools/{pool}/events/history` |
-| 报表 | [reports](reports.md) | `/reports/usage`、`/pools/{pool}/validate-jobs` |
-| 管理 | [admin](admin.md) | `/healthz`、`/readyz`、`/metrics`、`/audit`、`/adapters`、`/config/schema`、`/backup`、`/restore` |
+| 池 | [Pools](pools.md) | `/pools`、`/pools/{pool}`、`/pools/{pool}/drain`、`/pools/{pool}/recall`、`/pools/{pool}/maintenance/{task}` |
+| 资源 | [Resources](resources.md) | `/pools/{pool}/resources`、`/pools/{pool}/resources/{rid}`、动作与 `revoke`、`move`、`admin-state` |
+| 租约 | [Leases](leases.md) | `/pools/{pool}/leases`、`/pools/{pool}/leases/{token}`、`/renew` |
+| 事件 | [Events](events.md) | `/pools/{pool}/events`、`/pools/{pool}/events/history` |
+| 报表 | [Reports](reports.md) | `/reports/usage`、`/pools/{pool}/validate-jobs` |
+| 管理 | [Admin](admin.md) | `/healthz`、`/readyz`、`/metrics`、`/audit`、`/adapters`、`/config/schema`、`/backup`、`/restore` |

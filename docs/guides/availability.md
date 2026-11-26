@@ -44,10 +44,6 @@
 
 通过 `PoolConfig(expires_in=N)` 导入的资源会自动设置 `expires_at = now + N`；已有 `expires_at` 的资源以自身值为准。
 
-!!! warning "到期不是定时推进"
-
-    `expires_at` 是截止时间，不是“最早可用时间”，也不会自动延期。到期处理由获取路径触发，没有单独的定时器逐个扫描；如果资源长时间无人获取，它会保持原状态，直到下一次 `acquire()` 触碰后才转入 `SUSPENDED` / `QUOTA_EXHAUSTED`。
-
 ### 冷却、隔离与消费者级暂停
 
 `Resource.usable_at()` 取以下三者的最大值：

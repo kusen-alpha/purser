@@ -30,7 +30,7 @@ async def main():
 
     async with pool.lease(consumer="crawler-a", tags=["http"]) as lease:
         res = lease.resource  # acquire 时加载的类型化快照，不再多读一次库
-        print(res.host, res.port, res.country, res.extra)  # 3128 已是 int
+        print(res.host, res.port, res.country, res.extra)  # 8080 已是 int
 
 asyncio.run(main())
 ```

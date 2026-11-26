@@ -125,7 +125,7 @@ def worker(address):
 | `pool_call(pool, method, ...)` | 调用白名单内的池方法；管理方法（`ban` / `drain` / `validate_now` 等）路由到调度进程的 `pool.admin` |
 | `shutdown()` / `close()` | 关闭调度进程 / 仅断开客户端 |
 
-`RemoteLease` 暴露 `token` / `resource_id` / `consumer` / `slots` / `expires_at` / `payload` / `resource` / `replayed` 等属性，并支持 `with` 与显式 `release()`。它是一次**快照**：调度进程会自动续租，但 worker 手里的 `expires_at` 只在 `acquire()` / `renew()` 时刷新，因此 `expired()` 仅供本地参考。
+`RemoteLease` 暴露 `token` / `resource_id` / `consumer` / `slots` / `expires_at` / `payload` / `resource` / `replayed` 等属性，并支持 `with` 与显式 `release()`。它是一次**快照**：调度进程会自动续约，但 worker 手里的 `expires_at` 只在 `acquire()` / `renew()` 时刷新，因此 `expired()` 仅供本地参考。
 
 ### 异步门面 `connect()`
 

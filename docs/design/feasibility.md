@@ -1,5 +1,7 @@
 # purser 同步版 / 多线程 / 多进程支持可行性分析
 
+> 归档：本文记录当时的设计决策，路径与实现可能已变化；当前行为以源码与参考页为准。
+
 > 分析对象：当前工作树中的异步内核及其后端、公开 API 和测试，不以 Git HEAD 或历史测试总数代替现状。
 > 初始分析及主要探针验证：2026-11-07；文档修订：2026-11-08。
 > 状态：本文是可行性分析与实施建议。**同步门面已在 `purser/sync.py` 落地；单实例六组合已在真实 MySQL 8.4 与 Redis 7.2.4 上通过验收矩阵；V25/V26 及跨实例 V29/V32 竞态已修复；同进程/跨进程隔离守卫与存储↔协调双向绑定已落地；同步故障注入、长时压力与性能基准已补测；其余内核 P0 未修复。** 下文明确区分当前行为、实测反例和契约要求。
@@ -51,7 +53,7 @@
 | MySQL | memory | 可设计 | 单实例验收通过（8 项，MySQL 8.4 实连） | 连接在所属 loop 初始化；需要秘密字段的池须稳定密钥 |
 | MySQL | Redis | 可设计 | 单实例验收通过（8 项，MySQL 8.4 + Redis 7.2.4 实连） | 两类客户端统一所有权；共享后端扩展前仍需修基础协议 |
 
-验收矩阵见 [tests/test_sync_acceptance.py](tests/test_sync_acceptance.py)，覆盖公开方法面、生命周期与 CRUD、租约回写、迭代、事件、备份恢复、重启持久化、6 线程争用、等待与超时、关闭幂等及关闭竞争、管理操作。六个组合共 49 项通过（含 1 项公共 API 面检查）；MySQL 连接内网测试主机的 MySQL 8.4.0（root、空密码、专用库 `purser_sync_acceptance`），Redis 连接同一主机的 Redis 7.2.4（专用 DB 15）。既有 `tests/test_mysql.py` 5 项、真实 Redis 专项 9 项通过；[tests/test_sync_fault_stress.py](tests/test_sync_fault_stress.py) 6 项覆盖协调写失败回滚、协调删除失败保留租约、存储归还失败恢复 token、撤销/归还 60 轮竞争、8 线程 × 40 次长时压力与跨线程心跳；[tests/test_sync_cross_instance.py](tests/test_sync_cross_instance.py) 每个共享后端组合 7 项覆盖跨实例容量、可见性、撤销、陈旧归还、启动对账、定向等待、通用等待轮询唤醒、硬崩溃 TTL 回收与双进程竞争；[tests/test_sync_static_shards.py](tests/test_sync_static_shards.py) 以双 OS 进程覆盖五种静态分片形态的分片内单槽容量、跨分片隔离与重启语义（含 1 项重叠实例 xfail、1 项共享 Redis 池名反例断言）；[tests/test_service_central_matrix.py](tests/test_service_central_matrix.py) 以真实 uvicorn 子进程覆盖六组合的中心调度服务，6 项全通过（§1.5.1）；[tests/test_local_scheduler.py](tests/test_local_scheduler.py) 覆盖同机 IPC 调度，11 项全通过（§1.5.2）；[tests/test_cross_process_memory_guard.py](tests/test_cross_process_memory_guard.py) 覆盖 memory 半共享组合的跨进程拒绝与释放，9 项全通过（§1.5.3）；[tests/test_pool_binding.py](tests/test_pool_binding.py) 覆盖存储端与调度端的双向绑定，15 项全通过（§1.5.4）。异步共享后端双实例用例在配置真实 Redis 时直连网络，不再以 fakeredis 结论代替。启用真实服务后的全量为 1042 passed / 40 skipped / 1 xfailed。该矩阵不覆盖第五章仍存在的其他 P0、跨实例推送通知/去重等全局语义与生产容量；跨实例核心租约语义见 §1.5，静态分片见 §1.6，性能结果见 §7.4。
+验收矩阵见 [tests/test_sync_acceptance.py](../../tests/test_sync_acceptance.py)，覆盖公开方法面、生命周期与 CRUD、租约回写、迭代、事件、备份恢复、重启持久化、6 线程争用、等待与超时、关闭幂等及关闭竞争、管理操作。六个组合共 49 项通过（含 1 项公共 API 面检查）；MySQL 连接内网测试主机的 MySQL 8.4.0（root、空密码、专用库 `purser_sync_acceptance`），Redis 连接同一主机的 Redis 7.2.4（专用 DB 15）。既有 `tests/test_mysql.py` 5 项、真实 Redis 专项 9 项通过；[tests/test_sync_fault_stress.py](../../tests/test_sync_fault_stress.py) 6 项覆盖协调写失败回滚、协调删除失败保留租约、存储归还失败恢复 token、撤销/归还 60 轮竞争、8 线程 × 40 次长时压力与跨线程心跳；[tests/test_sync_cross_instance.py](../../tests/test_sync_cross_instance.py) 每个共享后端组合 7 项覆盖跨实例容量、可见性、撤销、陈旧归还、启动对账、定向等待、通用等待轮询唤醒、硬崩溃 TTL 回收与双进程竞争；[tests/test_sync_static_shards.py](../../tests/test_sync_static_shards.py) 以双 OS 进程覆盖五种静态分片形态的分片内单槽容量、跨分片隔离与重启语义（含 1 项重叠实例 xfail、1 项共享 Redis 池名反例断言）；[tests/test_service_central_matrix.py](../../tests/test_service_central_matrix.py) 以真实 uvicorn 子进程覆盖六组合的中心调度服务，6 项全通过（§1.5.1）；[tests/test_local_scheduler.py](../../tests/test_local_scheduler.py) 覆盖同机 IPC 调度，11 项全通过（§1.5.2）；[tests/test_cross_process_memory_guard.py](../../tests/test_cross_process_memory_guard.py) 覆盖 memory 半共享组合的跨进程拒绝与释放，9 项全通过（§1.5.3）；[tests/test_pool_binding.py](../../tests/test_pool_binding.py) 覆盖存储端与调度端的双向绑定，15 项全通过（§1.5.4）。异步共享后端双实例用例在配置真实 Redis 时直连网络，不再以 fakeredis 结论代替。启用真实服务后的全量为 1042 passed / 40 skipped / 1 xfailed。该矩阵不覆盖第五章仍存在的其他 P0、跨实例推送通知/去重等全局语义与生产容量；跨实例核心租约语义见 §1.5，静态分片见 §1.6，性能结果见 §7.4。
 
 ### 1.3 多线程：共享一个同步门面
 
@@ -66,7 +68,7 @@
 
 每线程各建一个 `Purser` 属于**多实例**，不是此表的共享门面模式。若这些实例共享后端，第五章问题即使在同一进程内也适用；当前实现直接拒绝这种半共享（§1.4.1）。
 
-§1.2 的验收矩阵与故障/压力专项已覆盖 6 线程争用、关闭竞争、后端故障注入、撤销/归还竞争、跨线程心跳及 8 线程 × 40 次长时压力（MySQL 8.4、Redis 7.2.4 实连）；跨实例部分另见 §1.5 与 [tests/test_sync_cross_instance.py](tests/test_sync_cross_instance.py)。审计写阻塞、跨实例通知/等待与目标环境容量仍未验收，不能把上述结果等同于生产级多线程验收。
+§1.2 的验收矩阵与故障/压力专项已覆盖 6 线程争用、关闭竞争、后端故障注入、撤销/归还竞争、跨线程心跳及 8 线程 × 40 次长时压力（MySQL 8.4、Redis 7.2.4 实连）；跨实例部分另见 §1.5 与 [tests/test_sync_cross_instance.py](../../tests/test_sync_cross_instance.py)。审计写阻塞、跨实例通知/等待与目标环境容量仍未验收，不能把上述结果等同于生产级多线程验收。
 
 ### 1.4 多线程：不共享一个同步门面
 
@@ -81,11 +83,11 @@
 | MySQL | memory | 存储共享、协调各自独立 | 不成立 | 同 SQLite + memory；换数据库不能补上协调缺失 |
 | MySQL | Redis | 两平面共享 | 核心租约语义成立；完整全局语义不成立 | 已实测（含 V29 CAS 重试修复）；剩余缺口与 SQLite + Redis 相同 |
 
-证据边界：跨实例专项 [tests/test_sync_cross_instance.py](tests/test_sync_cross_instance.py) 正是本形态——同进程两个 `SyncPurser`、各自事件循环线程、共享 SQLite/MySQL + Redis，因此两平面共享的两行有直接实测。这类用例通过 `PURSER_ALLOW_SHARED_BACKENDS=1` 夹具模拟两台主机；生产代码中的同进程半共享已由 §1.4.1 的守卫拒绝。memory 协调两行由“协调层实例私有”推断，并有异步内核同进程探针 V02/V05 支持；未作为同步门面专项单列通过。
+证据边界：跨实例专项 [tests/test_sync_cross_instance.py](../../tests/test_sync_cross_instance.py) 正是本形态——同进程两个 `SyncPurser`、各自事件循环线程、共享 SQLite/MySQL + Redis，因此两平面共享的两行有直接实测。这类用例通过 `PURSER_ALLOW_SHARED_BACKENDS=1` 夹具模拟两台主机；生产代码中的同进程半共享已由 §1.4.1 的守卫拒绝。memory 协调两行由“协调层实例私有”推断，并有异步内核同进程探针 V02/V05 支持；未作为同步门面专项单列通过。
 
 不共享门面不会自动带来隔离或正确性：
 
-- **租约对象不可跨门面传递**：`SyncLease` 绑定所属门面与池，交给另一门面的 `release` 会抛 `ValueError("lease belongs to a different SyncPool")`（[purser/sync.py:447](purser/sync.py#L447)）。跨门面管理只能通过共享后端提供的查询与撤销接口。
+- **租约对象不可跨门面传递**：`SyncLease` 绑定所属门面与池，交给另一门面的 `release` 会抛 `ValueError("lease belongs to a different SyncPool")`（[purser/sync.py:447](../../purser/sync.py#L447)）。跨门面管理只能通过共享后端提供的查询与撤销接口。
 - **命名空间按池名划分**：Redis 键为 `purser:{pool}:...`，同一 Redis DB 下同名池即同一租约域；不同资源集合必须使用不同池名或不同 DB。`Purser` 当前未暴露 `key_prefix`，幂等存储在整库范围共享（V20），不能假设不同池完全隔离。
 - **实例内状态不合并**：等待队列、consumer 去重辅助状态、亲和性、验活任务、事件、用量、审计内存链、指标都属于各自门面；共享后端不会自动汇总（§2.4、§5.2）。
 - **生命周期各自负责**：关闭一个门面不影响其他门面，但它持有的租约要等 TTL 或对账回收；每个实例都必须在自己的 `finally` 中关闭。
@@ -98,7 +100,7 @@
 
 #### 1.4.1 同进程多实例的运行时隔离约束
 
-同一进程内允许多个 `Purser` 并存，但每个实例必须拥有全新的调度平面，不得与另一个存活实例交叉共享其中任何一部分。该约束在库内识别，并在接线点抛出 `IsolationConflict`（`ConfigError` 子类），而不是只靠文档约定。实现见 [purser/isolation.py](purser/isolation.py)：
+同一进程内允许多个 `Purser` 并存，但每个实例必须拥有全新的调度平面，不得与另一个存活实例交叉共享其中任何一部分。该约束在库内识别，并在接线点抛出 `IsolationConflict`（`ConfigError` 子类），而不是只靠文档约定。实现见 [purser/isolation.py](../../purser/isolation.py)：
 
 | 共享对象 | 识别点 | 键（已去敏） |
 | --- | --- | --- |
@@ -117,10 +119,10 @@
 - 后端身份识别是进程内的；不同 OS 进程各自创建实例后共享同一文件/库属于 §1.5 的跨实例形态，不受此表约束。实例对象本身跨进程另由下面的 pickle/PID 检查拒绝。
 - 同一 Redis/MySQL 端点以“URL”和“外部客户端对象”两种形式混用时，库无法反查对象指向，只按各自形式识别；此时需调用方保证二者不指向同一 DB。否则仍可能在对象层面漏报。
 - `PURSER_ALLOW_SHARED_BACKENDS=1` 仅供“在单进程内模拟多主机”的验收/压测夹具使用；正常业务不得开启。
-- 专项 [tests/test_isolation_guard.py](tests/test_isolation_guard.py) 14 项覆盖五类禁止、完全独立允许、同实例多池、删池释放认领、构造失败回滚、凭据去敏匹配、豁免开关及 SQLite 硬链接身份；`SyncPurser.close()` 与 `Purser.close()` 均释放认领。
+- 专项 [tests/test_isolation_guard.py](../../tests/test_isolation_guard.py) 14 项覆盖五类禁止、完全独立允许、同实例多池、删池释放认领、构造失败回滚、凭据去敏匹配、豁免开关及 SQLite 硬链接身份；`SyncPurser.close()` 与 `Purser.close()` 均释放认领。
 - **实例本身不能跨进程。** `Purser` / `ResourcePool` / `SyncPurser` / `SyncPool` 的 `__getstate__` 直接抛 `IsolationConflict`，spawn、进程池或任何 pickle 传参在序列化阶段即失败；`fork` 继承的实例带创建时 PID，子进程首次调用 `start` / `create_pool` / `acquire` / `backup` / `close` 等入口即抛错，不会继续使用已停止的线程、已关闭的事件循环或复制来的连接。
 - `fork` 子进程的 `atfork` 钩子会清空进程内后端身份登记表，因此子进程新建的 `Purser` 与父进程实例互不认领；这既符合“每个进程各自创建实例”，也让 `start_method="fork"` 的 `LocalScheduler` 不受影响。豁免开关只关闭后端身份判定，不关闭上述 PID 检查与 pickle 拒绝。
-- 专项 [tests/test_isolation_process.py](tests/test_isolation_process.py) 覆盖四类对象的 pickle 拒绝、PID 不一致拒绝与子进程重建；POSIX `fork` 用例 3 项（继承实例拒绝、继承池拒绝、子进程自建成功）在 Windows 上跳过，由 PID 模拟用例补齐。
+- 专项 [tests/test_isolation_process.py](../../tests/test_isolation_process.py) 覆盖四类对象的 pickle 拒绝、PID 不一致拒绝与子进程重建；POSIX `fork` 用例 3 项（继承实例拒绝、继承池拒绝、子进程自建成功）在 Windows 上跳过，由 PID 模拟用例补齐。
 
 选择：需要跨线程共享一个资源集合时，共享一个 `Purser`/`SyncPurser`（§1.3）；需要独立集合时使用不同文件/库（或 §1.6 静态分片）；同机多进程使用 §1.5.2 的 IPC 调度。跨进程绝不能共享同一个实例对象：要么每个进程各自创建（§1.5、§1.6），要么由单一调度进程持有唯一实例（§1.5.1、§1.5.2）。
 
@@ -141,13 +143,13 @@
 
 “当前实现不是共享方案”限定于现有后端职责；并非断言未来不能增加数据库协调、外部调度服务等新架构。中心调度服务已在单副本形态落地并实测（§1.5.1）；同机多进程/进程池可使用本地 IPC 调度（§1.5.2），其数据面不按后端分支，已抽测 memory/memory、SQLite/Redis、MySQL/Redis 三种，其余三种为同一数据面的推断。数据库协调与其他协调后端仍未实现。
 
-跨实例专项 [tests/test_sync_cross_instance.py](tests/test_sync_cross_instance.py) 以两个独立 `SyncPurser`（各自事件循环线程）和两个 `spawn` OS 进程实连 SQLite/MySQL + Redis 7.2.4，覆盖：全局容量与无超卖、跨实例租约可见、`force_revoke`、陈旧归还 no-op、启动对账保留活跃租约、定向获取轮询唤醒、通用等待者轮询唤醒、硬崩溃后 TTL 回收与重启对账、双进程 12 轮竞争。两个共享后端组合均为 7 项全通过、无 xfail；通用等待者的最坏唤醒延迟由 100 ms 轮询间隔决定，不是推送。异步内核的同 loop 双实例用例（`test_edge_cases` / `test_chaos_storm`）现已直连真实 Redis，但仍是同 loop 双实例，只能佐证真实网络协议层行为，不能当作多进程结论；多进程结论以本专项与静态分片专项为准。该验收**不代表**跨实例事件、幂等去重、维护接管、配额/报表作用域等全局能力已实现。
+跨实例专项 [tests/test_sync_cross_instance.py](../../tests/test_sync_cross_instance.py) 以两个独立 `SyncPurser`（各自事件循环线程）和两个 `spawn` OS 进程实连 SQLite/MySQL + Redis 7.2.4，覆盖：全局容量与无超卖、跨实例租约可见、`force_revoke`、陈旧归还 no-op、启动对账保留活跃租约、定向获取轮询唤醒、通用等待者轮询唤醒、硬崩溃后 TTL 回收与重启对账、双进程 12 轮竞争。两个共享后端组合均为 7 项全通过、无 xfail；通用等待者的最坏唤醒延迟由 100 ms 轮询间隔决定，不是推送。异步内核的同 loop 双实例用例（`test_edge_cases` / `test_chaos_storm`）现已直连真实 Redis，但仍是同 loop 双实例，只能佐证真实网络协议层行为，不能当作多进程结论；多进程结论以本专项与静态分片专项为准。该验收**不代表**跨实例事件、幂等去重、维护接管、配额/报表作用域等全局能力已实现。
 
 即使业务不需要全局事件、等待或去重，也仍需先解决容量、取消、过期、撤销等基础问题；不能以“只用简单 acquire/release”为由跳过正确性验收。
 
 ### 1.5.1 中心调度服务（E）：单副本让六种组合对客户端可用
 
-现有 `purser serve` 与 REST API 已提供中心调度服务的骨架（[purser/ui/server.py](purser/ui/server.py)）：服务进程持有唯一的 `Purser`，客户端只能通过 HTTP 获取/归还租约、查询资源与事件；服务端可用 `--storage/--coordination` 选择六种组合之一。实测见 [tests/test_service_central_matrix.py](tests/test_service_central_matrix.py)：每个组合启动真实 `uvicorn` 进程，客户端仅经网络调用，覆盖组合回显、导入、获取、幂等重放、容量耗尽、跨客户端等待唤醒、事件历史与释放归零，六组合全部通过。
+现有 `purser serve` 与 REST API 已提供中心调度服务的骨架（[purser/ui/server.py](../../purser/ui/server.py)）：服务进程持有唯一的 `Purser`，客户端只能通过 HTTP 获取/归还租约、查询资源与事件；服务端可用 `--storage/--coordination` 选择六种组合之一。实测见 [tests/test_service_central_matrix.py](../../tests/test_service_central_matrix.py)：每个组合启动真实 `uvicorn` 进程，客户端仅经网络调用，覆盖组合回显、导入、获取、幂等重放、容量耗尽、跨客户端等待唤醒、事件历史与释放归零，六组合全部通过。
 
 关键结论：**单副本时六种组合从客户端视角都成立**，包括 memory/memory——共享边界从“客户端进程”移到了“服务进程”。选择哪种组合不再决定客户端能否共享，而决定服务端的持久化与故障切换能力：
 
@@ -168,7 +170,7 @@
 
 ### 1.5.2 本地 IPC 调度：同机多进程与进程池
 
-HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机多进程的落地方案是 [purser/local](purser/local/scheduler.py)：`LocalScheduler` 启动一个独立调度进程，进程内持有唯一的 `SyncPurser`；worker 进程通过标准库 `multiprocessing.connection`（Windows 命名管道 / POSIX Unix domain socket）接入，消息为长度前缀 JSON（协议 v1），并带 32 字节随机 `authkey`。调度进程内不启动 HTTP 服务。
+HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机多进程的落地方案是 [purser/local](../../purser/local/scheduler.py)：`LocalScheduler` 启动一个独立调度进程，进程内持有唯一的 `SyncPurser`；worker 进程通过标准库 `multiprocessing.connection`（Windows 命名管道 / POSIX Unix domain socket）接入，消息为长度前缀 JSON（协议 v1），并带 32 字节随机 `authkey`。调度进程内不启动 HTTP 服务。
 
 | worker 接入方式 | 用法 |
 | --- | --- |
@@ -186,7 +188,7 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 - 错误映射：服务端的结构化错误码在客户端重建为对应的 `PurserError` 子类（`PoolExhausted`、`PoolNotFound`、`LeaseConflict` 等）；调度进程不可达或不响应分别抛 `SchedulerUnavailable` / `SchedulerTimeout`。
 - 连接是线程本地、进程本地的：客户端对象可以跨线程使用；`fork` 后通过 PID 检测惰性重连，连接对象从不跨进程 pickle。
 
-验收见 [tests/test_local_scheduler.py](tests/test_local_scheduler.py)（11 项全通过）：协议字节往返、同进程数据面、阻塞获取被释放唤醒、`spawn` 单进程、`Pool` initializer 共享容量、`ProcessPoolExecutor`、环境变量发现、worker `os._exit` 后租约回收、调度进程被杀后的错误上报，以及真实 SQLite + Redis、MySQL + Redis 两种共享后端下 worker 获取/归还。全量（含本专项）为 1042 passed / 40 skipped / 1 xfailed。
+验收见 [tests/test_local_scheduler.py](../../tests/test_local_scheduler.py)（11 项全通过）：协议字节往返、同进程数据面、阻塞获取被释放唤醒、`spawn` 单进程、`Pool` initializer 共享容量、`ProcessPoolExecutor`、环境变量发现、worker `os._exit` 后租约回收、调度进程被杀后的错误上报，以及真实 SQLite + Redis、MySQL + Redis 两种共享后端下 worker 获取/归还。全量（含本专项）为 1042 passed / 40 skipped / 1 xfailed。
 
 边界与 §1.5.1 相同，另加三点：
 
@@ -196,7 +198,7 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 
 ### 1.5.3 跨进程 memory 组合的运行时拒绝
 
-§1.5 的三个不成立组合不再只靠文档约定。两个 OS 进程各自创建 `Purser`、指向同一后端命名空间和同一池名时，后启动者在 `ResourcePool.start()` 阶段、任何租约写入或启动对账之前抛出 `IsolationConflict`（`ConfigError` 子类）。实现见 [purser/authority.py](purser/authority.py)：
+§1.5 的三个不成立组合不再只靠文档约定。两个 OS 进程各自创建 `Purser`、指向同一后端命名空间和同一池名时，后启动者在 `ResourcePool.start()` 阶段、任何租约写入或启动对账之前抛出 `IsolationConflict`（`ConfigError` 子类）。实现见 [purser/authority.py](../../purser/authority.py)：
 
 | 组合 | 识别载体 | 冲突范围 | 硬崩溃后的释放 |
 | --- | --- | --- | --- |
@@ -216,11 +218,11 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 - `PURSER_ALLOW_SHARED_BACKENDS=1` 跳过本守卫（夹具模拟多主机用），不会放宽 §1.4.1 的 PID/pickle 检查。
 - SQLite 旁路锁文件在释放后保留，避免“解锁后删除文件”与另一进程打开同名文件的竞态。
 - 旁路文件按 `(st_dev, st_ino)` 命名并放在数据库所在目录：同目录下的硬链接别名落到同一个锁文件，不能靠换路径各拿一把锁绕过守卫。跨目录硬链接因旁路文件本就在各自目录，仍不共用锁；跨主机网络文件系统的 `st_dev/st_ino` 也不保证一致——这两种情况仍是已知缺口。反向标记的存储身份同样取 inode，跨目录硬链接别名在 §1.5.4 会被拒绝；§1.4.1 的同进程身份仍按规范化路径比较，跨目录硬链接别名不在其覆盖内。
-- 专项 [tests/test_cross_process_memory_guard.py](tests/test_cross_process_memory_guard.py) 共 9 项：真实 Redis 下同名池第二进程拒绝、关闭后允许、不同池名允许；SQLite 同名池拒绝/关闭后允许/不同池名允许/硬崩溃自动释放/豁免开关/同目录硬链接别名拒绝与关闭后允许；memory + memory 同名池互不影响；真实 MySQL 同名池拒绝与关闭后允许。无真实服务时后 3 项跳过。全量（含本专项）为 1042 passed / 40 skipped / 1 xfailed。
+- 专项 [tests/test_cross_process_memory_guard.py](../../tests/test_cross_process_memory_guard.py) 共 9 项：真实 Redis 下同名池第二进程拒绝、关闭后允许、不同池名允许；SQLite 同名池拒绝/关闭后允许/不同池名允许/硬崩溃自动释放/豁免开关/同目录硬链接别名拒绝与关闭后允许；memory + memory 同名池互不影响；真实 MySQL 同名池拒绝与关闭后允许。无真实服务时后 3 项跳过。全量（含本专项）为 1042 passed / 40 skipped / 1 xfailed。
 
 ### 1.5.4 存储端与调度端的双向绑定
 
-§1.5.3 只解决“重叠运行”的 memory 半共享，挡不住配置漂移：第一个实例以 SQLite/MySQL + Redis 启动并关闭后，第二个实例改用同一存储 + memory（或另一个 Redis 命名空间）仍会被放行，启动对账会按自己为空的租约视图清零前者的占用；反方向上，两个不同存储（或 memory 与 durable）复用同一个 Redis 池命名空间，也会互相清空对方租约。实现见 [purser/binding.py](purser/binding.py)，由正向持久钉与反向实时标记共同覆盖。
+§1.5.3 只解决“重叠运行”的 memory 半共享，挡不住配置漂移：第一个实例以 SQLite/MySQL + Redis 启动并关闭后，第二个实例改用同一存储 + memory（或另一个 Redis 命名空间）仍会被放行，启动对账会按自己为空的租约视图清零前者的占用；反方向上，两个不同存储（或 memory 与 durable）复用同一个 Redis 池命名空间，也会互相清空对方租约。实现见 [purser/binding.py](../../purser/binding.py)，由正向持久钉与反向实时标记共同覆盖。
 
 **正向：存储 → 协调（持久钉）**
 
@@ -239,7 +241,7 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 - memory 与 `sqlite :memory:` 都报告 `memory` 身份，二者彼此重叠仍由 §1.5.3 的 `RedisAuthority` 拒绝；为此 `sqlite :memory:` + Redis 已并入该守卫（与 memory + Redis 同处理）。
 - 代价：SQLite/MySQL + Redis 的受支持组合在 `start()` 时新增一次 Redis 写（与既有租约注册同等级）；Redis 不可用时以 `BackendUnavailable` 失败，而不是带着未绑定的状态启动。
 - `PURSER_ALLOW_SHARED_BACKENDS=1` 同时跳过正向与反向认领，仅供模拟多主机的夹具使用。
-- 专项 [tests/test_pool_binding.py](tests/test_pool_binding.py) 共 15 项：正向覆盖 SQLite 池 memory→Redis 与 Redis→memory 的跨进程拒绝及同配置重启放行、MySQL 池 Redis→memory 拒绝、Redis `key_prefix` 命名空间不一致拒绝、同库不同池互不绑定、`delete_pool` 后改绑、启动失败回滚；反向覆盖真实 Redis 下不同 SQLite 文件同名池拒绝（同文件放行、关闭后另一文件放行）、durable 与 memory 双向拒绝及关闭后放行、`sqlite :memory:` + Redis 第二进程拒绝，以及 fakeredis 下的认领/拒绝/同存储重领/token 隔离/豁免开关/`close()` 即删标记/同文件硬链接别名共享标记。无真实服务时跨进程项跳过。全量（含本专项）为 1042 passed / 40 skipped / 1 xfailed。
+- 专项 [tests/test_pool_binding.py](../../tests/test_pool_binding.py) 共 15 项：正向覆盖 SQLite 池 memory→Redis 与 Redis→memory 的跨进程拒绝及同配置重启放行、MySQL 池 Redis→memory 拒绝、Redis `key_prefix` 命名空间不一致拒绝、同库不同池互不绑定、`delete_pool` 后改绑、启动失败回滚；反向覆盖真实 Redis 下不同 SQLite 文件同名池拒绝（同文件放行、关闭后另一文件放行）、durable 与 memory 双向拒绝及关闭后放行、`sqlite :memory:` + Redis 第二进程拒绝，以及 fakeredis 下的认领/拒绝/同存储重领/token 隔离/豁免开关/`close()` 即删标记/同文件硬链接别名共享标记。无真实服务时跨进程项跳过。全量（含本专项）为 1042 passed / 40 skipped / 1 xfailed。
 
 ### 1.6 多进程：各自独立后端 / 静态分片
 
@@ -252,7 +254,7 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 | MySQL | memory | 可设计 | 分片内继承单实例；同库不同池名双进程实测通过 | 逻辑分片依赖池名隔离；同库同名池重叠启动由 §1.5.3 拒绝；仍共享 MySQL 实例与容量 |
 | MySQL | Redis | 可设计 | 分片内继承单实例；同库不同池名 + Redis 双进程实测通过 | 存储、租约、幂等、审计及控制面分别定义隔离范围 |
 
-静态分片专项 [tests/test_sync_static_shards.py](tests/test_sync_static_shards.py) 以两个 `spawn` OS 进程、每进程一个 `SyncPurser` 和独立分片实连服务：memory/memory、SQLite/memory、SQLite/Redis、MySQL/memory、MySQL/Redis 五形态均验证同一资源 id（`r0`、`r1`）在两个分片同时各持 1 槽、跨分片资源与租约不可见、释放后归零；SQLite/MySQL 分片重启后资源仍在且占用为 0，memory 分片重启后为空。MySQL 形态为同库不同池名的逻辑分片，SQLite 形态为独立文件。
+静态分片专项 [tests/test_sync_static_shards.py](../../tests/test_sync_static_shards.py) 以两个 `spawn` OS 进程、每进程一个 `SyncPurser` 和独立分片实连服务：memory/memory、SQLite/memory、SQLite/Redis、MySQL/memory、MySQL/Redis 五形态均验证同一资源 id（`r0`、`r1`）在两个分片同时各持 1 槽、跨分片资源与租约不可见、释放后归零；SQLite/MySQL 分片重启后资源仍在且占用为 0，memory 分片重启后为空。MySQL 形态为同库不同池名的逻辑分片，SQLite 形态为独立文件。
 
 两条部署边界已固化为测试：同一 SQLite 分片上 memory 协调的两个实例重叠时，后启动实例的启动对账会把前者的活跃占用清零，从而可重复占槽（xfail，对应 V02/P0-2）；该 xfail 用例通过豁免开关保留，用于复现底层缺陷，生产路径已被 §1.5.3 拒绝。私有存储分片共用 Redis 池名时，后启动分片的启动对账会把另一分片的租约计为自身占用（该专项同样通过豁免开关断言当前行为；不使用开关时，§1.5.4 的反向标记会拒绝后启动者。生产必须使用不同池名或不同 Redis DB）；memory 存储 + Redis 协调的同名池现由 §1.5.3 在启动时直接拒绝。
 
@@ -286,9 +288,9 @@ release：协调删除 → 本地清理 → 存储占用减少 → 用量和事�
 reconcile：扫描存储 → 读取协调租约 → 按总槽位重置存储
 ```
 
-证据：[获取提交](purser/facade.py#L1624)、[归还](purser/facade.py#L1736)、[启动对账](purser/facade.py#L486)。
+证据：[获取提交](../../purser/facade.py#L1624)、[归还](../../purser/facade.py#L1736)、[启动对账](../../purser/facade.py#L486)。
 
-SQLite 的 `reset_usage` **已经有内部版本 CAS**，MySQL 也有事务与版本检查：[SQLite](purser/backends/sqlite.py#L458)、[MySQL](purser/backends/mysql.py#L498)。问题不是“重置完全没有 CAS”，而是 CAS 无法证明其 `target` 来自一个跨两平面一致的租约快照。
+SQLite 的 `reset_usage` **已经有内部版本 CAS**，MySQL 也有事务与版本检查：[SQLite](../../purser/backends/sqlite.py#L458)、[MySQL](../../purser/backends/mysql.py#L498)。问题不是“重置完全没有 CAS”，而是 CAS 无法证明其 `target` 来自一个跨两平面一致的租约快照。
 
 ### 2.2 应验收的不变量
 
@@ -309,7 +311,7 @@ used_slots == sum(slots of authoritative live leases)
 
 ### 2.3 loop 所有权
 
-已创建的 Task、Future、正在使用的异步连接和被绑定的同步原语具有 loop 亲和性。后台心跳、事件分发与维护任务必须由所属 loop 管理：[租约心跳](purser/core/lease.py#L38)、[事件分发](purser/core/events.py#L123)。
+已创建的 Task、Future、正在使用的异步连接和被绑定的同步原语具有 loop 亲和性。后台心跳、事件分发与维护任务必须由所属 loop 管理：[租约心跳](../../purser/core/lease.py#L38)、[事件分发](../../purser/core/events.py#L123)。
 
 本轮 Python 3.11.9 实测：主线程没有 running loop 时构造 `Purser` 和未启动的池可以成功；随后在另一线程统一启动、关闭也能成功。故不能写成“只要主线程构造就必报错”。但把**已启动**实例交给另一 loop，或在没有 running loop 的线程为运行中实例建池，会遇到任务创建或跨 loop 关闭错误。
 
@@ -317,7 +319,7 @@ used_slots == sum(slots of authoritative live leases)
 
 ### 2.4 生命周期及实例内状态
 
-当前获取租约要求已启动；导入、查询等部分管理操作允许启动前使用。运行中的 `Purser.create_pool()` 会安排异步启动任务，而非同步等待全部初始化完成：[启动检查](purser/facade.py#L407)、[建池](purser/facade.py#L3009)。
+当前获取租约要求已启动；导入、查询等部分管理操作允许启动前使用。运行中的 `Purser.create_pool()` 会安排异步启动任务，而非同步等待全部初始化完成：[启动检查](../../purser/facade.py#L407)、[建池](../../purser/facade.py#L3009)。
 
 以下作用域目前主要是实例内，而非全局：
 
@@ -347,7 +349,7 @@ SyncPurser / SyncPool
 
 一个门面持有一个 loop 线程；不要每次调用新建 loop，也不要继承 `Purser` 后混合暴露异步方法。门面负责调用桥接、数据所有权和生命周期，不另写一套调度器、缓存或业务重试。
 
-当前实现位于 [purser/sync.py](purser/sync.py)，导出 `SyncPurser`、`SyncPool`、`SyncLease`、`SyncBatchLease`、`SyncResourceIterator` 和 `SyncSubscription`。异步方法经 `run_coroutine_threadsafe`，普通方法经 `call_soon_threadsafe`；输入在提交前深拷贝，普通输出在所属 loop 内构造快照，租约使用实时代理。`audit`、`metrics`、`idempotency`、`probe_guard` 和 `usage` 通过同步代理暴露；`bus` 不直接暴露，事件由 `subscribe()` / `history()` 提供；`types` 按注册契约返回真实插件实例。基础测试见 [tests/test_sync.py](tests/test_sync.py)，单实例组合验收见 [tests/test_sync_acceptance.py](tests/test_sync_acceptance.py)。
+当前实现位于 [purser/sync.py](../../purser/sync.py)，导出 `SyncPurser`、`SyncPool`、`SyncLease`、`SyncBatchLease`、`SyncResourceIterator` 和 `SyncSubscription`。异步方法经 `run_coroutine_threadsafe`，普通方法经 `call_soon_threadsafe`；输入在提交前深拷贝，普通输出在所属 loop 内构造快照，租约使用实时代理。`audit`、`metrics`、`idempotency`、`probe_guard` 和 `usage` 通过同步代理暴露；`bus` 不直接暴露，事件由 `subscribe()` / `history()` 提供；`types` 按注册契约返回真实插件实例。基础测试见 [tests/test_sync.py](../../tests/test_sync.py)，单实例组合验收见 [tests/test_sync_acceptance.py](../../tests/test_sync_acceptance.py)。
 
 下面的约束是实现与验收标准，而不是“已全部通过”的声明；内核层面的 P0 结论仍以第五章为准。
 
@@ -361,13 +363,13 @@ SyncPurser / SyncPool
 | 插件实例、连接、锁、文件句柄 | 不盲目深拷贝；规定所属 loop、工厂创建或独占使用契约 | 外部已绑定连接不能简单搬入新 loop；插件本身也可能有可变状态 |
 | 普通同步属性与方法 | 经所属 loop 读取 / 调用，返回快照或门面 | 普通 `def` 并不代表可从调用线程直接访问 |
 
-`memory.get()` 返回内部对象，扫描使用浅拷贝：[get](purser/backends/memory.py#L80)、[scan](purser/backends/memory.py#L282)。实测修改返回资源的 `meta` 或扫描结果的嵌套 `concurrency` 能改变存储。门面必须阻断这些跨线程别名，但不应把“保留这种偶然可变别名”列作功能等价目标。
+`memory.get()` 返回内部对象，扫描使用浅拷贝：[get](../../purser/backends/memory.py#L80)、[scan](../../purser/backends/memory.py#L282)。实测修改返回资源的 `meta` 或扫描结果的嵌套 `concurrency` 能改变存储。门面必须阻断这些跨线程别名，但不应把“保留这种偶然可变别名”列作功能等价目标。
 
-拷贝失败也必须定义清楚。当前 `import_resources(Resource)` 有深拷贝，但 dict 经插件 `generate()` 生成的对象不受同一入口约束：[导入路径](purser/facade.py#L968)。因此不能说“不可复制对象在导入时一定已经被拒绝”。
+拷贝失败也必须定义清楚。当前 `import_resources(Resource)` 有深拷贝，但 dict 经插件 `generate()` 生成的对象不受同一入口约束：[导入路径](../../purser/facade.py#L968)。因此不能说“不可复制对象在导入时一定已经被拒绝”。
 
 ### 3.3 Lease 不能简单整体 deepcopy
 
-`Lease` 是可变对象，包含 `used`、`outcome`、`expires_at`、`heartbeat_at`、`slots` 等字段：[定义](purser/core/resource.py#L183)。获取提交已经启动心跳，**原草案不是缺少心跳**；问题是调用方副本与心跳使用的原对象失联。
+`Lease` 是可变对象，包含 `used`、`outcome`、`expires_at`、`heartbeat_at`、`slots` 等字段：[定义](../../purser/core/resource.py#L183)。获取提交已经启动心跳，**原草案不是缺少心跳**；问题是调用方副本与心跳使用的原对象失联。
 
 实测原草案，`lease_ttl=0.15`、`heartbeat_interval=0.03`、`use_limit=1`，调用方设置 `lease.used=1` 后等待：
 
@@ -376,7 +378,7 @@ copy_expired=True, core_expired=False
 copy_used=1, core_used=0
 ```
 
-内核按原对象的 `used` 决定能否续租，续租后也只更新原对象期限：[续租](purser/facade.py#L1695)。因此“字段都复制出来”不等价于“使用行为不变”。
+内核按原对象的 `used` 决定能否续租，续租后也只更新原对象期限：[续租](../../purser/facade.py#L1695)。因此“字段都复制出来”不等价于“使用行为不变”。
 
 建议全量门面使用受控的 `SyncLease`（已实现）：
 
@@ -408,9 +410,9 @@ copy_used=1, core_used=0
 | 关闭期限耗尽 | 检查线程实际是否退出；不能把 `join(timeout)` 返回当作已关闭 |
 | loop 线程内调用同步门面 | 在修改关闭状态、创建待提交协程等副作用之前拒绝，避免自等待和半关闭 |
 
-当前 `_ensure_started()` 只等待尚未结束的 `_start_task`，无法据此保证已失败任务会被重新抛出；`_started` 和 `_running` 又先于成功完成被置真：[池生命周期](purser/facade.py#L383)、[Purser 生命周期](purser/facade.py#L3424)。实测失败任务已经带有 `ValueError` 时，原草案仍能成功返回包装对象。
+当前 `_ensure_started()` 只等待尚未结束的 `_start_task`，无法据此保证已失败任务会被重新抛出；`_started` 和 `_running` 又先于成功完成被置真：[池生命周期](../../purser/facade.py#L383)、[Purser 生命周期](../../purser/facade.py#L3424)。实测失败任务已经带有 `ValueError` 时，原草案仍能成功返回包装对象。
 
-原草案还有启动失败未调用内核 close、loop 内误调 close 先污染标志、executor 未结束时 close 返回但线程仍存活等问题。另一方面，当前池关闭会主动令普通 waiter 收到 `PoolExhausted`：[关闭](purser/facade.py#L424)。所以也不能反向夸大为“所有在途调用遇到 close 都必然永久阻塞”。
+原草案还有启动失败未调用内核 close、loop 内误调 close 先污染标志、executor 未结束时 close 返回但线程仍存活等问题。另一方面，当前池关闭会主动令普通 waiter 收到 `PoolExhausted`：[关闭](../../purser/facade.py#L424)。所以也不能反向夸大为“所有在途调用遇到 close 都必然永久阻塞”。
 
 正常关闭应先在仍运行的 loop 上排空 / 取消业务任务并关闭资源，再完成异步生成器和 executor 清理、停止并关闭 loop，调用线程最终确认线程退出。具体超时预算、强制退出不可实现的边界及异常映射应写入 API 契约。仅把外层超时换成 `asyncio.wait_for` 不能修复内核的双回滚或遗留占用。
 
@@ -434,13 +436,13 @@ copy_used=1, core_used=0
 
 当前实现的 51 个 `owner.method` 均已纳入同步门面。`audit`、`metrics`、`idempotency`、`probe_guard`、`usage` 以同步代理暴露，`types` 返回真实插件实例；`bus` 不直接暴露，改由 `subscribe()`、`history()` 和 `SyncSubscription` 提供同步事件接口。包装缓存按池名复用，删除成功后才失效；`close()` 拒绝来自事件回调线程的关闭调用。
 
-原接口包含普通 `def`、协程、异步生成器和异步上下文管理器；应根据实际调用形式适配，不能全部传给 `run_coroutine_threadsafe`。完整签名以源码为准：[Purser 池访问方法](purser/facade.py#L3009)、[ResourcePool 查询](purser/facade.py#L772)。
+原接口包含普通 `def`、协程、异步生成器和异步上下文管理器；应根据实际调用形式适配，不能全部传给 `run_coroutine_threadsafe`。完整签名以源码为准：[Purser 池访问方法](../../purser/facade.py#L3009)、[ResourcePool 查询](../../purser/facade.py#L772)。
 
 ### 3.6 迭代、事件与插件
 
 **迭代：** `iter_resources` 应保留底层迭代行为，而不是一次 `list()` 消耗全部资源。可选择逐次提交迭代器的 `__anext__()`，或后台 pump + 有界交接缓冲区。后者必须保证满队列不会通过阻塞式 `queue.put()` 卡住所属 loop，并处理取消、背压、异常传递及关闭。同步迭代器要提供显式关闭方式；不能假设调用方 `break` 后生成器一定立刻关闭。`query(limit, offset)` 在并发写入下可能漏项或重复，不是等价替代，也不应额外承诺原迭代器不具备的事务快照。当前实现采用逐次提交 `__anext__()`，`SyncResourceIterator` 同时支持 `close()` 与上下文管理。
 
-**事件：** 当前 `EventBus` 接受普通同步 listener，也会等待返回的协程；同步 listener 直接在 dispatch 所属 loop 执行，阻塞函数会卡住该 loop：[实现](purser/core/events.py#L149)。门面可把同步回调移到 executor，但应定义顺序、超时、丢弃策略、取消、取消订阅与重入规则。当前实现把回调交给固定大小 executor，事件快照在 loop 内构造，沿用总线的监听器超时与失败降级；`SyncSubscription.close()` 可重复调用，回调线程内的 `close()` 会在产生副作用前被拒绝。
+**事件：** 当前 `EventBus` 接受普通同步 listener，也会等待返回的协程；同步 listener 直接在 dispatch 所属 loop 执行，阻塞函数会卡住该 loop：[实现](../../purser/core/events.py#L149)。门面可把同步回调移到 executor，但应定义顺序、超时、丢弃策略、取消、取消订阅与重入规则。当前实现把回调交给固定大小 executor，事件快照在 loop 内构造，沿用总线的监听器超时与失败降级；`SyncSubscription.close()` 可重复调用，回调线程内的 `close()` 会在产生副作用前被拒绝。
 
 “loop await executor，executor 再调用门面”**不必然死锁**：await 会让出 loop，本轮 `listener → executor → SyncPool.stats()` 正常完成。真正危险的是 loop 线程直接调用阻塞门面，或形成闭合依赖环，例如回调等待某操作，而该操作又必须等待当前回调返回。实现可保守禁止某些回调重入，但要区分产品约束与普遍机制。
 
@@ -459,7 +461,7 @@ copy_used=1, core_used=0
 | 另写同步内核 | 独立维护状态机和后端行为 | 不推荐；无必要扩大正确性验证面 |
 | 同类增加 `_sync` 方法 | 显式平行方法入口 | 可行，但本项目更适合用独立门面类型表达 loop 所有权 |
 
-本轮核对 synchronicity 主分支声明 Python >= 3.10，purser 现已将下限提升到 >= 3.10：[项目要求](pyproject.toml#L10)。若考虑引入，仍需按实际选择的发布版本重新核对，不能用库名推断兼容性。Python 3.10 起可直接使用 `asyncio.to_thread` 与 `loop.shutdown_default_executor`；能力检测跳过某 API 不等于清理已经完成。
+本轮核对 synchronicity 主分支声明 Python >= 3.10，purser 现已将下限提升到 >= 3.10：[项目要求](../../pyproject.toml#L10)。若考虑引入，仍需按实际选择的发布版本重新核对，不能用库名推断兼容性。Python 3.10 起可直接使用 `asyncio.to_thread` 与 `loop.shutdown_default_executor`；能力检测跳过某 API 不等于清理已经完成。
 
 核对来源：[synchronicity](https://github.com/modal-labs/synchronicity)、[Playwright 同步上下文](https://github.com/microsoft/playwright-python/blob/main/playwright/sync_api/_context_manager.py)、[universalasync](https://github.com/bitcart/universalasync)、[unasync](https://github.com/python-trio/unasync)。这些对比用于说明机制，不作为 purser 正确性的证明。
 
@@ -487,10 +489,10 @@ copy_used=1, core_used=0
 
 #### P0-1：现有测试会空跑，采样器还可能完全失效
 
-- [多进程压力测试 worker](tests/test_multiprocess_stress.py#L33) 没有 `start()`；`NotStarted` 被 `PurserError` 分支吞掉。实测三个 worker 的成功次数为 `[0, 0, 0]`，测试仍通过。
-- 同文件在主线程创建 SQLite 连接、子线程采样使用，并吞掉采样异常：[采样器](tests/test_multiprocess_stress.py#L98)。实测有效采样 0 次，`ProgrammingError` 被吞 96 次。
-- [多实例 chaos 用例](tests/test_chaos_storm.py#L194) 同样未启动实例；实测 56 次获取尝试、0 次成功，均被允许异常集合吞掉。
-- [真实 Redis 压测采样器](tests/test_redis_real.py#L400) 存在同类跨线程连接使用问题；它已经有 `sum(ok) > 0`，但未发生有效采样时 `max_seen <= 2` 不能证明峰值。
+- [多进程压力测试 worker](../../tests/test_multiprocess_stress.py#L33) 没有 `start()`；`NotStarted` 被 `PurserError` 分支吞掉。实测三个 worker 的成功次数为 `[0, 0, 0]`，测试仍通过。
+- 同文件在主线程创建 SQLite 连接、子线程采样使用，并吞掉采样异常：[采样器](../../tests/test_multiprocess_stress.py#L98)。实测有效采样 0 次，`ProgrammingError` 被吞 96 次。
+- [多实例 chaos 用例](../../tests/test_chaos_storm.py#L194) 同样未启动实例；实测 56 次获取尝试、0 次成功，均被允许异常集合吞掉。
+- [真实 Redis 压测采样器](../../tests/test_redis_real.py#L400) 存在同类跨线程连接使用问题；它已经有 `sum(ok) > 0`，但未发生有效采样时 `max_seen <= 2` 不能证明峰值。
 - 原多进程测试**已有**最终 `used_slots == 0` 断言；该断言在零成功时也能通过，问题不是单纯缺少收尾断言。
 
 整改要求：正确启动；在采样线程内创建并关闭连接；显式记录成功次数、有效样本数和异常；不吞 `NotStarted` 等契约违例；同时使用确定性交错测试和真实服务测试。真实 Redis fixture 会清空其测试 DB，必须只连接明确专用环境。本轮没有执行该真实服务测试。
@@ -505,15 +507,15 @@ copy_used=1, core_used=0
 
 #### P0-3：通用等待不会被其他实例释放唤醒
 
-[通用 waiter](purser/facade.py#L1373) 保存在实例内；释放只服务本地等待者。共享 Redis 后，B 已入队、A 释放，B 仍可等到 `PoolExhausted`，此时存储已有空闲槽位。
+[通用 waiter](../../purser/facade.py#L1373) 保存在实例内；释放只服务本地等待者。共享 Redis 后，B 已入队、A 释放，B 仍可等到 `PoolExhausted`，此时存储已有空闲槽位。
 
-定向路径通过存储轮询可观察释放：[定向获取](purser/facade.py#L1440)。`sleep(min(0.1, remaining))` 表示一次轮询休眠上限，不是“100ms 内一定获取成功”；调度、查询、竞争和故障都会增加延迟。
+定向路径通过存储轮询可观察释放：[定向获取](../../purser/facade.py#L1440)。`sleep(min(0.1, remaining))` 表示一次轮询休眠上限，不是“100ms 内一定获取成功”；调度、查询、竞争和故障都会增加延迟。
 
 可增加通知加重扫，并考虑断线、漏通知和重连后的补扫；周期轮询也是一种权衡。**pub/sub 只通知，不提供全局 FIFO 或优先级公平。** 若目标包含全局公平，须另外设计共享排队及授予协议，不能把多个本地公平队列收到同一通知当成全局公平。
 
 #### P0-4：consumer 去重不是原子的，定向获取也不能保证
 
-通用候选过滤使用实例内 `_consumer_holds`；`mutex_group` 与亲和性也没有全局协调。定向路径会读取协调层，但采用“查询已有 → 再提交”，没有原子条件授予：[consumer 查询](purser/facade.py#L1465)。
+通用候选过滤使用实例内 `_consumer_holds`；`mutex_group` 与亲和性也没有全局协调。定向路径会读取协调层，但采用“查询已有 → 再提交”，没有原子条件授予：[consumer 查询](../../purser/facade.py#L1465)。
 
 本轮区分了两类结果：
 
@@ -542,7 +544,7 @@ used=2, live=3, max_slots=2
 
 #### P0-6：获取取消与异常补偿不闭合
 
-[提交实现](purser/facade.py#L1624) 有两处已验证问题：
+[提交实现](../../purser/facade.py#L1624) 有两处已验证问题：
 
 | 交错点 | 当前行为 | 实测结果 |
 | --- | --- | --- |
@@ -553,7 +555,7 @@ used=2, live=3, max_slots=2
 
 #### P0-7：Redis 注册、删除、续租与 TTL 协议不完整
 
-[RedisCoordination](purser/backends/coordination.py#L128) 使用多个独立命令维护资源 hash、token 索引和资源 ID 集合；TTL 施加在**整个资源 hash**上，而非每个 token。
+[RedisCoordination](../../purser/backends/coordination.py#L128) 使用多个独立命令维护资源 hash、token 索引和资源 ID 集合；TTL 施加在**整个资源 hash**上，而非每个 token。
 
 | 问题 | 故障 / 交错方式 | 已观察结果 |
 | --- | --- | --- |
@@ -571,17 +573,17 @@ used=2, live=3, max_slots=2
 
 | 路径 | 证据 | 问题与结果 |
 | --- | --- | --- |
-| `release` | [facade.py:1736](purser/facade.py#L1736) | 虽先按 token 删除，但减槽使用调用方 `resource_id/slots`；修改合法 Lease 副本的 slots 后可扣掉别人的占用 |
-| `force_revoke` | [facade.py:2504](purser/facade.py#L2504) | 读到旧租约后暂停，旧租约已释放且新租约已获取；恢复后忽略 unregister 返回空仍减槽，得到 `used=0, live=1` |
-| `update_resource` | [facade.py:2568](purser/facade.py#L2568) | 先检查空闲并生成含旧 concurrency 的 patch，再按新读版本 CAS；中间获取可被旧 patch 覆盖 |
-| 心跳失联处理 | [facade.py:2020](purser/facade.py#L2020)、[lease.py:48](purser/core/lease.py#L48) | 处理失联时 unregister 取消当前心跳任务自身，后续异步归还可被取消；实测占用仍为 1、租约及跟踪均已移除 |
-| `release` 与 `force_revoke` 竞争 | 真实 Redis 专项 [test_fault_tolerance.py:102](tests/test_fault_tolerance.py#L102)，原 40 次中 1 次失败（V26） | **已修复**：Redis 删除改为 [Lua 原子删除](purser/backends/coordination.py#L45)，`force_revoke` 只在删除成功时减槽，`release` 仅在存储仍计数该槽位时恢复 token；真实 Redis 15 轮内核回归、60 轮同步竞争均无幽灵租约 |
+| `release` | [facade.py:1736](../../purser/facade.py#L1736) | 虽先按 token 删除，但减槽使用调用方 `resource_id/slots`；修改合法 Lease 副本的 slots 后可扣掉别人的占用 |
+| `force_revoke` | [facade.py:2504](../../purser/facade.py#L2504) | 读到旧租约后暂停，旧租约已释放且新租约已获取；恢复后忽略 unregister 返回空仍减槽，得到 `used=0, live=1` |
+| `update_resource` | [facade.py:2568](../../purser/facade.py#L2568) | 先检查空闲并生成含旧 concurrency 的 patch，再按新读版本 CAS；中间获取可被旧 patch 覆盖 |
+| 心跳失联处理 | [facade.py:2020](../../purser/facade.py#L2020)、[lease.py:48](../../purser/core/lease.py#L48) | 处理失联时 unregister 取消当前心跳任务自身，后续异步归还可被取消；实测占用仍为 1、租约及跟踪均已移除 |
+| `release` 与 `force_revoke` 竞争 | 真实 Redis 专项 [test_fault_tolerance.py:102](../../tests/test_fault_tolerance.py#L102)，原 40 次中 1 次失败（V26） | **已修复**：Redis 删除改为 [Lua 原子删除](../../purser/backends/coordination.py#L45)，`force_revoke` 只在删除成功时减槽，`release` 仅在存储仍计数该槽位时恢复 token；真实 Redis 15 轮内核回归、60 轮同步竞争均无幽灵租约 |
 
 因此“release 只依赖 token，任意复制 Lease 都安全”不准确；也不能以存储支持 CAS 为由推断管理操作和撤销安全。应使用权威记录驱动占用变化，条件删除成功者才取得归还权；管理 patch 需要与前置状态检查处于同一并发控制条件，失联清理不得在完成前取消自身。
 
 #### P0-9：取消等待者会取消共享建池启动任务（已修复）
 
-运行中的 `Purser.create_pool()` 把 `pool.start()` 包成共享 Task；原 `_ensure_started` 直接 `await` 该 Task：[建池](purser/facade.py#L3009)、[启动检查](purser/facade.py#L407)。Python 会将被等待 Task 的取消传播到上游，因此取消任意一个等待中的 `acquire` 会连带取消共享启动任务，其他等待者收到 `CancelledError`，对账中断。
+运行中的 `Purser.create_pool()` 把 `pool.start()` 包成共享 Task；原 `_ensure_started` 直接 `await` 该 Task：[建池](../../purser/facade.py#L3009)、[启动检查](../../purser/facade.py#L407)。Python 会将被等待 Task 的取消传播到上游，因此取消任意一个等待中的 `acquire` 会连带取消共享启动任务，其他等待者收到 `CancelledError`，对账中断。
 
 真实 Redis 的 `test_waiter_cancel_stress_no_invalid_state_and_no_leak[memory-redis]` 原稳定 5/5 失败，fakeredis 3/3 通过（V25）：网络 I/O 扩大了启动窗口。修复为 `_ensure_started` 对共享 Task 使用 `asyncio.shield`，等待者只取消自身；真实 Redis 15 轮全部通过，全量套件不再出现该失败。
 
@@ -614,7 +616,7 @@ SQLite 的写并发受到单写者机制和事务长度影响，MySQL 也受连�
 
 ### 6.2 Redis 隔离不是一个开关
 
-协调层 key 含 `key_prefix`、pool 和 rid：[键构造](purser/backends/coordination.py#L150)。当前 Purser 工厂没有暴露协调层 `key_prefix` 参数：[工厂](purser/facade.py#L2999)。
+协调层 key 含 `key_prefix`、pool 和 rid：[键构造](../../purser/backends/coordination.py#L150)。当前 Purser 工厂没有暴露协调层 `key_prefix` 参数：[工厂](../../purser/facade.py#L2999)。
 
 | 隔离手段 | 能隔离什么 | 不能据此推断什么 |
 | --- | --- | --- |
@@ -623,13 +625,13 @@ SQLite 的写并发受到单写者机制和事务长度影响，MySQL 也受连�
 | 同 DB，不同 pool 名 | 分开当前协调租约键空间 | 不能自动隔离 Purser 的幂等键和全部控制面状态 |
 | 独立 SQL / SQLite 存储 | 分开资源主数据和计数 | 若租约仍共用同名 pool/rid，仍会发生串扰 |
 
-实测独立存储 + 同 Redis 同 pool：B 对账把 A 的租约算进自己的占用；不同 pool 后双方可独立获取，但 A 写入的同名幂等 key，B 仍能读到。原因是 Redis 幂等存储默认前缀为 `purser:idem:`，不带 pool：[实现](purser/idempotency.py#L49)。即便协调选择 memory，只要构造时传入 Redis 参数，也要检查是否启用了共享幂等存储。
+实测独立存储 + 同 Redis 同 pool：B 对账把 A 的租约算进自己的占用；不同 pool 后双方可独立获取，但 A 写入的同名幂等 key，B 仍能读到。原因是 Redis 幂等存储默认前缀为 `purser:idem:`，不带 pool：[实现](../../purser/idempotency.py#L49)。即便协调选择 memory，只要构造时传入 Redis 参数，也要检查是否启用了共享幂等存储。
 
-`delete_pool(force=True)` 当前会先检查活跃租约并拒绝删除，不能写成“force 无条件清掉别人的活跃租约”。但检查与后续 flush 不在全局原子边界内，仍需评估其他实例新建租约的竞态：[删除池](purser/facade.py#L3370)。
+`delete_pool(force=True)` 当前会先检查活跃租约并拒绝删除，不能写成“force 无条件清掉别人的活跃租约”。但检查与后续 flush 不在全局原子边界内，仍需评估其他实例新建租约的竞态：[删除池](../../purser/facade.py#L3370)。
 
 ### 6.3 配额按资源 / 外部实体计算
 
-`PoolConfig.max_slots` 在导入时作为每个资源的默认上限，而非进程总并发额度：[导入赋值](purser/facade.py#L1011)。两个分片各有 3 个资源、每资源 2 槽，容量合计是 12，不是配置值 `2 + 2 = 4`。
+`PoolConfig.max_slots` 在导入时作为每个资源的默认上限，而非进程总并发额度：[导入赋值](../../purser/facade.py#L1011)。两个分片各有 3 个资源、每资源 2 槽，容量合计是 12，不是配置值 `2 + 2 = 4`。
 
 应按真实外部实体 e 建立约束：
 
@@ -642,9 +644,9 @@ sum(消耗同一共享上游额度的容量分配) <= 该共享额度
 
 ### 6.4 审计：磁盘链、内存视图、阻塞开销分别判断
 
-[审计存储 append](purser/core/audit.py#L82) 使用 `BEGIN IMMEDIATE`，在事务中读取链尾、分配 seq/prev_hash 并写入；不是完全无保护的单写者假设。
+[审计存储 append](../../purser/core/audit.py#L82) 使用 `BEGIN IMMEDIATE`，在事务中读取链尾、分配 seq/prev_hash 并写入；不是完全无保护的单写者假设。
 
-但 [AuditLog.record](purser/core/audit.py#L196) 先同步内存再写盘，其他写者可能在两步之间插入记录。当前写者取得更新后的 seq，却没有把插队记录补进自身内存，之后增量同步也可能跳过它。
+但 [AuditLog.record](../../purser/core/audit.py#L196) 先同步内存再写盘，其他写者可能在两步之间插入记录。当前写者取得更新后的 seq，却没有把插队记录补进自身内存，之后增量同步也可能跳过它。
 
 实测结果：
 
@@ -659,9 +661,9 @@ sum(消耗同一共享上游额度的容量分配) <= 该共享额度
 
 - SQLite 后端必须显式提供 `sqlite_path`；省略路径的推荐简写不能实际建池。
 - MySQL 池若使用秘密字段，缺少稳定密钥时会被配置检查拒绝。这是现有保护，不是已连接 MySQL 后才发现的问题。
-- SQLite 路径存在时，Purser 会先调用 sidecar key 加载，再把结果传给 codec；codec 只有 key 为 `None` 才读环境变量：[构造](purser/facade.py#L2906)、[codec](purser/crypto.py#L40)。本轮设置 `PURSER_SECRET_KEY` 后，新 SQLite 路径仍未使用该环境密钥。当前部署应明确提供稳定 `secret_key` 或先修正优先级，不能仅建议“配置环境变量即可”。
-- [密钥首次创建](purser/crypto.py#L135) 采用读取失败后生成并直接写文件，存在多创建者竞争。临时文件加覆盖式 rename 只防半文件，不保证所有进程取得相同密钥；需要不覆盖创建 / 互斥和完整读取协议，或统一注入。
-- `RedisIdempotencyStore.aclose()` 已存在，但 `Purser.close()` 未调用；协调层 Redis close 当前也没有完整释放协议。应区分自建和外部注入客户端，避免泄漏，也不能随意关闭其他使用者共享的客户端：[幂等关闭](purser/idempotency.py#L85)、[协调关闭](purser/backends/coordination.py#L248)。
+- SQLite 路径存在时，Purser 会先调用 sidecar key 加载，再把结果传给 codec；codec 只有 key 为 `None` 才读环境变量：[构造](../../purser/facade.py#L2906)、[codec](../../purser/crypto.py#L40)。本轮设置 `PURSER_SECRET_KEY` 后，新 SQLite 路径仍未使用该环境密钥。当前部署应明确提供稳定 `secret_key` 或先修正优先级，不能仅建议“配置环境变量即可”。
+- [密钥首次创建](../../purser/crypto.py#L135) 采用读取失败后生成并直接写文件，存在多创建者竞争。临时文件加覆盖式 rename 只防半文件，不保证所有进程取得相同密钥；需要不覆盖创建 / 互斥和完整读取协议，或统一注入。
+- `RedisIdempotencyStore.aclose()` 已存在，但 `Purser.close()` 未调用；协调层 Redis close 当前也没有完整释放协议。应区分自建和外部注入客户端，避免泄漏，也不能随意关闭其他使用者共享的客户端：[幂等关闭](../../purser/idempotency.py#L85)、[协调关闭](../../purser/backends/coordination.py#L248)。
 
 以上有数据可读性和资源生命周期影响，不能全部推迟到性能优化阶段。
 
@@ -676,13 +678,13 @@ sum(消耗同一共享上游额度的容量分配) <= 该共享额度
 | 源码核对 | 同步门面、租约、SQLite/MySQL、Redis、审计、密钥、测试 | 当前操作顺序与已实现边界；不是全部服务实测 |
 | 同 loop 多实例屏障 | SQLite + memory / fakeredis | 确定性验证跨平面和多实例交错；不能冒充真实网络多进程性能结果 |
 | 真实服务单实例 | 同步门面 6 组合 × 49 项，MySQL 8.4 + Redis 7.2.4，重复 12 轮 | 单进程单实例路径与后端真实协议一致；跨进程共享后端见下一条 |
-| 真实服务跨实例 | [test_sync_cross_instance.py](tests/test_sync_cross_instance.py)：双同步实例 + 双 OS 进程，SQLite/MySQL + Redis 7.2.4，每组合 7 场景，重复 2 轮 | 核心租约语义（容量、可见性、撤销、陈旧归还、启动对账、TTL 回收、进程竞争）与定向/通用等待轮询唤醒通过；无 xfail |
-| 真实服务静态分片 | [test_sync_static_shards.py](tests/test_sync_static_shards.py)：五种存储/协调形态 × 双 OS 进程，每进程独立分片 | 分片内单槽容量、跨分片资源/租约隔离、重启持久化通过；重叠实例与同名 Redis 池两条边界已固化（1 xfail + 1 反例断言） |
-| 中心调度服务 | [test_service_central_matrix.py](tests/test_service_central_matrix.py)：真实 uvicorn 子进程 × 六种存储/协调组合，HTTP 客户端仅经 REST 访问 | 六组合均通过健康检查、建池/导入、幂等获取与重放、容量上限 409、跨客户端等待者唤醒、释放与事件历史；证明单副本服务可让六组合对客户端表现为共享 |
-| 本地 IPC 调度 | [test_local_scheduler.py](tests/test_local_scheduler.py)：`spawn` Process / `Pool` / `ProcessPoolExecutor` worker，真实 SQLite+Redis、MySQL+Redis 各一组合 | 同机 worker 经命名管道/UDS 共享唯一调度进程；容量、幂等获取/释放、等待唤醒、worker 崩溃即回收、进程死亡上报通过；不经过 HTTP |
-| 同步故障/压力 | [test_sync_fault_stress.py](tests/test_sync_fault_stress.py)：协调写/删除失败、存储归还失败、撤销竞争、8×40 争用、跨线程心跳 | 故障不泄槽、失败归还可重试、竞争无幽灵租约、心跳跨线程有效；fakeredis 与真实 Redis 均通过 |
+| 真实服务跨实例 | [test_sync_cross_instance.py](../../tests/test_sync_cross_instance.py)：双同步实例 + 双 OS 进程，SQLite/MySQL + Redis 7.2.4，每组合 7 场景，重复 2 轮 | 核心租约语义（容量、可见性、撤销、陈旧归还、启动对账、TTL 回收、进程竞争）与定向/通用等待轮询唤醒通过；无 xfail |
+| 真实服务静态分片 | [test_sync_static_shards.py](../../tests/test_sync_static_shards.py)：五种存储/协调形态 × 双 OS 进程，每进程独立分片 | 分片内单槽容量、跨分片资源/租约隔离、重启持久化通过；重叠实例与同名 Redis 池两条边界已固化（1 xfail + 1 反例断言） |
+| 中心调度服务 | [test_service_central_matrix.py](../../tests/test_service_central_matrix.py)：真实 uvicorn 子进程 × 六种存储/协调组合，HTTP 客户端仅经 REST 访问 | 六组合均通过健康检查、建池/导入、幂等获取与重放、容量上限 409、跨客户端等待者唤醒、释放与事件历史；证明单副本服务可让六组合对客户端表现为共享 |
+| 本地 IPC 调度 | [test_local_scheduler.py](../../tests/test_local_scheduler.py)：`spawn` Process / `Pool` / `ProcessPoolExecutor` worker，真实 SQLite+Redis、MySQL+Redis 各一组合 | 同机 worker 经命名管道/UDS 共享唯一调度进程；容量、幂等获取/释放、等待唤醒、worker 崩溃即回收、进程死亡上报通过；不经过 HTTP |
+| 同步故障/压力 | [test_sync_fault_stress.py](../../tests/test_sync_fault_stress.py)：协调写/删除失败、存储归还失败、撤销竞争、8×40 争用、跨线程心跳 | 故障不泄槽、失败归还可重试、竞争无幽灵租约、心跳跨线程有效；fakeredis 与真实 Redis 均通过 |
 | 真实 Redis 专项 | `test_redis_real.py` + `test_redis_more_edges.py` 共 9 项 | 跨实例可见性、撤销/陈旧归还、TTL 自愈、失败回滚；仍是单机 Redis |
-| 性能基准 | [benchmarks/sync_facade_bench.py](benchmarks/sync_facade_bench.py)，6 组合 × 8 线程 × 200 次 | 本机单实例相对吞吐与尾延迟；不是生产容量或跨进程结论 |
+| 性能基准 | [benchmarks/sync_facade_bench.py](../../benchmarks/sync_facade_bench.py)，6 组合 × 8 线程 × 200 次 | 本机单实例相对吞吐与尾延迟；不是生产容量或跨进程结论 |
 | 真进程探针 | 原多进程 worker、4 写者审计 | 对应进程路径及审计持久化现象 |
 | 同步门面探针 | 后台 loop、线程池、故障注入 | 桥接正常路径及历史草案缺陷；不代表完整契约或生产验收 |
 | 现有测试 | hardening 回归 72 passed；文中点名的 10 个专项文件当前共收集 138 项（参数化后，无真实服务时部分跳过）；当前全套 1042 passed / 40 skipped / 1 xfailed（真实 MySQL 8.4 + Redis 7.2.4；收集 1083 项，与基线自洽） | 两组可能重叠，不相加为总数；绿色测试不能推翻反例 |
@@ -915,7 +917,7 @@ python benchmarks/sync_facade_bench.py --threads 8 --ops 200
 
 若采用中心调度服务（E）作为交付形态，单副本六组合的可用性验收已完成（§1.5.1）；仍需新增服务级工作包：TLS/鉴权轮换/限流、客户端断线重试与对账、服务重启恢复、故障切换演练以及跨副本语义（若要多副本）。这些属于 Phase 4 与运维验收，不能用“HTTP API 已可用”代替。
 
-若交付形态是同机多进程/进程池，优先采用本地 IPC 调度（§1.5.2），不需要 HTTP 服务；消息大小已有 32 MiB 上限（[protocol.py](purser/local/protocol.py)），但仍需补齐调度进程重启后的 worker 重连/重新建池、调度进程单点故障演练、慢消费者与背压保护，以及跨主机部署方案。IPC 只消除“把 HTTP 当作进程间数据面”的问题，不替代内核 P0 修复或共享后端多副本语义。
+若交付形态是同机多进程/进程池，优先采用本地 IPC 调度（§1.5.2），不需要 HTTP 服务；消息大小已有 32 MiB 上限（[protocol.py](../../purser/local/protocol.py)），但仍需补齐调度进程重启后的 worker 重连/重新建池、调度进程单点故障演练、慢消费者与背压保护，以及跨主机部署方案。IPC 只消除“把 HTTP 当作进程间数据面”的问题，不替代内核 P0 修复或共享后端多副本语义。
 
 ### 8.2 验收清单
 

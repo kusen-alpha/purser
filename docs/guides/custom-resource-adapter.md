@@ -73,7 +73,7 @@ class SmsAdapter(ResourceAdapter):
         """租约签发后回调。"""
 
     async def on_renew(self, resource, lease) -> None:
-        """每次续租/心跳成功后回调。"""
+        """每次续约/心跳成功后回调。"""
 
     async def before_release(self, resource, lease) -> None:
         """归还前回调，此时仍持有租约。"""
@@ -100,7 +100,7 @@ class SmsAdapter(ResourceAdapter):
 
 钩子异常由 `on_error` 承接，不会破坏核心流程；不要在钩子里做长阻塞操作。
 
-新增的 5 个租约级钩子默认都是空实现，按调度路径依次触发：`on_acquire`（签发）、`on_renew`（每次续租）、`before_release`（归还前，持约者还没放手）、`on_revoke`（`force_revoke` 踢人）、`on_lease_lost`（超时/心跳失败被回收）。它们只做观察与副作用，不改变内核的槽位与状态流转。
+5 个租约级钩子默认都是空实现，按调度路径依次触发：`on_acquire`（签发）、`on_renew`（每次续约）、`before_release`（归还前，持约者还没放手）、`on_revoke`（`force_revoke` 踢人）、`on_lease_lost`（超时/心跳失败被回收）。它们只做观察与副作用，不改变内核的槽位与状态流转。
 
 `switch` 是预留的切换/轮换扩展点（默认返回 `None`）。覆写时由你决定切换逻辑：直接改 `resource` 的数据并返回它，池会原地更新该行；或返回一个全新的 `Resource`，池会导入新行并把旧行归档。对应的池方法是 `pool.admin.switch_resource(rid, reason=...)`，忙（有活跃租约）或终态（archived/draining/banned/lost）会拒绝切换。
 
@@ -232,3 +232,5 @@ app = create_app(ps)
 - `validate()` 在测试中返回确定性结果，避免网络依赖。
 - 用 `import_validate="on_import"` 覆盖成功/失败/异常三条路径。
 - 断言状态迁移与钩子调用顺序；参考 `tests/test_resource_fields.py` 与 `tests/test_api.py`。
+
+相关页面：[资源 / ResourceAdapter](../reference/python-api/resources.md)、[AdapterSpec](../reference/adapter-spec.md)、[内置资源适配器](../reference/resource-adapters.md)、[导入与验活](import-and-validate.md)。

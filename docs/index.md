@@ -14,7 +14,7 @@
     <a class="md-button" href="reference/">API 参考</a>
   </p>
   <p class="purser-hero__badges">
-    <img src="https://img.shields.io/badge/version-0.5.0-009688" alt="版本 0.5.0">
+    <img src="https://img.shields.io/badge/version-0.6.0-009688" alt="版本 0.6.0">
     <img src="https://img.shields.io/badge/python-3.10%2B-009688" alt="Python 3.10+">
     <img src="https://img.shields.io/badge/license-MIT-009688" alt="MIT License">
   </p>
@@ -87,6 +87,8 @@ asyncio.run(main())
 | 目标 | 入口 |
 | --- | --- |
 | 第一次完成 | [安装](getting-started/install.md) → [嵌入式快速开始](getting-started/quickstart-async.md) |
+| 完整跑一遍代理池 | [教程：代理池 + httpx/aiohttp](tutorials/proxy-pool.md) |
+| 账号与代理成套获取 | [教程：组合租约](tutorials/account-proxy-bundle.md) |
 | 理解资源为什么获取不到 | [资源可用性判定](guides/availability.md) |
 | 理解租约、验活、强制撤销 | [租约生命周期](guides/lease-lifecycle.md) |
 | 接代理/账号以外的资源 | [自定义资源适配器](guides/custom-resource-adapter.md) |
@@ -114,4 +116,4 @@ asyncio.run(main())
 
 源码是最终权威；[参考](reference/index.md)描述公开契约；指南与设计页解释语义，可能滞后于实现。行为冲突时按此顺序采信。
 
-当前版本 `0.5.0`。
+当前版本 `0.6.0`，与仓库 master 同步；已发布版本以 PyPI 和 [CHANGELOG](https://github.com/kusen-alpha/purser/blob/master/CHANGELOG.md) 为准。

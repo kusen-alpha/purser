@@ -6,13 +6,13 @@
 
 | 场景 | 推荐做法 |
 | --- | --- |
-| 账号↔代理是**固定 1:1**，永不换 | 用[组合资源](#0-如果只是固定绑定先想清楚)（单池一条资源），更简单 |
+| 账号↔代理是**固定 1:1**，永不换 | 用[组合资源](#fixed-binding)（单池一条资源），更简单 |
 | 只要一次拿一套，无绑定约束 | `acquire_bundle`（默认 `rollback` 模式） |
 | 账号决定代理约束（地区/协议），范围内可换 | `acquire_bundle` + `MatchRule` |
 | 多实例共享 Redis 时要求跨实例严格拼装 | `bundle_mode="two_phase"`（或 `strict=True`） |
 | 需要限制“某任务组最多同时跑几套”、防止组合挤爆稀缺池 | `bundle_fairness` |
 
-## 0. 如果只是固定绑定，先想清楚
+## 0. 如果只是固定绑定，先想清楚 {#fixed-binding}
 
 “这个账号永远只用这一个代理”用**组合资源**建模，零跨池编排：
 
@@ -101,7 +101,7 @@ with SyncPurser() as ps:
         ps.release_bundle(bundle)
 ```
 
-每个成员都是**普通池租约**，各自在所属池内续期，所以 worker 长时间阻塞在浏览器操作上不影响心跳；只要 `PoolConfig.lease_ttl` / `max_lease_duration` 配得超过单次任务时长。
+每个成员都是**普通池租约**，各自在所属池内续约，所以 worker 长时间阻塞在浏览器操作上不影响心跳；只要 `PoolConfig.lease_ttl` / `max_lease_duration` 配得超过单次任务时长。
 
 ## 3. 约束配对：一个账号只配同地区代理
 
@@ -205,15 +205,6 @@ curl -X POST http://127.0.0.1:8000/pools/accounts/leases \
 - 归还：成员是普通租约，`release_bundle` 按逆序释放并清理公平计数；忘记归还会导致资源被占满（和普通 lease 一样）。
 - 崩溃回收：`bundle_gc()`（同步侧 `SyncPurser.bundle_gc()`）可手动触发，或由 `bundle_gc_interval` 周期扫描；两阶段 + 公平开启时它会自动托管。
 - 替换自研调度器：如果你现在手写“先账号后代理、没代理还账号”，组合租约就是这一步的库内替代——`acquire_bundle` 自带回滚，`bundle_gc` 替代手写的心跳失联回收。
-- 性能：单实例 high 频次小组合有 IPC/线程提交开销，先看 `benchmarks/sync_facade_bench.py`。
-
-## 10. 对照一下
-
-| 问题 | 答案 |
-| --- | --- |
-| 要不要开高级开关 | 单机、低频、无配额诉求：什么都不开 |
-| 跨实例、要严格一致性 | `bundle_mode="two_phase"` + Redis 协调 |
-| 要限并发/防稀缺池被占满 | `bundle_fairness` |
-| 固定 1:1 绑定 | 别用 bundle，用组合资源 |
+- 性能：单实例高频小组合有 IPC/线程提交开销，基准见 `benchmarks/sync_facade_bench.py`，容量建议见[性能与容量](performance.md)。
 
 详细 API 见 [Purser / 组合租约](../reference/python-api/purser.md)；设计取舍见仓库归档 `docs/design/bundle-v2.md`。

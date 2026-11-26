@@ -81,7 +81,7 @@ proxy = await pool.acquire()        # 仍返回 Lease，但不注册租约、不
 - 同一资源可以被无限次取样；`pool.leases()` 为空，`concurrency` 不变。
 - 容量、消费者持有、互斥组过滤被跳过；状态、标签、时间窗、冷却、站点失败与配额仍然生效。
 - `release()` 变为可选：显式调用只反馈用量/健康（`used`、`outcome`、冷却、隔离）并发布事件，重复调用是安全的 no-op。
-- 取样得到的租约不参与心跳续期、`max_lease_duration` 与抢占。
+- 取样得到的租约不参与心跳续约、`max_lease_duration` 与抢占。
 
 ## 批量获取
 

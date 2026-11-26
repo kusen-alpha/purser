@@ -34,7 +34,7 @@ stateDiagram-v2
     QUOTA_EXHAUSTED --> IDLE : top_up / 周期重置
 
     QUARANTINED --> IDLE : 隔离期到期 / 直接重验通过
-    QUARANTINED --> VALIDATING : 到期后重验(requalify_on_release)
+    QUARANTINED --> VALIDATING : quarantine_gc(requalify_on_release，维护任务直写)
     QUARANTINED --> BANNED : 连续失败达上限
 
     BANNED --> VALIDATING : unban(人工/策略)
@@ -82,7 +82,7 @@ stateDiagram-v2
 | ACTIVE / FULL | `force_revoke` | IDLE / ACTIVE | 管理员强制撤销（带原因 + 审计） |
 | ACTIVE / FULL | `lost` | LOST | — |
 | ACTIVE / FULL | `banned` | BANNED | — |
-| QUARANTINED | `quarantine_expired` | IDLE | 隔离期到；`requalify_on_release=true` 时转 VALIDATING |
+| QUARANTINED | `quarantine_expired` | IDLE | 隔离期到（状态机只定义这一条边） |
 | QUARANTINED | `validate_ok` | IDLE | 直接重验通过 |
 | QUARANTINED | `validate_fail` | BANNED | 累计失败达上限 |
 | SUSPENDED | `resume` | IDLE / VALIDATING | 可选先重验 |
@@ -95,6 +95,8 @@ stateDiagram-v2
 | DRAINING | `release` / `reaped` | ARCHIVED | 归档终态 |
 | ARCHIVED | `restore` | VALIDATING | 恢复后重验 |
 | 任意状态 | `admin_set_state` | IDLE / SUSPENDED / QUOTA_EXHAUSTED / VALIDATING / ARCHIVED | 仅人工，需 `reason` + `operator` + 审计；不能直接设为 NEW / LOST / DRAINING / BANNED |
+
+`requalify_on_release=true` 时，维护任务 `quarantine_gc` 会把隔离到期的资源直接写成 `VALIDATING`；这是维护任务直写，不是状态机转移边。
 
 ## 生命周期总览
 

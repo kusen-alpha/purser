@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "purser"
-version = "0.5.0"
+version = "0.6.0"
 description = "Generic resource scheduling library for scraping: proxies, accounts, and custom resources."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -65,7 +65,11 @@ dev = [
 ]
 lua = ["fakeredis[lua]>=2"]
 mysql = ["aiomysql>=0.2"]
-docs = ["mkdocs-material>=9.5"]
+docs = [
+    "mkdocs-material>=9.5",
+    # 1.2.3 起强制依赖 properdocs（mkdocs 的社区 fork），锁在 1.2.2。
+    "mkdocs-redirects>=1.2.2,<1.2.3",
+]
 
 [project.scripts]
 purser = "purser.cli:main"

@@ -7,7 +7,7 @@
 | 变量 | 作用 | 默认 |
 | --- | --- | --- |
 | `PURSER_STORAGE` | 存储层 | `memory` |
-| `PURSER_SQLITE_PATH` | SQLite 文件 | `:memory:` |
+| `PURSER_SQLITE_PATH` | SQLite 文件 | 无默认；`PURSER_STORAGE=sqlite` 时必填，否则抛 `ConfigError` |
 | `PURSER_COORDINATION` | 协调层 | `memory` |
 | `PURSER_REDIS_URL` | Redis 连接串；**不会**自动切换协调层 | — |
 | `PURSER_MYSQL_URL` | MySQL 连接串 | — |
@@ -157,9 +157,7 @@ REST 与浏览器控制台使用同一份契约：`GET /config/schema` 返回字
 | `preemptible` | `False` | 开启后，高优先级请求可抢占低优先级租约；`priority` 差值需达到 `preempt_threshold` |
 | `preempt_threshold` | `10` | `请求优先级 - 持有者优先级 >= 阈值` 才允许抢占；被抢占方进入 10 秒踢出冷却，事件 `lease_preempted` |
 | `drain_timeout` | `0.0` | `close()` 前等待在途租约归还的秒数；`0` 立即关闭，超时后强制回收 |
-| `fail_open` | `False` | 协调层 `BackendUnavailable` 时降级为本地模式（获取/归还/续租继续，记录 `fail_open_total`）；默认 fail-closed |
-
-### 预留字段（未实现）
+| `fail_open` | `False` | 协调层 `BackendUnavailable` 时降级为本地模式（获取/归还/续约继续，记录 `fail_open_total`）；默认 fail-closed |
 
 ## 不可热更新项
 

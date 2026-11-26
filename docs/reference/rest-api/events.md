@@ -1,4 +1,4 @@
-# 事件
+# Events
 
 事件总线把内核状态变化发布为可回放的事件流，支持 SSE 实时订阅与按游标历史回放。
 
@@ -49,13 +49,14 @@ SSE 与历史回放都走同一套鉴权：配置密钥后，两者都需要 `Au
 
 | 类别 | 事件 |
 | --- | --- |
-| 租约 | `lease_acquired`、`lease_released`、`lease_lost`、`lease_expired`、`lease_revoked`、`lease_reconciled` |
+| 租约 | `lease_acquired`、`lease_released`、`lease_lost`、`lease_expired`、`lease_revoked`、`lease_reconciled`、`lease_preempted` |
 | 导入 | `import_finished` |
 | 状态 | `state_changed`、`quarantined`、`quarantine_expired`、`banned`、`unbanned`、`expired`、`quota_exhausted`、`quota_reset`、`validate_ok`、`resource_restored`、`resource_switched` |
 | 健康 | `health_reported` |
-| 池 | `pool_created`、`pool_deleted` |
+| 池 | `pool_created`、`pool_deleted`、`pool_draining` |
+| 协调 | `coordination_degraded` |
 | 验活任务 | `validate_job_started`、`validate_job_finished` |
 
-上表为当前实现发布的事件全集；`state_changed` 的 `data` 带 `old` / `new` / `reason`。
+上表为当前实现发布的事件全集。`state_changed` 的 `data` 带 `old` / `new` / `reason`；`lease_preempted` 带 `by` / `priority` / `victim_priority`；`pool_draining` 带 `timeout`；`coordination_degraded` 带 `action`。
 
 事件总线是有界环形缓冲（默认 10 000 条）：慢订阅者会被丢弃并告警，历史回放保留最近窗口。

@@ -300,7 +300,6 @@
             <div class="formgrid">
               <label class="field"><span>priority</span><input id="leasePriority" type="number" min="0" value="0"></label>
               <label class="field"><span>use_limit</span><input id="leaseUseLimit" type="number" min="1" placeholder="不限"></label>
-              <label class="field"><span>affinity</span><input id="leaseAffinity" placeholder="亲和 consumer"></label>
               <label class="field"><span>probe</span><input id="leaseProbe" placeholder="probe 名称"></label>
               <label class="field"><span>trace_id</span><input id="leaseTrace" placeholder="留空自动生成"></label>
               <label class="field"><span>目标站点</span><input id="leaseSite" placeholder="target/site"></label>
@@ -1747,7 +1746,6 @@ async function acquireLease(){
     resource_id: target || null,
     tags,
     required_tag: document.getElementById("leaseRequiredTag").value.trim() || null,
-    affinity: document.getElementById("leaseAffinity").value.trim() || null,
     probe: document.getElementById("leaseProbe").value.trim() || null,
     trace_id: document.getElementById("leaseTrace").value.trim() || null,
     slots: Math.max(1, parseInt(document.getElementById("leaseSlots").value || "1", 10)),

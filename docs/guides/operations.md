@@ -52,12 +52,12 @@ curl -X POST "http://127.0.0.1:8000/restore?conflict=skip" \
   --data @backup.json
 ```
 
-- 备份包含明文密钥，只应保存在受控位置。
+- 备份包含明文密钥，只应保存在受控位置；分级与保管要求见[安全模型：备份与审计](security.md#backup)。
 - 租约不迁移；占用态归一为 `IDLE`。
 - 池的存储/协调取自当前部署，不随备份导入。
 - 支持 `Idempotency-Key`。
 
-详见 [管理端点](../reference/rest-api/admin.md)。
+详见 [Admin](../reference/rest-api/admin.md)。
 
 ## 审计
 
@@ -105,3 +105,5 @@ Purser(
 3. `GET /audit/verify` 确认审计链完整；
 4. 检查 `BackendUnavailable`、`VersionConflict` 日志；
 5. 重启后观察 `start()` 对账是否收敛槽位。
+
+相关页面：[安全模型](security.md)、[数据保留](data-retention.md)、[可观测性](observability.md)、[生产检查清单](production-checklist.md)、[Admin](../reference/rest-api/admin.md)。

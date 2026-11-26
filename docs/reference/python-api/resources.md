@@ -128,7 +128,7 @@ class ResourceAdapter(ABC):
 | `on_request_check(resource, req)` | 请求级校验；`PASS` 允许、`FAIL` 跳过该候选、`BAN` 走内核封禁路径 |
 | `on_release(resource, outcome)` | 归还后的观察钩子 |
 | `on_acquire(resource, lease)` | 租约签发后回调 |
-| `on_renew(resource, lease)` | 每次续租/心跳成功后回调；`resource` 为签发时快照，跨实例租约可能为 `None` |
+| `on_renew(resource, lease)` | 每次续约/心跳成功后回调；`resource` 为签发时快照，跨实例租约可能为 `None` |
 | `before_release(resource, lease)` | 归还前回调，此时仍持有租约 |
 | `on_revoke(resource, lease, reason)` | `force_revoke` 强制撤销后回调 |
 | `on_lease_lost(resource, lease)` | 内核放弃跟踪租约（超时/心跳被拒）时回调 |

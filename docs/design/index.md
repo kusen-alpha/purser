@@ -14,5 +14,6 @@
 
 - `docs/design/design-doc.md`：完整设计文档（领域模型、算法 5.1–5.14、里程碑）。
 - `docs/design/feasibility.md`：可行性分析与需求拆解。
+- `docs/design/bundle-v2.md`：组合租约的二次设计取舍。
 
 它们记录“当时为什么这么定”，可能与当前实现存在细节差异。权威层级是：源码 → [参考](../reference/index.md) → 指南与设计页；归档文档只作历史决策参考。

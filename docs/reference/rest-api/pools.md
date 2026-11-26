@@ -1,4 +1,6 @@
-# 池
+# Pools
+
+池端点：创建、查询、改配置、删池，以及召回与维护任务的触发入口。
 
 ## 端点
 
@@ -101,7 +103,7 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/recall \
   -H "Content-Type: application/json" \
   -d '{"batch_id": "b-20261108", "action": "requalify", "reason": "recheck"}'
 
-# 维护任务：quota_reset | periodic_unban | lost_gc | validating_gc | quarantine_gc | archive_gc | expire_gc
+# 维护任务：quota_reset | periodic_unban | lost_gc | validating_gc | quarantine_gc | archive_gc | expire_gc | reconcile
 curl -X POST http://127.0.0.1:8000/pools/proxies/maintenance/quarantine_gc
 ```
 

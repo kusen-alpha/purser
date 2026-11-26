@@ -1,4 +1,6 @@
-# 报表与验活任务
+# Reports
+
+用量报表与后台验活任务端点：统计窗口、分组维度、批次进度与任务取消。
 
 ## 用量报表
 
@@ -37,7 +39,7 @@
 约定：
 
 - 数据源是进程内有界账本（`Purser(usage_ledger_size=...)`），满后淘汰最旧记录，进程重启清空。
-- `used` 取归还时的 `used` 参数；未显式传值时按租约的 `used` 或 1 计。`force_revoke` 记 `outcome="preempted"`、`used=0`。
+- `used` 取归还时的 `used` 参数；未显式传值时按租约的 `used` 或 1 计（`pool.lease()` 路径固定传 `lease.used`，默认 0，因此上下文管理器默认记 0）。`force_revoke` 记 `outcome="preempted"`、`used=0`。
 - 空分组键使用 `(anonymous)` / `(no target)`。
 - `active` 与 `pools` 是实时快照，不受 `since` / `until` 影响，也不计入 `totals`。
 - `truncated=true` 表示分组行被 `limit` 截断，`groups_total` 是完整分组数。

@@ -24,7 +24,7 @@ flowchart TD
     D -->|失败| G["QUARANTINED"]
     E -->|通过| F
     E -->|失败| G
-    G -->|"退避后重试 / 到期解禁"| F
+    G -->|"退避后重试 / 到期解除隔离"| F
 ```
 
 ## NEW 不可分配
@@ -37,11 +37,7 @@ flowchart TD
 await pool.admin.validate_now("r1", operator="alice")
 ```
 
-或用 `on_import` / `batch` 重新导入。
-
-!!! warning "导入成功不等于资源可用"
-
-    `none` 只完成入库。此时资源停在 `NEW`，既不参与分配，也不会被后台验活自动推进；忘记验活会表现为“池里有资源但一直获取不到”。除非确实要离线预装数据，否则保持默认的 `auto`。
+或用 `on_import` / `batch` 重新导入。除非确实要离线预装数据，否则保持默认的 `auto`。
 
 ## 嵌入式导入
 
@@ -101,4 +97,4 @@ id protocol host port tag1 tag2
 
 `#` 开头为注释；行首为 `[` 的单行 JSON 数组可直接导入。
 
-继续阅读：[批量验活任务](../reference/rest-api/reports.md)、[状态机](../reference/state-machine.md)。
+继续阅读：[Reports](../reference/rest-api/reports.md)、[状态机](../reference/state-machine.md)。

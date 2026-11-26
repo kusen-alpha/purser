@@ -105,6 +105,4 @@ class CheapestFirst(Allocator):
 | 绝对过期 | `expires_in` / `expires_at` | 到期后不可获取，默认转 `SUSPENDED`；`expire_policy="quota"` 时转 `QUOTA_EXHAUSTED` |
 | 亲和性 | `affinity_weight` | 同一 consumer 优先复用资源 |
 
-> 自动抢占（`preemptible` / `preempt_threshold`）尚未实现，配置为非默认值会抛 `ConfigError`；当前被占用资源只能等待、强制撤销或换资源。
-
 调参建议：先调 `top_k` 与 `weights`，再调整隔离阈值；`max_slots` 与 `lease_ttl` 是控制容量与泄漏风险的主要参数。完整的“为什么这个资源现在不可用”判定顺序见[资源可用性](availability.md)。

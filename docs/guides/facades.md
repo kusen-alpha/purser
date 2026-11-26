@@ -121,4 +121,11 @@ ps.register_adapter(AdapterSpec.of(MyAdapter, region="cn"))
 
 pcrawl 是这套约定的一个使用者：`PurserRuntime` 做运行模式选择（inline/async → `EmbeddedPurser`，thread/process → `ProcessPurser`），并把 `purser_runtime` 以统一门面交给 Spiders。多线程模式仍走 `ProcessPurser`，以保证与多进程一致的行为；`ThreadPurser` 目前不接入 pcrawl。
 
-相关页面：[多线程使用](threading.md)、[多进程使用](multiprocessing.md)、[同步 Purser](sync-facade.md)、[LocalScheduler 参考](../reference/local-scheduler.md)。
+## 进程边界 {#process-boundary}
+
+- **同进程内的两个 `Purser` 实例不能共享** SQLite 文件、MySQL 库、Redis DB 或适配器实例；半共享会产生无法对账的租约/槽位视图，库在装配时抛 `IsolationConflict`。同线程共享一个实例是推荐用法。
+- **一个实例不能跨进程共享**：不可 pickle；`fork` 继承的实例在子进程首次调用时报错。
+- 需要跨进程共享同一资源集合时，用 `LocalScheduler` + `connect()`，不要传递 `Purser` 对象。
+- `PURSER_ALLOW_SHARED_BACKENDS=1` 只对“一个进程内模拟多主机”的测试脚手架放宽后端身份校验，不改变跨进程隔离。
+
+相关页面：[同步 Purser](sync-facade.md#threadpool)、[多进程使用](multiprocessing.md)、[LocalScheduler 参考](../reference/local-scheduler.md)。

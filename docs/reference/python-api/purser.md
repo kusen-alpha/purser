@@ -46,7 +46,7 @@ await ps.start()      # 可选：提前启动（幂等）
 await ps.close()      # 幂等；关闭池、事件总线与审计
 ```
 
-- `start()` 启动事件总线与所有已注册池；每个池在启动时执行租约对账，随后启动 reaper、后台验活与周期维护。
+- `start()` 启动事件总线与所有已注册池；每个池先启动 reaper、等待服务循环、后台验活与周期维护，最后执行一次租约对账，把槽位收敛到协调端的真实存活租约。
 - `close()` 先关闭每个池（用 `PoolExhausted` 唤醒全部在途等待者），再停止事件总线并关闭审计。
 - **自动启动**：`acquire()` / `lease()` / `acquire_many()` 首次调用会自动启动运行时（含 `Purser`），因此 `ps.start()` / `async with ps:` 是可选的，用于提前启动与确保退出清理。`close()` 之后再调用运行时操作会抛 `NotStarted`（已关闭，不支持重启）。导入、查询、状态变更等管理面操作无需启动即可用，适合离线预装数据。
 - 推荐 `async with Purser() as ps:`，异常路径也会关闭。
@@ -85,7 +85,7 @@ ps.register_adapter(MyAdapter())
 
 ## 组合租约（bundle）
 
-跨池一次拿取多类资源的组合（O8）：例如 `{account, proxy}` 一整套。成员都是普通池租约，各自在所属池内续期；失败时已拿到的成员立即回滚释放（`best_effort` 则返回已拿到的部分）。
+跨池一次拿取多类资源的组合（O8）：例如 `{account, proxy}` 一整套。成员都是普通池租约，各自在所属池内续约；失败时已拿到的成员立即回滚释放（`best_effort` 则返回已拿到的部分）。
 
 完整使用流程见[组合租约指南](../../guides/bundle-leases.md)。
 
@@ -129,9 +129,9 @@ finally:
 - 死锁缓解：两个组合以相反顺序互相抢占成员时会循环等待；`max_retries` 让组合在瞬态失败后回滚并以随机退避重试，打破循环而不引入全局锁。
 - 同步门面：`SyncPurser.acquire_bundle(...)` / `release_bundle(...)` 同名。
 - REST：`POST /pools/{pool}/leases` 带 `bundle` 字段即可组合获取（锚点 `{pool}` 必须出现在 `slots` 里）。
-- 固定 1:1 绑定（账号↔代理不可换）建议直接用"组合资源"建模：把成对数据建成单池一条资源，独占/租约/验活/封禁全部复用，无需跨池编排。
+- 固定 1:1 绑定（账号↔代理不可换）建议直接用“组合资源”建模：把成对数据建成单池一条资源，独占/租约/验活/封禁全部复用，无需跨池编排。
 
-#### bundle 高级开关（默认关闭）
+### bundle 高级开关（默认关闭）
 
 - `Purser(bundle_mode="two_phase")`：跨实例严格拼装。成员按 `(pool, resource_id)` 确定性全序获取（消除 ABBA 死锁）、书签写入 `bundle_store`、全部到位后 `confirm`；编排进程崩溃由 `bundle_gc` 按 `reservation_ttl` 回收 `assembling` 残留。逐请求可用 `BundleRequest(strict=True/False)` 覆盖；`two_phase` 与 `best_effort` 互斥。
 - `Purser(bundle_fairness=BundleFairness(...))`：跨池准入。`max_per_consumer` / `max_total` / `per_pool_headroom`（每池为纯资源请求保留空位）/ `wait`+`timeout`；`BundleRequest.priority` 决定释放时先唤醒谁的准入队列。超额时抛或等待 `BundleQuotaExceeded`。
@@ -189,11 +189,11 @@ result = await ps.restore_backup(document, conflict="skip", operator="restore-jo
 | `metrics` | `Metrics` | `inc(name, delta=1)`、`observe(name, value)`、`snapshot()`、`render_prometheus()` |
 | `usage` | `UsageLedger` | 用量账本，`report_usage()` 的历史来源 |
 | `idempotency` | `IdempotencyStore` | 进程内幂等结果；配置 Redis 时自动换成共享实现 |
-| `probe_guard` | `ProbeGuard` | 代理验活的并发与限速保护 |
+| `probe_guard` | `ProbeGuard` | 探针自检：单探针失败计数、冷却与集体下线暂停，抑制目标大面积故障时的误封 |
 | `adapters` | `ResourceAdapterRegistry` | `register()` / `unregister(kind)` / `get(kind)` / `names()` |
 | `storage_kind` / `coordination_kind` | `str` | 构造时给出的默认平面 |
 
-事件对象的字段与事件类型见 [REST 事件](../rest-api/events.md)；Python 侧订阅到的是 `Event` 对象，可调用 `to_dict()` 转成与 REST 一致的 JSON。
+事件对象的字段与事件类型见 [Events](../rest-api/events.md)；Python 侧订阅到的是 `Event` 对象，可调用 `to_dict()` 转成与 REST 一致的 JSON。
 
 ## 同步与多进程
 

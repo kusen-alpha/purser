@@ -33,7 +33,7 @@ CI 会在 Python 3.10–3.14、Windows 以及 Redis/MySQL 后端上运行同一�
 ## 发布流程（维护者）
 
 1. 更新 `CHANGELOG.md` 与版本号（`pyproject.toml`、`purser/__init__.py`、文档版本标记）。
-2. 打 tag：`git tag v0.5.0 && git push origin v0.5.0`（tag 必须与包版本一致，工作流会校验）。
+2. 打 tag：`git tag v0.6.0 && git push origin v0.6.0`（tag 必须与包版本一致，工作流会校验）。
 3. `.github/workflows/publish.yml` 构建 sdist+wheel、`twine check` 后通过
    Trusted Publishing 发布到 PyPI（首次需在 PyPI 配置该工作流为可信发布者），
    随后用 CHANGELOG 对应小节自动创建 GitHub Release。

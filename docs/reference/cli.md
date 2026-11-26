@@ -28,7 +28,8 @@ CLI 不支持 `PURSER_READONLY_KEY`；只读场景可直接用 `curl`。
 | `events <pool>` | 订阅 SSE 事件流 | `--base-url` |
 | `serve` | 启动服务 | 见下表 |
 
-`lease` 默认在打印后立即归还；加 `--keep` 保留租约，之后用 `release` 手动归还。
+`lease` 只获取并打印租约，**不会自动归还**；`--keep` 仅隐藏归还提示。用完必须执行
+`purser release <pool> <token>`，否则租约要等 TTL 过期才由 reaper 回收。
 
 ## 示例
 

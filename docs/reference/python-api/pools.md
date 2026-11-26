@@ -80,7 +80,7 @@ async for resource in pool.iter_resources(states=None, tags=None, search=None, b
 
 ## `pool.admin` 管理操作
 
-18 个低频管理操作位于 `pool.admin` 命名空间，方法名不变：`apply_defaults`、`validate_now`、`validate_check`、`ban`、`unban`、`suspend`、`resume`、`top_up`、`drain`、`cancel_drain`、`restore_resource`、`admin_set_state`、`force_revoke`、`update_resource`、`switch_resource`、`move_resource`、`recall_batch`、`run_maintenance`。`SyncPool.admin` 同样提供全部 18 项；`ThreadPool.admin` / `RemotePool.admin` 是轻量镜像，目前只覆盖 `ban` / `unban`（跨进程的其余管理操作可经 `client.pool_call` 路由，见 [LocalScheduler](local-scheduler.md)）；`acquire` / `import_resources` 等数据面方法仍在池顶层。
+18 个低频管理操作位于 `pool.admin` 命名空间，方法名不变：`apply_defaults`、`validate_now`、`validate_check`、`ban`、`unban`、`suspend`、`resume`、`top_up`、`drain`、`cancel_drain`、`restore_resource`、`admin_set_state`、`force_revoke`、`update_resource`、`switch_resource`、`move_resource`、`recall_batch`、`run_maintenance`。`SyncPool.admin` 同样提供全部 18 项；`ThreadPool.admin` / `RemotePool.admin` 是轻量镜像，目前只覆盖 `ban` / `unban`（跨进程的其余管理操作可经 `client.pool_call` 路由，见 [LocalScheduler](../local-scheduler.md)）；`acquire` / `import_resources` 等数据面方法仍在池顶层。
 
 ```python
 await pool.admin.ban(rid, reason="credential leak")
@@ -100,12 +100,12 @@ await pool.admin.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="ma
 | `resume` | 必须 `SUSPENDED` | 默认回 `IDLE`；`revalidate=True` 置 `VALIDATING` 等待验活 |
 | `top_up` | 资源必须有 `quota` 或 `usage_quota` | `amount` 必须 `> 0`；`QUOTA_EXHAUSTED` 回 `IDLE`，`usage_quota` 同步减少 `used_count` |
 | `drain` | 已 `DRAINING` 时幂等 | 置 `DRAINING`，不再签发新租约；最后一个租约归还后归档 |
-| `cancel_drain` | 必须 `DRAINING` | 经状态机 `UNDRAIN` 回到 `IDLE` / `ACTIVE` |
+| `cancel_drain` | 必须 `DRAINING` | 经状态机 `UNDRAIN` 回到 `IDLE` / `ACTIVE` / `FULL` |
 | `restore_resource` | 必须 `ARCHIVED` | 置 `VALIDATING` 并立即验活 |
 | `admin_set_state` | 目标 ∈ `IDLE` / `SUSPENDED` / `QUOTA_EXHAUSTED` / `VALIDATING` / `ARCHIVED`，且资源不忙 | 按状态机允许的迁移强制置状态；非法迁移抛 `InvalidTransition` / `BadState` |
 | `run_maintenance(name)` | `name` 见下 | 立即执行一次维护扫描，返回 `{任务名: 处理数}` |
 
-`admin.top_up`、`admin.drain`、`admin.cancel_drain`、`admin.restore_resource`、`admin.admin_set_state` 都会唤醒等待队列，让刚恢复可用的槽位被立即分配。
+`admin.resume`、`admin.top_up`、`admin.cancel_drain`、`admin.admin_set_state`、`admin.force_revoke` 会立即唤醒等待队列，让刚恢复可用的槽位被重新分配；`drain` 与 `restore_resource` 不主动唤醒。
 
 ### 修改资源
 
