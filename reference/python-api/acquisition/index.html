@@ -1,0 +1,4362 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="通用资源调度库：可租用资源的租约、验活与公平调度">
+      
+      
+      
+        <link rel="canonical" href="https://kusen-alpha.github.io/purser/reference/python-api/acquisition/">
+      
+      
+        <link rel="prev" href="../pools/">
+      
+      
+        <link rel="next" href="../resources/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/logo.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>AcquireRequest / Lease / BatchLease - Purser</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#acquirerequest-lease-batchlease" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../../.." title="Purser" class="md-header__button md-logo" aria-label="Purser" data-md-component="logo">
+      
+  <img src="../../../assets/logo-white.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Purser
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AcquireRequest / Lease / BatchLease
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="切换到浅色模式"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="切换到浅色模式" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 2C5.13 2 2 5.13 2 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7M6 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H6zm13-8h-2l-3.2 9h1.9l.7-2h3.2l.7 2h1.9zm-2.15 5.65L18 15l1.15 3.65z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="amber"  aria-label="切换到深色模式"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="切换到深色模式" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7M9 21a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-1H9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="amber"  aria-label="跟随系统"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="跟随系统" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7M9 21v-1h6v1a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1m3-17a5 5 0 0 0-5 5c0 2.05 1.23 3.81 3 4.58V16h4v-2.42c1.77-.77 3-2.53 3-4.58a5 5 0 0 0-5-5"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/kusen-alpha/purser" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../getting-started/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  上手
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../tutorials/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  教程
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../guides/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../" class="md-tabs__link">
+          
+  
+  
+    
+  
+  参考
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Purser" class="md-nav__button md-logo" aria-label="Purser" data-md-component="logo">
+      
+  <img src="../../../assets/logo-white.svg" alt="logo">
+
+    </a>
+    Purser
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/kusen-alpha/purser" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上手
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    上手
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    安装
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/quickstart-async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    嵌入式快速开始
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/quickstart-service/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    服务快速开始
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../tutorials/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    教程
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    教程
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tutorials/proxy-pool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    资源消费
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tutorials/account-proxy-bundle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    组合租约实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tutorials/script-to-service/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    从脚本到服务
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tutorials/validate-and-recall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    验活、召回与封禁
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../guides/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指南
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心语义
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    核心语义
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    资源可用性判定
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/lease-lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    租约生命周期
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/bundle-leases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    组合租约
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/fairness-and-health/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    公平性与健康度
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    接入方式
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    接入方式
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/import-and-validate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    导入与验活
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/custom-resource-adapter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自定义资源适配器
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/facades/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    门面族与运行时选择
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/sync-facade/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    同步 Purser
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/multiprocessing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多进程使用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    部署与安全
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    部署与安全
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/multi-instance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    多实例部署
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/backend-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    后端配置示例
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    安全模型
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/production-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    生产检查清单
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    运维操作
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/web-console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web 控制台
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/platform-differences/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    平台差异
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    观测与容量
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    观测与容量
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    性能与容量
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/data-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据保留
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    排障与迁移
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    排障与迁移
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    排障
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    常见问题
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guides/glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    术语表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    参考
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    参考
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2" id="__nav_5_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../purser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Purser
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ResourcePool
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AcquireRequest / Lease / BatchLease
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AcquireRequest / Lease / BatchLease
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#acquirerequest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AcquireRequest
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        单个获取
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="单个获取">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pool-acquire" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.acquire()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-lease" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.lease()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batch-acquire" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        批量获取
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="批量获取">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pool-acquire-many" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.acquire_many()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batch-release-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        batch.release_all()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lease" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lease
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lease">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lease-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lease.new()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lease-expired" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        lease.expired()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        续约与归还
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="续约与归还">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pool-renew" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.renew()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.release()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-release-consumer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.release_consumer()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usageoutcome" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UsageOutcome 副作用
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        强制撤销
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="强制撤销">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#force-revoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.admin.force_revoke()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关事件
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resource / ResourceAdapter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    StorageBackend / Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../rest-api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    REST API
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3" id="__nav_5_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    REST API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rest-api/pools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rest-api/resources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rest-api/leases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Leases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rest-api/events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Events
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rest-api/reports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reports
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rest-api/admin/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    配置
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../resource-adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    内置资源适配器
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../local-scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LocalScheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    错误处理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../error-codes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    错误码
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../state-machine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    状态机
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    事件目录
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标目录
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    审计目录
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../data-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据模型
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../allocators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    分配器
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adapter-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AdapterSpec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../protocols/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    协议与门面契约
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-cheatsheet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 速查
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#acquirerequest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AcquireRequest
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        单个获取
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="单个获取">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pool-acquire" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.acquire()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-lease" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.lease()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batch-acquire" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        批量获取
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="批量获取">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pool-acquire-many" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.acquire_many()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batch-release-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        batch.release_all()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lease" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lease
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lease">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lease-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lease.new()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lease-expired" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        lease.expired()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        续约与归还
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="续约与归还">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pool-renew" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.renew()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.release()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pool-release-consumer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.release_consumer()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usageoutcome" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UsageOutcome 副作用
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        强制撤销
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="强制撤销">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#force-revoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pool.admin.force_revoke()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关事件
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="导航栏" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    首页
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    参考
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Python API
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="acquirerequest-lease-batchlease">AcquireRequest / Lease / BatchLease<a class="headerlink" href="#acquirerequest-lease-batchlease" title="Permanent link">&para;</a></h1>
+<p>获取流程固定为：硬约束过滤 → 分配器打分（Top-K）→ 加权随机首选 + 按分回退 → 请求级校验 → 首个成功原子占用。完整过滤链见<a href="../../../guides/availability/">资源可用性判定</a>，租约状态与等待语义见<a href="../../../guides/lease-lifecycle/">租约生命周期</a>。</p>
+<p>本页签名以嵌入式异步 <code>ResourcePool</code> 为准。同步、线程和远程门面的差异见<a href="../../../guides/sync-facade/">同步 Purser</a>与 <a href="../../local-scheduler/">LocalScheduler</a>。</p>
+<h2 id="acquirerequest"><code>AcquireRequest</code><a class="headerlink" href="#acquirerequest" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">AcquireRequest</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">consumer</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">priority</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">tags</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">(),</span> <span class="n">timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">probe</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">trace_id</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">use_limit</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">allow_duplicate</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">ignore_cooldown</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">rid</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">required_tag</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">affinity</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">idempotency_key</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>consumer</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>消费者标识，用于公平队列、去重、亲和与消费者级冷却</td>
+</tr>
+<tr>
+<td><code>target</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>目标站点，用于请求级校验、站点失败索引与报表</td>
+</tr>
+<tr>
+<td><code>priority</code></td>
+<td><code>int</code></td>
+<td><code>0</code></td>
+<td>越高越优先；高优先级等待者可越过低优先级 FIFO</td>
+</tr>
+<tr>
+<td><code>slots</code></td>
+<td><code>int</code></td>
+<td><code>1</code></td>
+<td>单个租约占用的槽位数，必须为正整数</td>
+</tr>
+<tr>
+<td><code>tags</code></td>
+<td><code>frozenset[str]</code></td>
+<td>空集合</td>
+<td>资源必须包含全部标签；传字符串会抛 <code>TypeError</code></td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td><code>float &#124; None</code></td>
+<td><code>None</code></td>
+<td>等待秒数；缺省用池 <code>wait_timeout</code></td>
+</tr>
+<tr>
+<td><code>probe</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>按目标实时验活（opt-in）：以该 URL 为目标，在取得候选前调用 <code>on_request_check</code> 实测；结果按 <code>(consumer, target, rid)</code> 缓存 <code>check_cache_ttl</code> 秒。<code>None</code> 时维持默认 <code>PASS</code> / 自定义钩子行为</td>
+</tr>
+<tr>
+<td><code>trace_id</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>缺省按调用生成；不会写回传入对象</td>
+</tr>
+<tr>
+<td><code>use_limit</code></td>
+<td><code>int &#124; None</code></td>
+<td><code>None</code></td>
+<td>本租约允许的使用次数，必须 <code>&gt;= 0</code>；达到后心跳不再续约</td>
+</tr>
+<tr>
+<td><code>allow_duplicate</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>允许同一 consumer 重复持有同一资源</td>
+</tr>
+<tr>
+<td><code>ignore_cooldown</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>忽略资源级/消费者级冷却；隔离与站点失败仍然生效</td>
+</tr>
+<tr>
+<td><code>rid</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>定向获取；被占用时按 timeout 等待</td>
+</tr>
+<tr>
+<td><code>required_tag</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>硬约束标签，与 <code>tags</code> 的“全部包含”独立</td>
+</tr>
+<tr>
+<td><code>affinity</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>亲和历史键，缺省等于 <code>consumer</code>；同一键越常用越容易被分配器加权（需 <code>affinity_weight &gt; 0</code>）。空字符串抛 <code>ValueError</code></td>
+</tr>
+<tr>
+<td><code>idempotency_key</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>同一池内重复获取返回同一份仍存活的租约；并发同 key 请求共享一次获取结果。空字符串抛 <code>ValueError</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>AcquireRequest</code> 是获取请求的描述对象：<code>acquire()</code> 不修改传入对象，需要覆盖字段时会通过构造器创建副本，因此 <code>__post_init__</code> 的校验在对象构造和关键字参数两条路径上都生效。</p>
+<h2 id="_1">单个获取<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<h3 id="pool-acquire"><code>pool.acquire()</code><a class="headerlink" href="#pool-acquire" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：获取一份资源租约；需要自动归还时优先使用 <a href="#pool-lease"><code>pool.lease()</code></a>。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acquire</span><span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">req</span><span class="p">:</span> <span class="n">AcquireRequest</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Lease</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>req</code></td>
+<td><code>AcquireRequest &#124; None</code></td>
+<td><code>None</code></td>
+<td>可复用的请求对象，不会被修改</td>
+</tr>
+<tr>
+<td><code>kwargs</code></td>
+<td><code>Any</code></td>
+<td>—</td>
+<td><code>AcquireRequest</code> 字段；未知字段抛 <code>TypeError</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回与异常</strong>：返回带唯一 <code>token</code> 的 <code>Lease</code>。归还、续约和定向强制撤销都必须使用该 token。常见异常见下表。</p>
+<p><strong>示例</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">purser</span><span class="w"> </span><span class="kn">import</span> <span class="n">AcquireRequest</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">lease</span> <span class="o">=</span> <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">acquire</span><span class="p">(</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">AcquireRequest</span><span class="p">(</span><span class="n">consumer</span><span class="o">=</span><span class="s2">"crawler-a"</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"us"</span><span class="p">}),</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">)</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># 等价写法：await pool.acquire(consumer="crawler-a", timeout=10)</span>
+</code></pre></div>
+<p><strong>注意</strong></p>
+<ul>
+<li>首次 <code>acquire()</code> / <code>lease()</code> / <code>acquire_many()</code> 会自动启动运行时，<code>Purser.start()</code> 是可选的提前启动。</li>
+<li>关闭后不支持隐式自动重启；显式 <code>Purser.start()</code> 是否能重启取决于后端。</li>
+<li><code>slots &lt;= 0</code>、<code>use_limit &lt; 0</code> 抛 <code>ConfigError</code>。</li>
+<li>同一 consumer 重复获取同一资源时，默认返回已有租约；<code>allow_duplicate=True</code> 才允许第二份租约。</li>
+<li>传入 <code>idempotency_key</code> 时，同池同 key 的重复调用返回同一份仍存活的租约；并发同 key 只执行一次获取。</li>
+<li><code>acquire_mode="stateless"</code> 时返回的 <code>Lease</code> 不占槽位、不需要归还；<code>release()</code> 只反馈用量与健康。</li>
+</ul>
+<p>失败矩阵：</p>
+<table>
+<thead>
+<tr>
+<th>情况</th>
+<th>异常</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>池内没有任何资源</td>
+<td><code>PoolEmpty</code></td>
+</tr>
+<tr>
+<td>资源停在 <code>NEW</code> 且没有进行中的验活任务（显式 <code>import_validate="none"</code>）</td>
+<td><code>PoolExhausted</code>（提示调用 <code>pool.admin.validate_now()</code> 或改用 <code>batch</code>）</td>
+</tr>
+<tr>
+<td>资源正在验活（<code>VALIDATING</code> / 后台任务运行中）</td>
+<td>等待至 timeout；超时抛 <code>PoolExhausted</code> 并带任务进度</td>
+</tr>
+<tr>
+<td>资源忙且等待超时</td>
+<td><code>PoolExhausted</code>（消息附带被跳过的过滤原因，如 <code>tags=1</code>、<code>cooldown=2</code>）</td>
+</tr>
+<tr>
+<td><code>timeout &lt;= 0</code> 且无法立即满足</td>
+<td><code>PoolExhausted</code></td>
+</tr>
+<tr>
+<td>消费者已达 <code>max_leases_per_consumer</code></td>
+<td><code>PoolExhausted</code>（过滤原因中出现 <code>consumer_limit</code>）</td>
+</tr>
+<tr>
+<td><code>scheduler="token_bucket"</code> 且等待令牌超时</td>
+<td><code>PoolExhausted</code>（提示建议重试等待秒数）</td>
+</tr>
+<tr>
+<td>定向获取的资源不存在</td>
+<td><code>ResourceNotFound</code></td>
+</tr>
+<tr>
+<td>定向获取的资源处于不可分配状态（如 <code>QUARANTINED</code>）</td>
+<td><code>BadState</code></td>
+</tr>
+<tr>
+<td>定向获取的目标在 <code>NEW</code> / <code>VALIDATING</code></td>
+<td>先等待验活；<code>NEW</code> 且无验活任务时立即抛 <code>PoolExhausted</code>（提示 <code>pool.admin.validate_now()</code>）</td>
+</tr>
+<tr>
+<td>定向获取被占用且等待超时</td>
+<td><code>ResourceBusy</code></td>
+</tr>
+<tr>
+<td>候选全部被请求级校验拒绝</td>
+<td><code>NoSuitableResource</code></td>
+</tr>
+<tr>
+<td>运行时已关闭且不支持当前重启方式</td>
+<td><code>NotStarted</code></td>
+</tr>
+</tbody>
+</table>
+<p>定向获取（<code>rid</code>）不走分配器，但仍检查状态、槽位与重复持有；等待期间每 0.1 秒复查一次，直到 timeout。</p>
+<h3 id="pool-lease"><code>pool.lease()</code><a class="headerlink" href="#pool-lease" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：作为上下文管理器获取租约，并在退出时自动归还，适合绝大多数短生命周期任务。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lease</span><span class="p">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">req</span><span class="p">:</span> <span class="n">AcquireRequest</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncIterator</span><span class="p">[</span><span class="n">Lease</span><span class="p">]:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>req</code></td>
+<td><code>AcquireRequest &#124; None</code></td>
+<td><code>None</code></td>
+<td>与 <code>acquire()</code> 相同的请求对象</td>
+</tr>
+<tr>
+<td><code>kwargs</code></td>
+<td><code>Any</code></td>
+<td>—</td>
+<td>与 <code>acquire()</code> 相同的请求字段</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回与异常</strong>：进入上下文时产出 <code>Lease</code>；获取阶段的异常与 <code>acquire()</code> 一致。退出时调用 <code>release(lease, outcome=lease.outcome, used=lease.used)</code>，异常路径同样归还。</p>
+<p><strong>示例</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">purser</span><span class="w"> </span><span class="kn">import</span> <span class="n">UsageOutcome</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">async</span> <span class="k">with</span> <span class="n">pool</span><span class="o">.</span><span class="n">lease</span><span class="p">(</span><span class="n">consumer</span><span class="o">=</span><span class="s2">"worker"</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"us"</span><span class="p">}))</span> <span class="k">as</span> <span class="n">lease</span><span class="p">:</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">lease</span><span class="o">.</span><span class="n">outcome</span> <span class="o">=</span> <span class="n">UsageOutcome</span><span class="o">.</span><span class="n">OK</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">lease</span><span class="o">.</span><span class="n">used</span> <span class="o">=</span> <span class="mi">1</span>
+</code></pre></div>
+<p><strong>注意</strong>：上下文管理器默认把 <code>lease.used</code>（初始为 <code>0</code>）作为用量上报。要统计真实使用次数，需要在块内设置 <code>lease.used</code>。手动 <code>acquire()</code> 适合需要跨函数持有租约的场景。</p>
+<h2 id="batch-acquire">批量获取<a class="headerlink" href="#batch-acquire" title="Permanent link">&para;</a></h2>
+<h3 id="pool-acquire-many"><code>pool.acquire_many()</code><a class="headerlink" href="#pool-acquire-many" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：一次获取多份租约，可选择整体成功或保留部分成功结果。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acquire_many</span><span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">req</span><span class="p">:</span> <span class="n">AcquireRequest</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">mode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"atomic"</span><span class="p">,</span> <span class="s2">"best_effort"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"atomic"</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">n_min</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BatchLease</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>n</code></td>
+<td><code>int</code></td>
+<td>必填</td>
+<td>租约条数，必须 <code>&gt; 0</code>；每条租约按 <code>req.slots</code> 占用槽位</td>
+</tr>
+<tr>
+<td><code>req</code></td>
+<td><code>AcquireRequest &#124; None</code></td>
+<td><code>None</code></td>
+<td>每份租约共用的请求模板，不会被修改</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td><code>"atomic"</code> / <code>"best_effort"</code></td>
+<td><code>"atomic"</code></td>
+<td><code>atomic</code> 任一条失败则整体回滚；<code>best_effort</code> 保留实际获取结果</td>
+</tr>
+<tr>
+<td><code>n_min</code></td>
+<td><code>int &#124; None</code></td>
+<td><code>None</code></td>
+<td><code>best_effort</code> 最少可接受条数；缺省等于 <code>n</code>，必须 <code>&gt; 0</code> 且不能大于 <code>n</code></td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td><code>float &#124; None</code></td>
+<td><code>None</code></td>
+<td>覆盖 <code>req.timeout</code>；两者都为空时用池 <code>wait_timeout</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回与异常</strong>：返回可迭代、可 <code>len()</code> 的 <code>BatchLease</code>。<code>atomic</code> 失败会释放已获取成员并抛出原异常；<code>best_effort</code> 低于 <code>n_min</code> 时释放已获取成员并抛 <code>PoolExhausted</code>。</p>
+<p><strong>示例</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">purser</span><span class="w"> </span><span class="kn">import</span> <span class="n">AcquireRequest</span><span class="p">,</span> <span class="n">UsageOutcome</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">batch</span> <span class="o">=</span> <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">acquire_many</span><span class="p">(</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="mi">4</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">req</span><span class="o">=</span><span class="n">AcquireRequest</span><span class="p">(</span><span class="n">consumer</span><span class="o">=</span><span class="s2">"crawler-a"</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">mode</span><span class="o">=</span><span class="s2">"atomic"</span><span class="p">,</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="p">)</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="k">for</span> <span class="n">lease</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">:</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>        <span class="o">...</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="k">finally</span><span class="p">:</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    <span class="k">await</span> <span class="n">batch</span><span class="o">.</span><span class="n">release_all</span><span class="p">(</span><span class="n">pool</span><span class="o">=</span><span class="n">pool</span><span class="p">,</span> <span class="n">outcome</span><span class="o">=</span><span class="n">UsageOutcome</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>注意</strong>：<code>n</code> 是租约条数，不是槽位数。<code>mode</code> 非法、<code>n &lt;= 0</code>、<code>n_min &lt;= 0</code> 或 <code>n_min &gt; n</code> 都会抛 <code>ConfigError</code>。</p>
+<h3 id="batch-release-all"><code>batch.release_all()</code><a class="headerlink" href="#batch-release-all" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：按列表顺序逐条归还批量租约，全部成功后清空列表。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">release_all</span><span class="p">(</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">pool</span><span class="p">:</span> <span class="n">ResourcePool</span><span class="p">,</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">outcome</span><span class="p">:</span> <span class="n">UsageOutcome</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">UsageOutcome</span><span class="o">.</span><span class="n">OK</span><span class="p">,</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pool</code></td>
+<td><code>ResourcePool</code></td>
+<td>必填</td>
+<td>签发这些租约的池</td>
+</tr>
+<tr>
+<td><code>outcome</code></td>
+<td><code>UsageOutcome &#124; str</code></td>
+<td><code>UsageOutcome.OK</code></td>
+<td>每份租约统一使用的归还结果；合法字符串会被转换为枚举</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回与异常</strong>：返回 <code>None</code>。中途某条归还抛错时，列表不会清空；已成功项仍保留在列表中，可依赖 <code>release()</code> 的幂等语义重试。</p>
+<p><strong>示例</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">await</span> <span class="n">batch</span><span class="o">.</span><span class="n">release_all</span><span class="p">(</span><span class="n">pool</span><span class="o">=</span><span class="n">pool</span><span class="p">,</span> <span class="n">outcome</span><span class="o">=</span><span class="s2">"ok"</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="lease"><code>Lease</code><a class="headerlink" href="#lease" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">Lease</span><span class="p">(</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">token</span><span class="p">,</span> <span class="n">pool</span><span class="p">,</span> <span class="n">rid</span><span class="p">,</span> <span class="n">consumer</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">started_at</span><span class="o">=&lt;</span><span class="n">now</span><span class="o">&gt;</span><span class="p">,</span> <span class="n">expires_at</span><span class="o">=&lt;</span><span class="n">now</span> <span class="o">+</span> <span class="mi">60</span><span class="o">&gt;</span><span class="p">,</span> <span class="n">heartbeat_at</span><span class="o">=&lt;</span><span class="n">now</span><span class="o">&gt;</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">priority</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">use_limit</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">used</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">trace_id</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">outcome</span><span class="o">=</span><span class="n">UsageOutcome</span><span class="o">.</span><span class="n">OK</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">payload</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">resource</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>token</code></td>
+<td><code>str</code></td>
+<td>唯一租约凭据；归还、续约、定向强制撤销都使用它</td>
+</tr>
+<tr>
+<td><code>pool</code> / <code>rid</code> / <code>slots</code></td>
+<td><code>str</code> / <code>str</code> / <code>int</code></td>
+<td>所属池、资源与占用槽位</td>
+</tr>
+<tr>
+<td><code>consumer</code> / <code>target</code> / <code>priority</code> / <code>trace_id</code></td>
+<td>请求上下文</td>
+<td>获取时的消费者、目标、优先级与追踪标识</td>
+</tr>
+<tr>
+<td><code>started_at</code> / <code>expires_at</code> / <code>heartbeat_at</code></td>
+<td><code>float</code></td>
+<td>起始、到期与最近心跳时间（epoch 秒）</td>
+</tr>
+<tr>
+<td><code>use_limit</code> / <code>used</code></td>
+<td><code>int &#124; None</code> / <code>int</code></td>
+<td>使用次数上限与已用次数</td>
+</tr>
+<tr>
+<td><code>outcome</code></td>
+<td><code>UsageOutcome</code></td>
+<td>归还时上报的结果，默认 <code>UsageOutcome.OK</code></td>
+</tr>
+<tr>
+<td><code>payload</code></td>
+<td><code>dict &#124; None</code></td>
+<td>获取时资源 payload 的副本，便于持有者直接使用</td>
+</tr>
+<tr>
+<td><code>resource</code></td>
+<td><code>Resource &#124; None</code></td>
+<td>本进程加载的类型化资源快照；跨进程重建的租约为 <code>None</code>，需要最新状态时用 <code>await pool.require(rid=lease.rid)</code></td>
+</tr>
+</tbody>
+</table>
+<p>直接构造 <code>Lease</code> 适合反序列化或测试；正常运行时应通过 <code>acquire()</code> / <code>lease()</code> 获取已登记的租约。</p>
+<h3 id="lease-new"><code>Lease.new()</code><a class="headerlink" href="#lease-new" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：创建一个带新 token 的本地 <code>Lease</code> 对象，便于测试、手工构造或反序列化场景。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nd">@staticmethod</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">new</span><span class="p">(</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">pool</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">rid</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">consumer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">slots</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="n">ttl</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="n">priority</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="n">use_limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>    <span class="n">trace_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>    <span class="n">now</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Lease</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pool</code></td>
+<td><code>str</code></td>
+<td>必填</td>
+<td>池名</td>
+</tr>
+<tr>
+<td><code>rid</code></td>
+<td><code>str</code></td>
+<td>必填</td>
+<td>资源 id</td>
+</tr>
+<tr>
+<td><code>consumer</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>消费者标识</td>
+</tr>
+<tr>
+<td><code>slots</code></td>
+<td><code>int</code></td>
+<td><code>1</code></td>
+<td>占用槽位数</td>
+</tr>
+<tr>
+<td><code>ttl</code></td>
+<td><code>float</code></td>
+<td><code>60.0</code></td>
+<td>有效秒数，用于计算 <code>expires_at</code></td>
+</tr>
+<tr>
+<td><code>priority</code></td>
+<td><code>int</code></td>
+<td><code>0</code></td>
+<td>请求优先级</td>
+</tr>
+<tr>
+<td><code>use_limit</code></td>
+<td><code>int &#124; None</code></td>
+<td><code>None</code></td>
+<td>使用次数上限</td>
+</tr>
+<tr>
+<td><code>trace_id</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>追踪标识</td>
+</tr>
+<tr>
+<td><code>now</code></td>
+<td><code>float &#124; None</code></td>
+<td><code>None</code></td>
+<td>起始时间；缺省取当前时间</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回</strong>：新的 <code>Lease</code>。它只构造本地对象，不会向池或协调层注册；要取得可续约、可归还的有效租约，请使用 <code>acquire()</code>。</p>
+<h3 id="lease-expired"><code>lease.expired()</code><a class="headerlink" href="#lease-expired" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：判断租约是否已经到期。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">expired</span><span class="p">(</span><span class="n">now</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong>：<code>now</code> 为可选 epoch 秒，缺省取当前时间。</p>
+<p><strong>返回</strong>：<code>now &gt;= expires_at</code> 时返回 <code>True</code>，否则返回 <code>False</code>。</p>
+<h2 id="_2">续约与归还<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<h3 id="pool-renew"><code>pool.renew()</code><a class="headerlink" href="#pool-renew" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：为长任务显式续约；常规场景交给心跳自动保活。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">renew</span><span class="p">(</span><span class="n">lease</span><span class="p">:</span> <span class="n">Lease</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">used</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lease</code></td>
+<td><code>Lease</code></td>
+<td>必填</td>
+<td>要续约的租约</td>
+</tr>
+<tr>
+<td><code>used</code></td>
+<td><code>int &#124; None</code></td>
+<td><code>None</code></td>
+<td>上报当前使用次数；租约保留两次上报中的较大值，重试或乱序上报不会降低计数</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回与异常</strong>：返回新的 <code>expires_at</code>。<code>use_limit</code> 或 <code>max_lease_duration</code> 用尽时抛 <code>LeaseLimitReached</code>；协调层已回收或撤销 token 时抛 <code>LeaseLost</code>；默认 fail-closed 下协调层不可用抛 <code>BackendUnavailable</code>。</p>
+<p><strong>示例</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">expires_at</span> <span class="o">=</span> <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">renew</span><span class="p">(</span><span class="n">lease</span><span class="p">,</span> <span class="n">used</span><span class="o">=</span><span class="n">lease</span><span class="o">.</span><span class="n">used</span><span class="p">)</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="k">except</span> <span class="n">LeaseLimitReached</span><span class="p">:</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="o">...</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="k">except</span> <span class="n">LeaseLost</span><span class="p">:</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    <span class="o">...</span>
+</code></pre></div>
+<p><strong>注意</strong>：心跳由 <code>LeaseManager</code> 按 <code>lease_ttl / 3</code> 自动续约；<code>max_lease_duration</code> 会给续约到期时间封顶，总寿命用尽后停止续约并由 reaper 回收。跨进程调用时可先更新本地 <code>lease.used</code> 再续约。</p>
+<h3 id="pool-release"><code>pool.release()</code><a class="headerlink" href="#pool-release" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：归还租约，并可选地上报结果、用量和业务延迟。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">release</span><span class="p">(</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="n">lease</span><span class="p">:</span> <span class="n">Lease</span><span class="p">,</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">outcome</span><span class="p">:</span> <span class="n">UsageOutcome</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">used</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">latency_ms</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lease</code></td>
+<td><code>Lease</code></td>
+<td>必填</td>
+<td>要归还的租约</td>
+</tr>
+<tr>
+<td><code>outcome</code></td>
+<td><code>UsageOutcome &#124; str &#124; None</code></td>
+<td><code>None</code></td>
+<td>省略时使用 <code>lease.outcome</code>；合法字符串会转换为枚举，未知字符串抛 <code>ConfigError</code></td>
+</tr>
+<tr>
+<td><code>used</code></td>
+<td><code>int &#124; None</code></td>
+<td><code>None</code></td>
+<td>省略时按 <code>lease.used or 1</code> 计量；负值抛 <code>ConfigError</code></td>
+</tr>
+<tr>
+<td><code>latency_ms</code></td>
+<td><code>float &#124; None</code></td>
+<td><code>None</code></td>
+<td>业务延迟；负值抛 <code>ConfigError</code>。<code>outcome=OK</code> 时用于更新资源健康 EWMA</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回与异常</strong>：归还成功后返回 <code>True</code>。token 已不在协调端时幂等返回 <code>True</code>，不扣减存储槽位；token 仍在但存储槽位对不上时抛 <code>LeaseConflict</code>。默认 fail-closed 下协调层不可用抛 <code>BackendUnavailable</code>；配置 <code>fail_open=True</code> 时部分路径会按本地降级状态继续。</p>
+<p><strong>示例</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">purser</span><span class="w"> </span><span class="kn">import</span> <span class="n">UsageOutcome</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">release</span><span class="p">(</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>    <span class="n">lease</span><span class="p">,</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">outcome</span><span class="o">=</span><span class="n">UsageOutcome</span><span class="o">.</span><span class="n">RATE_LIMITED</span><span class="p">,</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="n">used</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="n">latency_ms</span><span class="o">=</span><span class="mf">120.0</span><span class="p">,</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="p">)</span>
+</code></pre></div>
+<p><strong>注意</strong>：<code>pool.lease()</code> 上下文管理器固定传 <code>used=lease.used</code>（默认 0），所以该路径默认记 0；要统计真实用量，需在块内设置 <code>lease.used</code>。<code>SyncPool.release()</code> 支持 <code>latency_ms</code>，<code>ThreadPool.release()</code> 和 <code>RemotePool.release()</code> 不支持该参数。</p>
+<h3 id="pool-release-consumer"><code>pool.release_consumer()</code><a class="headerlink" href="#pool-release-consumer" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：归还某个 consumer 在当前池持有的全部活跃租约。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">release_consumer</span><span class="p">(</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    <span class="n">consumer</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="n">outcome</span><span class="p">:</span> <span class="n">UsageOutcome</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">UsageOutcome</span><span class="o">.</span><span class="n">OK</span><span class="p">,</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="n">operator</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"system"</span><span class="p">,</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Lease</span><span class="p">]:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>consumer</code></td>
+<td><code>str</code></td>
+<td>必填</td>
+<td>消费者标识</td>
+</tr>
+<tr>
+<td><code>outcome</code></td>
+<td><code>UsageOutcome &#124; str</code></td>
+<td><code>UsageOutcome.OK</code></td>
+<td>所有租约统一使用的归还结果</td>
+</tr>
+<tr>
+<td><code>operator</code></td>
+<td><code>str</code></td>
+<td><code>"system"</code></td>
+<td>审计操作者</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回</strong>：归还的租约列表；没有匹配租约时返回空列表。</p>
+<p><strong>示例</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">purser</span><span class="w"> </span><span class="kn">import</span> <span class="n">UsageOutcome</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">released</span> <span class="o">=</span> <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">release_consumer</span><span class="p">(</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>    <span class="s2">"crawler-a"</span><span class="p">,</span> <span class="n">outcome</span><span class="o">=</span><span class="n">UsageOutcome</span><span class="o">.</span><span class="n">OK</span><span class="p">,</span> <span class="n">operator</span><span class="o">=</span><span class="s2">"scheduler"</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="p">)</span>
+</code></pre></div>
+<h3 id="usageoutcome"><code>UsageOutcome</code> 副作用<a class="headerlink" href="#usageoutcome" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>结果</th>
+<th>主要副作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ok</code></td>
+<td>正常计量</td>
+</tr>
+<tr>
+<td><code>rate_limited</code></td>
+<td>有 <code>target</code> 时记录站点失败；未配置 <code>cooldown_after_release</code> 时至少冷却 5 秒，配置后以该值为准</td>
+</tr>
+<tr>
+<td><code>captcha</code></td>
+<td>有 <code>target</code> 时记录站点失败</td>
+</tr>
+<tr>
+<td><code>timeout</code> / <code>network_error</code> / <code>banned</code></td>
+<td>降低健康度并标记 <code>needs_validate</code>；网络错误同时记录站点失败</td>
+</tr>
+<tr>
+<td><code>quota_exhausted</code></td>
+<td>正常计量；是否进入 <code>QUOTA_EXHAUSTED</code> 由配额判定</td>
+</tr>
+<tr>
+<td><code>preempted</code></td>
+<td>该 consumer 在资源上冷却 10 秒（强制撤销会自动产生此结果）</td>
+</tr>
+</tbody>
+</table>
+<p>状态与健康度的完整规则见<a href="../../../guides/fairness-and-health/">公平性与健康度</a>。</p>
+<h2 id="_3">强制撤销<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<h3 id="force-revoke"><code>pool.admin.force_revoke()</code><a class="headerlink" href="#force-revoke" title="Permanent link">&para;</a></h3>
+<p><strong>用途</strong>：立即撤销资源上的任意一条或指定一条活跃租约，并释放槽位、记录结果与事件。</p>
+<p><strong>签名</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">force_revoke</span><span class="p">(</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>    <span class="n">rid</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="n">operator</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"system"</span><span class="p">,</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Lease</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rid</code></td>
+<td><code>str</code></td>
+<td>必填</td>
+<td>资源 id</td>
+</tr>
+<tr>
+<td><code>operator</code></td>
+<td><code>str</code></td>
+<td><code>"system"</code></td>
+<td>审计操作者</td>
+</tr>
+<tr>
+<td><code>reason</code></td>
+<td><code>str</code></td>
+<td>必填</td>
+<td>撤销原因</td>
+</tr>
+<tr>
+<td><code>token</code></td>
+<td><code>str &#124; None</code></td>
+<td><code>None</code></td>
+<td>指定租约 token；省略时只撤销该资源的任意一条活跃租约</td>
+</tr>
+</tbody>
+</table>
+<p><strong>返回与异常</strong>：返回被撤销租约的快照。指定 token 不存在时抛 <code>LeaseConflict</code>；资源没有任何活跃租约时抛 <code>BadState</code>。</p>
+<p><strong>示例</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">revoked</span> <span class="o">=</span> <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">admin</span><span class="o">.</span><span class="n">force_revoke</span><span class="p">(</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>    <span class="n">rid</span><span class="o">=</span><span class="s2">"r42"</span><span class="p">,</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>    <span class="n">operator</span><span class="o">=</span><span class="s2">"alice"</span><span class="p">,</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>    <span class="n">reason</span><span class="o">=</span><span class="s2">"credential leak"</span><span class="p">,</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="n">token</span><span class="o">=</span><span class="n">lease</span><span class="o">.</span><span class="n">token</span><span class="p">,</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="p">)</span>
+</code></pre></div>
+<p><strong>注意</strong>：强制撤销会给被撤销租约的 consumer 写入 10 秒资源级冷却、记录 <code>preempted</code> 用量并发布 <code>lease_revoked</code> 事件。需要撤销该资源的全部租约时，由调用方遍历当前租约并容忍并发归还：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="k">for</span> <span class="n">lease</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">leases</span><span class="p">(</span><span class="n">rid</span><span class="o">=</span><span class="s2">"r42"</span><span class="p">)):</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>        <span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">admin</span><span class="o">.</span><span class="n">force_revoke</span><span class="p">(</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>            <span class="n">rid</span><span class="o">=</span><span class="s2">"r42"</span><span class="p">,</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>            <span class="n">operator</span><span class="o">=</span><span class="s2">"alice"</span><span class="p">,</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>            <span class="n">reason</span><span class="o">=</span><span class="s2">"credential leak"</span><span class="p">,</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>            <span class="n">token</span><span class="o">=</span><span class="n">lease</span><span class="o">.</span><span class="n">token</span><span class="p">,</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>        <span class="p">)</span>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>    <span class="k">except</span> <span class="n">LeaseConflict</span><span class="p">:</span>
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>        <span class="k">pass</span>
+</code></pre></div>
+<h2 id="_4">相关事件<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>获取、归还、过期、失联、强制撤销分别发布 <code>lease_acquired</code> / <code>lease_released</code> / <code>lease_expired</code> / <code>lease_lost</code> / <code>lease_revoked</code>；事件字段与回放接口见 <a href="../../rest-api/events/">Events</a>。</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="页脚" >
+        
+          
+          <a href="../pools/" class="md-footer__link md-footer__link--prev" aria-label="上一页: ResourcePool">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                上一页
+              </span>
+              <div class="md-ellipsis">
+                ResourcePool
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../resources/" class="md-footer__link md-footer__link--next" aria-label="下一页: Resource / ResourceAdapter">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                下一页
+              </span>
+              <div class="md-ellipsis">
+                Resource / ResourceAdapter
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+      <div class="md-progress" data-md-component="progress" role="progressbar"></div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "navigation.top", "navigation.footer", "navigation.path", "navigation.tracking", "navigation.instant", "navigation.instant.prefetch", "navigation.instant.progress", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link", "content.tooltips", "content.footnote.tooltips"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="../../../assets/javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>
