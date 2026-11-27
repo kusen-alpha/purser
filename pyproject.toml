@@ -41,7 +41,7 @@ dependencies = [
 # REST API + Web console (`purser serve`).
 server = [
     "fastapi>=0.110",
-    "uvicorn>=0.27",
+    "uvicorn>=0.54.0",
 ]
 # `purser status|ls|lease|import|events` against a running service.
 cli = [
@@ -57,7 +57,7 @@ dev = [
     "fakeredis>=2",
     "httpx>=0.27",
     "fastapi>=0.110",
-    "uvicorn>=0.27",
+    "uvicorn>=0.54.0",
     "rich>=13",
     "mypy>=1.10",
     "ruff>=0.5",
