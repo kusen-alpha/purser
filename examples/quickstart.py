@@ -25,7 +25,7 @@ class LocalChecker(ResourceAdapter):
     """不联网的确定性验活器，适合本地演示与测试。"""
 
     kind = "local"
-    default_concurrency = 2
+    default_slots = 2
 
     async def generate(self, spec: dict):
         return Resource(
@@ -55,7 +55,7 @@ async def embedded() -> None:
 
     # 首次 acquire/lease 自动启动运行时，无需显式 ps.start()
     async with pool.lease(AcquireRequest(consumer="crawler", tags=["US"])) as lease:
-        print(f"拿到 {lease.resource_id} -> {lease.payload}")
+        print(f"拿到 {lease.rid} -> {lease.payload}")
         lease.outcome = UsageOutcome.OK
 
     stats = await pool.stats()
@@ -94,7 +94,7 @@ async def service() -> None:
         print("== 服务态 ==")
         print("GET /pools ->", [p["name"] for p in pools["pools"]])
         lease = client.post("/pools/demo/leases", json={"consumer": "remote", "timeout": 5}).json()["leases"][0]
-        print("POST /leases ->", lease["resource_id"])
+        print("POST /leases ->", lease["rid"])
         client.request("DELETE", f"/pools/demo/leases/{lease['token']}", json={"outcome": "ok"})
     server.should_exit = True
 
@@ -114,7 +114,7 @@ async def redis_backend() -> None:
     pool = ps.create_pool("shared", "local")
     await pool.import_resources([{"id": f"r{i}"} for i in range(3)])
     async with pool.lease(AcquireRequest(consumer="x")) as lease:
-        print(f"Redis 池获取 {lease.resource_id}，槽位 {lease.slots}")
+        print(f"Redis 池获取 {lease.rid}，槽位 {lease.slots}")
     counts = await pool.counts(by_name=True)
     print(f"Redis 池状态分布: {counts}")
     await ps.close()

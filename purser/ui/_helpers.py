@@ -124,7 +124,7 @@ def optional_epoch(value: Any, name: str) -> float | None:
 def lease_view(lease: Any, *, admin: bool) -> dict[str, Any]:
     return {
         "token": lease.token,
-        "resource_id": lease.resource_id,
+        "rid": lease.rid,
         "consumer": lease.consumer,
         "slots": lease.slots,
         "started_at": lease.started_at,

@@ -28,7 +28,7 @@
 from purser import ProxyAdapter
 
 ps.register_adapter(
-    ProxyAdapter(
+    adapter=ProxyAdapter(
         probe_targets=["http://example.com:80", "https://example.com:443"],
         timeout=8.0,
     )
@@ -64,7 +64,7 @@ ps.register_adapter(
 ```python
 from purser import AccountAdapter
 
-ps.register_adapter(AccountAdapter())
+ps.register_adapter(adapter=AccountAdapter())
 ```
 
 ### 字段
@@ -91,7 +91,7 @@ class MyAccountAdapter(AccountAdapter):
 
     async def validate(self, resource):
         ok = await check_login(resource.cookie)
-        return HealthReport.ok() if ok else HealthReport.fail("login rejected")
+        return HealthReport.ok() if ok else HealthReport.fail(error="login rejected")
 ```
 
 也可以在获取路径用 `on_request_check` 做按目标站的判断，而不改变资源状态。

@@ -20,11 +20,11 @@ from typing import Any
 from purser.adapter_spec import AdapterSpec
 from purser.core.resource import (
     AcquireRequest,
-    Concurrency,
     HealthStats,
     Quota,
     Resource,
     SiteFailure,
+    Slots,
     UsageOutcome,
 )
 from purser.core.state import ResourceState
@@ -90,8 +90,8 @@ def _resource_from_dict(
         "state": state,
         "version": int(data.get("version", 0)),
         "tags": frozenset(data.get("tags") or ()),
-        "concurrency": _build_dataclass(Concurrency, data.get("concurrency"))
-        or Concurrency(),
+        "slots": _build_dataclass(Slots, data.get("slots"))
+        or Slots(),
         "health": _build_dataclass(HealthStats, data.get("health")) or HealthStats(),
         "site_failures": {
             str(name): _build_dataclass(SiteFailure, item)
@@ -133,7 +133,7 @@ class RemoteLease:
         "_client",
         "_token",
         "_pool",
-        "_resource_id",
+        "_rid",
         "_consumer",
         "_slots",
         "_started_at",
@@ -160,7 +160,7 @@ class RemoteLease:
         self._client = client
         self._token = str(data["token"])
         self._pool = str(data["pool"])
-        self._resource_id = str(data["resource_id"])
+        self._rid = str(data["rid"])
         self._consumer = data.get("consumer")
         self._slots = int(data.get("slots", 1))
         self._started_at = float(data.get("started_at", time.time()))
@@ -187,8 +187,8 @@ class RemoteLease:
         return self._pool
 
     @property
-    def resource_id(self) -> str:
-        return self._resource_id
+    def rid(self) -> str:
+        return self._rid
 
     @property
     def consumer(self) -> str | None:
@@ -301,7 +301,7 @@ class RemoteLease:
 
     def __repr__(self) -> str:
         return (
-            f"RemoteLease(pool={self._pool!r}, resource_id={self._resource_id!r}, "
+            f"RemoteLease(pool={self._pool!r}, rid={self._rid!r}, "
             f"token={self._token!r}, used={self._used}, outcome={self._outcome.value!r})"
         )
 
@@ -320,8 +320,6 @@ class LocalSchedulerClient:
         *,
         resource_types: dict[str, type[Resource]] | None = None,
     ) -> None:
-        if address.protocol != 1:
-            raise ConfigError(f"unsupported scheduler protocol {address.protocol}")
         self.address = address
         self._local = threading.local()
         self._conns: list[Any] = []
@@ -730,11 +728,23 @@ def _coerce_address(value: Any) -> SchedulerAddress | None:
         return None
     if isinstance(value, SchedulerAddress):
         return value
-    if isinstance(value, dict):
-        return SchedulerAddress.from_dict(value)
+    if isinstance(value, Mapping):
+        return SchedulerAddress.from_dict(dict(value))
     if isinstance(value, str):
         return SchedulerAddress.from_env(value)
-    raise TypeError("address must be SchedulerAddress, dict, str or None")
+    raise TypeError("address must be SchedulerAddress, mapping, str or None")
+
+
+def resolve_address(
+    address: SchedulerAddress | Mapping[str, Any] | str | None,
+) -> SchedulerAddress:
+    resolved = SchedulerAddress.from_env() if address is None else _coerce_address(address)
+    if resolved is None:
+        raise ConfigError(
+            "no scheduler address; pass address or set "
+            "PURSER_LOCAL_SCHEDULER"
+        )
+    return resolved
 
 
 def set_default_address(address: SchedulerAddress) -> None:

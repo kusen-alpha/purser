@@ -13,7 +13,7 @@ from purser.core.allocator import (
     LeastLoadedAllocator,
     RoundRobinAllocator,
 )
-from purser.core.resource import AcquireRequest, Concurrency, HealthStats, Resource
+from purser.core.resource import AcquireRequest, HealthStats, Resource, Slots
 from purser.core.state import ResourceState
 
 
@@ -23,7 +23,7 @@ def resource(rid: str, *, health: float = 0.5, used: int = 0, max_slots: int = 1
         kind="fakecheck",
         payload={},
         state=ResourceState.IDLE,
-        concurrency=Concurrency(max_slots=max_slots, used_slots=used),
+        slots=Slots(max_slots=max_slots, used_slots=used),
         health=HealthStats(score=health, samples=3),
         meta={"created_at": 0.0, "last_used_at": 0.0},
     )

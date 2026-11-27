@@ -13,7 +13,7 @@ from purser.core.resource import Resource
 
 class FacadeAdapter(ResourceAdapter):
     kind = "facade"
-    default_concurrency = 1
+    default_slots = 1
 
     async def generate(self, spec: dict) -> Resource:
         return Resource(
@@ -29,7 +29,7 @@ class FacadeAdapter(ResourceAdapter):
 
 class NeedsArgsAdapter(ResourceAdapter):
     kind = "needsargs"
-    default_concurrency = 1
+    default_slots = 1
 
     def __init__(self, prefix: str) -> None:
         self.prefix = prefix

@@ -10,7 +10,7 @@ Purser 用三个结构化 `Protocol` 描述“不同运行时应该长什么样�
 class LeaseView(Protocol):
     token: str
     pool: str
-    resource_id: str
+    rid: str
     consumer: str | None
     slots: int
     started_at: float
@@ -33,7 +33,7 @@ class LeaseView(Protocol):
 ```python
 def summarize(lease: LeaseView) -> dict:
     return {
-        "resource": lease.resource_id,
+        "resource": lease.rid,
         "consumer": lease.consumer,
         "remaining": lease.expires_at - time.time(),
     }

@@ -111,7 +111,7 @@ class CheckVerdict(str, enum.Enum):
 
 
 @dataclass(slots=True)
-class Concurrency:
+class Slots:
     """Slot accounting for EXCLUSIVE (``max_slots == 1``) and SHARED resources."""
 
     max_slots: int = 1
@@ -245,7 +245,7 @@ class Lease:
 
     token: str
     pool: str
-    resource_id: str
+    rid: str
     consumer: str | None = None
     slots: int = 1
     started_at: float = field(default_factory=_now)
@@ -265,7 +265,7 @@ class Lease:
     @staticmethod
     def new(
         pool: str,
-        resource_id: str,
+        rid: str,
         *,
         consumer: str | None = None,
         slots: int = 1,
@@ -279,7 +279,7 @@ class Lease:
         return Lease(
             token=uuid.uuid4().hex,
             pool=pool,
-            resource_id=resource_id,
+            rid=rid,
             consumer=consumer,
             slots=slots,
             started_at=now,
@@ -389,7 +389,7 @@ class Resource:
     state: ResourceState = ResourceState.NEW
     version: int = 0
     tags: frozenset[str] = frozenset()
-    concurrency: Concurrency = field(default_factory=Concurrency)
+    slots: Slots = field(default_factory=Slots)
     health: HealthStats = field(default_factory=HealthStats)
     site_failures: dict[str, SiteFailure] = field(default_factory=dict)
     quota: Quota | None = None
@@ -591,7 +591,7 @@ class Resource:
 
     @property
     def available_slots(self) -> int:
-        return self.concurrency.available
+        return self.slots.available
 
     @property
     def allocatable(self) -> bool:
@@ -668,7 +668,7 @@ class AcquireRequest:
     use_limit: int | None = None
     allow_duplicate: bool = False
     ignore_cooldown: bool = False
-    resource_id: str | None = None
+    rid: str | None = None
     required_tag: str | None = None  # tag that must match (hard constraint)
     affinity: str | None = None  # affinity history key; defaults to consumer
     idempotency_key: str | None = None  # replay returns the same live lease
@@ -726,8 +726,8 @@ def describe_resource(resource: Resource, *, secret: bool = False) -> dict[str, 
         "state": resource.state.value,
         "tags": sorted(resource.tags),
         "payload": payload,
-        "max_slots": resource.concurrency.max_slots,
-        "used_slots": resource.concurrency.used_slots,
+        "max_slots": resource.slots.max_slots,
+        "used_slots": resource.slots.used_slots,
         "version": resource.version,
         "health": {
             "score": resource.health.score,
@@ -774,7 +774,7 @@ class LeaseView(Protocol):
 
     token: str
     pool: str
-    resource_id: str
+    rid: str
     consumer: str | None
     slots: int
     started_at: float

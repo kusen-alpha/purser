@@ -733,8 +733,8 @@ function renderPoolKindOptions(){
   const prev = sel.value;
   sel.innerHTML = "";
   const list = ADAPTERS.length ? ADAPTERS : [
-    {kind:"proxy", resource_class:"ProxyAdapter", default_concurrency:1, fields:[]},
-    {kind:"account", resource_class:"AccountAdapter", default_concurrency:4, fields:[]}
+    {kind:"proxy", resource_class:"ProxyAdapter", default_slots:1, fields:[]},
+    {kind:"account", resource_class:"AccountAdapter", default_slots:4, fields:[]}
   ];
   for(const t of list){
     const opt = document.createElement("option");
@@ -749,7 +749,7 @@ function updatePoolKindHint(){
   const sel = document.getElementById("poolKind");
   const t = adapterOf(sel.value);
   document.getElementById("poolKindHint").textContent = t
-    ? `默认并发 ${t.default_concurrency} · ${t.fields.length} 个配置字段`
+    ? `默认槽位 ${t.default_slots} · ${t.fields.length} 个配置字段`
     : "";
 }
 async function loadAdapters(){
@@ -1649,7 +1649,7 @@ async function loadLeases(){
   const consumer = document.getElementById("leaseFilterConsumer").value.trim();
   const rid = document.getElementById("leaseFilterRid").value.trim();
   if(consumer) qs.set("consumer", consumer);
-  if(rid) qs.set("resource_id", rid);
+  if(rid) qs.set("rid", rid);
   const suffix = qs.toString() ? `?${qs}` : "";
   try{
     const data = await api(`/pools/${enc(name)}/leases${suffix}`);
@@ -1667,7 +1667,7 @@ async function loadLeases(){
         ? String(l.used || 0) : `${l.used || 0}/${l.use_limit}`;
       const overdue = l.expires_at && l.expires_at < Date.now() / 1000;
       return `<tr title="${esc(l.trace_id || "")}">
-        <td class="id" title="${esc(l.resource_id)}">${esc(l.resource_id)}</td>
+        <td class="id" title="${esc(l.rid)}">${esc(l.rid)}</td>
         <td>${esc(l.consumer || "-")}</td>
         <td>${l.priority || 0}</td>
         <td>${l.slots}</td>
@@ -1710,7 +1710,7 @@ function renderLeaseDetail(l){
   const useLimit = l.use_limit === null || l.use_limit === undefined ? "不限" : String(l.use_limit);
   const rows = [
     ["token", l.token || "-"],
-    ["resource_id", l.resource_id || "-"],
+    ["rid", l.rid || "-"],
     ["consumer", l.consumer || "-"],
     ["target", l.target || "-"],
     ["slots", String(l.slots === undefined ? 0 : l.slots)],
@@ -1725,7 +1725,7 @@ function renderLeaseDetail(l){
   const payloadRows = Object.keys(payload).length
     ? Object.keys(payload).map(k => `<tr><td class="k">${esc(k)}</td><td>${esc(typeof payload[k] === "object" ? JSON.stringify(payload[k]) : payload[k])}</td></tr>`).join("")
     : '<tr><td colspan="2" class="empty">无载荷</td></tr>';
-  document.getElementById("leaseModalMeta").textContent = overdue ? "已过期" : (l.resource_id || "");
+  document.getElementById("leaseModalMeta").textContent = overdue ? "已过期" : (l.rid || "");
   document.getElementById("leaseModalBody").innerHTML =
     `<table class="kvtable"><tbody>${rows}</tbody></table>` +
     `<div class="block-h" style="margin-top:14px">载荷${masked ? "（已脱敏）" : ""}</div>` +
@@ -1743,7 +1743,7 @@ async function acquireLease(){
   const body = {
     consumer: document.getElementById("leaseConsumer").value.trim() || null,
     target: document.getElementById("leaseSite").value.trim() || null,
-    resource_id: target || null,
+    rid: target || null,
     tags,
     required_tag: document.getElementById("leaseRequiredTag").value.trim() || null,
     probe: document.getElementById("leaseProbe").value.trim() || null,
@@ -1768,7 +1768,7 @@ async function acquireLease(){
     const leases = data.leases || [];
     document.getElementById("leaseResult").innerHTML = leases.map(l => `
       <div class="lease-hit">
-        <div class="row"><b>${esc(l.resource_id)}</b><span class="muted">${esc(l.consumer || "-")} · ${l.slots} 槽 · 优先级 ${l.priority || 0} · 到期 ${fmtTime(l.expires_at)}</span></div>
+        <div class="row"><b>${esc(l.rid)}</b><span class="muted">${esc(l.consumer || "-")} · ${l.slots} 槽 · 优先级 ${l.priority || 0} · 到期 ${fmtTime(l.expires_at)}</span></div>
         <div class="row"><code>${esc(String(l.token || "").slice(0, 12))}…</code>
           <button class="mini" data-release="${esc(l.token)}" data-outcome="ok">归还</button></div>
       </div>`).join("");
@@ -2032,7 +2032,7 @@ function openAddModal(){
   const t = adapterOf(currentKind);
   document.getElementById("addTitle").textContent = `添加 ${currentKind} 资源`;
   document.getElementById("addSub").textContent = t
-    ? `${t.resource_class} · 默认并发 ${t.default_concurrency} · 字段来自服务端适配器 schema`
+    ? `${t.resource_class} · 默认槽位 ${t.default_slots} · 字段来自服务端适配器 schema`
     : "该类型未公开字段 schema，请填写 JSON 载荷";
   const wrap = document.getElementById("addFields");
   wrap.innerHTML = "";

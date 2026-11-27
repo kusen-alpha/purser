@@ -19,7 +19,7 @@ async def test_expires_in_auto_suspends(make_pool):
     res = await pool.get(rid)
     assert res is not None and res.expires_at is not None
     lease = await pool.acquire(AcquireRequest(consumer="c", timeout=2.0))
-    assert lease.resource_id == rid
+    assert lease.rid == rid
     await pool.release(lease)
     res = await pool.get(rid)
     await pool.storage.set_state(
@@ -79,5 +79,5 @@ async def test_cooldown_consumer_only_isolation(make_pool):
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(consumer="c", timeout=0.05))
     other = await pool.acquire(AcquireRequest(consumer="other", timeout=2.0))
-    assert other.resource_id == rid
+    assert other.rid == rid
     await pool.release(other)

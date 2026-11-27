@@ -161,8 +161,8 @@ _FIELD_META: dict[str, dict[str, Any]] = {
     "validate_timeout": _meta(
         "validation", "验活超时", kind="float", minimum=0.0, unit="s"
     ),
-    "validate_concurrency": _meta(
-        "validation", "验活并发", kind="int", minimum=1
+    "validate_workers": _meta(
+        "validation", "验活 worker 数", kind="int", minimum=1
     ),
     "site_failure_ttl": _meta(
         "resilience", "站点故障 TTL", kind="float", minimum=0.0, unit="s"

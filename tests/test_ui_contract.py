@@ -27,7 +27,7 @@ class _UiChecker(ResourceAdapter):
     """Deterministic plugin for the console flow tests."""
 
     kind = "uifake"
-    default_concurrency = 1
+    default_slots = 1
 
     async def generate(self, spec: dict[str, Any]) -> Resource:
         return Resource(
@@ -189,7 +189,7 @@ def test_adapters_schema_drives_resource_forms(client: TestClient):
 
     proxy = adapters["proxy"]
     assert proxy["resource_class"] == "ProxyResource"
-    assert proxy["default_concurrency"] == 1
+    assert proxy["default_slots"] == 1
     fields = {f["name"]: f for f in proxy["fields"]}
     assert list(fields) == [
         "host",
@@ -275,15 +275,15 @@ def test_console_flow_response_shapes(client: TestClient):
         "/pools/ui-demo/leases",
         json={"consumer": "ui", "timeout": 1.0},
     ).json()["leases"][0]
-    for key in ("token", "resource_id", "consumer", "slots", "payload", "expires_at"):
+    for key in ("token", "rid", "consumer", "slots", "payload", "expires_at"):
         assert key in lease, lease
     assert lease["consumer"] == "ui"
 
     assert client.get("/pools/ui-demo").json()["active_leases"] == 1
 
     active = client.get("/pools/ui-demo/leases").json()["leases"]
-    assert [item["resource_id"] for item in active] == [lease["resource_id"]]
-    for field in ("token", "resource_id", "consumer", "slots", "expires_at", "outcome"):
+    assert [item["rid"] for item in active] == [lease["rid"]]
+    for field in ("token", "rid", "consumer", "slots", "expires_at", "outcome"):
         assert field in active[0], active[0]
 
     released = client.request(
@@ -321,7 +321,7 @@ def test_console_flow_response_shapes(client: TestClient):
     assert held["consumer"] == "ui-idem"
     for key in (
         "token",
-        "resource_id",
+        "rid",
         "consumer",
         "target",
         "slots",
@@ -355,7 +355,7 @@ def test_console_flow_response_shapes(client: TestClient):
     )
     by_rid = client.get(
         "/pools/ui-demo/leases",
-        params={"resource_id": replay_a["leases"][0]["resource_id"]},
+        params={"rid": replay_a["leases"][0]["rid"]},
     ).json()
     assert by_rid["count"] == 1
     bulk = client.request(
@@ -368,7 +368,7 @@ def test_console_flow_response_shapes(client: TestClient):
         "/pools/ui-demo/leases", json={"consumer": "ui2", "timeout": 1.0}
     ).json()["leases"][0]
     revoked = client.post(
-        f"/pools/ui-demo/resources/{lease2['resource_id']}/revoke",
+        f"/pools/ui-demo/resources/{lease2['rid']}/revoke",
         json={"reason": "ui"},
     )
     assert revoked.status_code == 200

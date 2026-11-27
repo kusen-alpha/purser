@@ -29,8 +29,8 @@ ALLOWED_ERRORS = (
 def _check_invariants(pool, resources, max_slots: int) -> None:
     assert 0 <= len(resources) <= 5
     for resource in resources:
-        assert 0 <= resource.concurrency.used_slots <= min(
-            resource.concurrency.max_slots, max_slots
+        assert 0 <= resource.slots.used_slots <= min(
+            resource.slots.max_slots, max_slots
         ), resource.id
         assert resource.state in ResourceState
 
@@ -183,10 +183,10 @@ async def test_chaos_restart_across_churn(tmp_path, storage_kind, coordination_k
         hosts = {r.id: r.payload["host"] for r in resources}
         assert hosts == {f"r{i}": f"1.1.1.{i}" for i in range(4)}
         for resource in resources:
-            assert 0 <= resource.concurrency.used_slots <= 2
+            assert 0 <= resource.slots.used_slots <= 2
             assert resource.state in ResourceState
             if resource.state in (ResourceState.IDLE, ResourceState.ACTIVE, ResourceState.FULL):
-                assert resource.concurrency.used_slots == 0  # reconciled
+                assert resource.slots.used_slots == 0  # reconciled
     finally:
         await ps2.close()
 
@@ -235,7 +235,7 @@ async def test_multi_instance_chaos_no_oversell(
                 await pool.release(held[idx].pop())
             # Invariant: never over-commit beyond max_slots on the shared store.
             res = await pools[0].get("r0")
-            assert res is not None and 0 <= res.concurrency.used_slots <= 2
+            assert res is not None and 0 <= res.slots.used_slots <= 2
         for i in range(3):
             for lease in list(held[i]):
                 try:
@@ -244,7 +244,7 @@ async def test_multi_instance_chaos_no_oversell(
                     pass
             held[i].clear()
         res = await pools[0].get("r0")
-        assert res is not None and res.concurrency.used_slots == 0
+        assert res is not None and res.slots.used_slots == 0
         assert await pools[0]._coordination.active("shared") == []
     finally:
         for ps in instances:

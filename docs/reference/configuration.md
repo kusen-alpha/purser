@@ -1,6 +1,6 @@
 # 配置
 
-配置分三层：**部署环境变量 / CLI 参数**决定进程怎么连后端；**`PoolConfig`** 决定单个池怎么调度；**单次调用参数**（如 `AcquireRequest`）只影响本轮请求。
+配置分三层：**部署环境变量 / CLI 参数**决定进程如何连接后端；**`PoolConfig`** 决定单个池如何调度；**单次调用参数**（如 `AcquireRequest`）只影响本轮请求。
 
 ## 环境变量
 
@@ -34,19 +34,19 @@
 最基础的接入不需要先构造 `PoolConfig`，也不需要学习预设：
 
 ```python
-pool = ps.create_pool("proxies", "proxy", lease_ttl=120, max_slots=4)
-pool = ps.create_pool("accounts", "account", config={"lease_ttl": 120})
+pool = ps.create_pool(name="proxies", kind="proxy", lease_ttl=120, max_slots=4)
+pool = ps.create_pool(name="accounts", kind="account", config={"lease_ttl": 120})
 ```
 
 需要一套常见默认值时，再按名称选择预设；预设只是起点，显式 `config` 与关键字参数始终覆盖它：
 
 ```python
-pool = ps.create_pool("proxies", "proxy", profile="basic", lease_ttl=120)
+pool = ps.create_pool(name="proxies", kind="proxy", profile="basic", lease_ttl=120)
 ```
 
 合并顺序固定为：实例默认值（`storage` / `coordination`）→ `profile` → `config` → 关键字参数。
 预设包括 `basic`、`validated`、`shared`、`long_running`、`quota`、`random`（随机分配）与
-`one_shot`（无占用取样 + 随机分配，适合“拿一次就用、不归还”的脚本），完整定义见
+`one_shot`（无占用取样 + 随机分配，适合“获取一次即用、不归还”的脚本），完整定义见
 `purser.POOL_PROFILES`。纯 Python 侧也可以用映射一步构造：
 
 ```python
@@ -92,7 +92,7 @@ REST 与浏览器控制台使用同一份契约：`GET /config/schema` 返回字
 | --- | --- | --- |
 | `import_validate` | `auto` | `auto`（≤10 条同步验活，更多走后台任务）/ `none` / `on_import` / `batch` |
 | `validate_timeout` | `20.0` | 单次验活超时 |
-| `validate_concurrency` | `8` | 验活并发 |
+| `validate_workers` | `8` | 验活 worker 数 |
 | `background_interval` | `30.0` | 后台验活周期 |
 | `background_validate_sample` | `1.0` | 每周期抽样比例 |
 | `stale_after` | `30.0` | 健康样本过期时间 |
@@ -155,7 +155,7 @@ REST 与浏览器控制台使用同一份契约：`GET /config/schema` 返回字
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
 | `preemptible` | `False` | 开启后，高优先级请求可抢占低优先级租约；`priority` 差值需达到 `preempt_threshold` |
-| `preempt_threshold` | `10` | `请求优先级 - 持有者优先级 >= 阈值` 才允许抢占；被抢占方进入 10 秒踢出冷却，事件 `lease_preempted` |
+| `preempt_threshold` | `10` | `请求优先级 - 持有者优先级 >= 阈值` 才允许抢占；被抢占方进入 10 秒撤销冷却，事件 `lease_preempted` |
 | `drain_timeout` | `0.0` | `close()` 前等待在途租约归还的秒数；`0` 立即关闭，超时后强制回收 |
 | `fail_open` | `False` | 协调层 `BackendUnavailable` 时降级为本地模式（获取/归还/续约继续，记录 `fail_open_total`）；默认 fail-closed |
 

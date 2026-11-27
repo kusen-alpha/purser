@@ -67,7 +67,7 @@
 - 生命周期：`running → cancelling → cancelled`，或 `running → completed`。
 - 取消是协作式的：队列中尚未开始的资源计 `skipped`，已在探测中的执行完成后才收尾。
 - 取消已完成/已取消的任务是幂等空操作，返回当前任务并带 `"cancelled": false`。
-- 并发度沿用池的 `validate_concurrency`；`errors` 最多保留 100 条。
+- 并发度沿用池的 `validate_workers`；`errors` 最多保留 100 条。
 - 任务表在内存中，最多保留 100 个终态任务，重启后清空。
 - 进度通过 SSE 发布 `validate_job_started` / `validate_job_finished`。
 

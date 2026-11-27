@@ -1,5 +1,5 @@
 site_name: Purser
-site_description: 通用采集资源调度库：代理、账号与自定义资源的租约、验活与公平调度
+site_description: 通用资源调度库：可租用资源的租约、验活与公平调度
 docs_dir: docs
 site_dir: site
 
@@ -8,9 +8,8 @@ repo_url: https://github.com/kusen-alpha/purser
 edit_uri: edit/master/docs/
 
 exclude_docs: |
-  design/design-doc.md
-  design/feasibility.md
-  design/bundle-v2.md
+  design/*.md
+  contributing/*.md
 
 theme:
   name: material
@@ -103,18 +102,18 @@ markdown_extensions:
 nav:
   - 首页: index.md
   - 上手:
-      - 概览: getting-started/index.md
+      - getting-started/index.md
       - 安装: getting-started/install.md
       - 嵌入式快速开始: getting-started/quickstart-async.md
       - 服务快速开始: getting-started/quickstart-service.md
   - 教程:
-      - 概览: tutorials/index.md
-      - 代理池 + httpx/aiohttp: tutorials/proxy-pool.md
-      - 账号 + 代理组合租约: tutorials/account-proxy-bundle.md
+      - tutorials/index.md
+      - 资源消费: tutorials/proxy-pool.md
+      - 组合租约实战: tutorials/account-proxy-bundle.md
       - 从脚本到服务: tutorials/script-to-service.md
       - 验活、召回与封禁: tutorials/validate-and-recall.md
   - 指南:
-      - 概览: guides/index.md
+      - guides/index.md
       - 核心语义:
           - 资源可用性判定: guides/availability.md
           - 租约生命周期: guides/lease-lifecycle.md
@@ -141,19 +140,18 @@ nav:
       - 排障与迁移:
           - 排障: guides/troubleshooting.md
           - 常见问题: guides/faq.md
-          - 从 0.4 升级到 0.6: guides/migration-0.4-to-0.5.md
           - 术语表: guides/glossary.md
   - 参考:
-      - 概览: reference/index.md
+      - reference/index.md
       - Python API:
-          - 概览: reference/python-api/index.md
+          - reference/python-api/index.md
           - Purser: reference/python-api/purser.md
           - ResourcePool: reference/python-api/pools.md
           - AcquireRequest / Lease / BatchLease: reference/python-api/acquisition.md
           - Resource / ResourceAdapter: reference/python-api/resources.md
           - StorageBackend / Coordination: reference/python-api/backends.md
       - REST API:
-          - 概览: reference/rest-api/index.md
+          - reference/rest-api/index.md
           - Pools: reference/rest-api/pools.md
           - Resources: reference/rest-api/resources.md
           - Leases: reference/rest-api/leases.md
@@ -175,12 +173,3 @@ nav:
       - AdapterSpec: reference/adapter-spec.md
       - 协议与门面契约: reference/protocols.md
       - API 速查: reference/api-cheatsheet.md
-      - 版本与弃用政策: reference/stability.md
-  - 设计与内部:
-      - 概览: design/index.md
-      - 架构: design/architecture.md
-      - 数据平面与丢失语义: design/data-planes.md
-      - 算法与不变量: design/algorithms.md
-  - 贡献:
-      - 概览: contributing/index.md
-      - 测试与工程规范: contributing/testing.md

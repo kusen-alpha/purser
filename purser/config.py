@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, cast
 from purser.allocator_registry import (
     ALLOCATOR_NAMES as _ALLOCATORS,
     DEFAULT_ALLOCATOR,
-    register_allocator_name as register_allocator_name,
 )
 from purser.config_kinds import (
     AcquireMode as AcquireMode,
@@ -23,9 +22,6 @@ from purser.config_kinds import (
     StorageKind as StorageKind,
     UnbanMode as UnbanMode,
     _coerce_kind as _coerce_kind,
-    _EnumT as _EnumT,
-    _Kind as _Kind,
-    _values as _values,
 )
 from purser.config_schema import (
     _FIELD_META as _FIELD_META,
@@ -188,7 +184,7 @@ class PoolConfig:
     background_interval: float = 30.0
     background_validate_sample: float = 1.0
     validate_timeout: float = 20.0
-    validate_concurrency: int = 8
+    validate_workers: int = 8
 
     cooldown_after_release: float = 0.0
     cooldown_consumer_only: bool = False
@@ -342,8 +338,8 @@ class PoolConfig:
             raise ConfigError("quota_cooldown must be a finite number >= 0")
         if not math.isfinite(self.unban_after) or self.unban_after < 0:
             raise ConfigError("unban_after must be finite and >= 0")
-        if not isinstance(self.validate_concurrency, int) or self.validate_concurrency < 1:
-            raise ConfigError("validate_concurrency must be an integer >= 1")
+        if not isinstance(self.validate_workers, int) or self.validate_workers < 1:
+            raise ConfigError("validate_workers must be an integer >= 1")
         if not isinstance(self.site_failure_max, int) or self.site_failure_max < 1:
             raise ConfigError("site_failure_max must be an integer >= 1")
         if not isinstance(self.event_queue_size, int) or self.event_queue_size < 1:

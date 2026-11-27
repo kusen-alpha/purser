@@ -1,7 +1,7 @@
 """Wire helpers and failure paths of the local scheduler IPC client.
 
 The scheduler itself is covered by ``test_local_scheduler.py``; here the
-transport is replaced by an in-memory stub so protocol mismatches, timeouts
+transport is replaced by an in-memory stub so malformed messages, timeouts
 and connection drops are deterministic and never touch a real process.
 """
 
@@ -15,10 +15,10 @@ from purser import ConfigError, PoolExhausted, Resource, UsageOutcome
 from purser.adapters import ProxyResource
 from purser.core.resource import (
     AcquireRequest,
-    Concurrency,
     HealthStats,
     Quota,
     SiteFailure,
+    Slots,
 )
 from purser.core.state import ResourceState
 from purser.local import (
@@ -123,11 +123,11 @@ def test_config_payload_and_dataclass_helpers():
         client_mod._config_payload(object(), {})
 
     built = client_mod._build_dataclass(
-        Concurrency, {"max_slots": 3, "unknown": "x"}
+        Slots, {"max_slots": 3, "unknown": "x"}
     )
-    assert built == Concurrency(max_slots=3)
-    assert client_mod._build_dataclass(Concurrency, None) is None
-    assert client_mod._build_dataclass(Concurrency, "nope") is None
+    assert built == Slots(max_slots=3)
+    assert client_mod._build_dataclass(Slots, None) is None
+    assert client_mod._build_dataclass(Slots, "nope") is None
     assert client_mod._optional_dataclass(Quota, None) is None
     assert client_mod._optional_dataclass(Quota, {"limit": 5}) == Quota(limit=5)
 
@@ -150,7 +150,7 @@ def test_resource_from_dict_restores_every_wire_field():
             "state": ResourceState.IDLE.value,
             "version": "2",
             "tags": ["eu"],
-            "concurrency": {"max_slots": 2},
+            "slots": {"max_slots": 2},
             "health": {"score": 0.9},
             "site_failures": {
                 "site-a": {"site": "site-a", "count": 2},
@@ -165,7 +165,7 @@ def test_resource_from_dict_restores_every_wire_field():
     )
     assert resource.id == "r1" and resource.version == 2
     assert resource.tags == frozenset({"eu"})
-    assert resource.concurrency == Concurrency(max_slots=2)
+    assert resource.slots == Slots(max_slots=2)
     assert resource.health == HealthStats(score=0.9)
     assert set(resource.site_failures) == {"site-a"}
     assert isinstance(resource.site_failures["site-a"], SiteFailure)
@@ -216,17 +216,18 @@ def test_coerce_address_handles_every_documented_form():
     assert client_mod._coerce_address(address) is address
     assert client_mod._coerce_address(address.to_dict()) == address
     assert client_mod._coerce_address(address.to_env()) == address
+    assert client_mod.resolve_address(address.to_dict()) == address
     with pytest.raises(TypeError):
         client_mod._coerce_address(42)
 
 
+def test_resolve_address_requires_an_address(monkeypatch):
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    with pytest.raises(ConfigError, match="no scheduler address"):
+        client_mod.resolve_address(None)
+
+
 # -- client construction / registry ---------------------------------------
-
-
-def test_client_rejects_unsupported_protocol():
-    address = SchedulerAddress(family="AF_PIPE", address="x", authkey=b"k", protocol=2)
-    with pytest.raises(ConfigError):
-        LocalSchedulerClient(address)
 
 
 def test_register_resource_type_validates_input():
@@ -428,7 +429,7 @@ def test_release_and_renew_accept_a_remote_lease():
         {
             "token": "t1",
             "pool": "p",
-            "resource_id": "r1",
+            "rid": "r1",
             "used": 2,
             "outcome": "captcha",
         },
@@ -442,7 +443,7 @@ def test_release_and_renew_accept_a_remote_lease():
 
     def reply(message):
         if message["op"] == "acquire":
-            lease = {"token": "t2", "pool": "p", "resource_id": "r1"}
+            lease = {"token": "t2", "pool": "p", "rid": "r1"}
             return {"id": message["id"], "ok": True, "result": {"lease": lease}}
         return {"id": message["id"], "ok": True, "result": {"ok": True}}
 
@@ -486,7 +487,7 @@ def test_acquire_honours_explicit_resource_type_and_pool_replies():
             lease = {
                 "token": "t1",
                 "pool": "p",
-                "resource_id": "r1",
+                "rid": "r1",
                 "resource": resource,
             }
             return {"id": message["id"], "ok": True, "result": {"lease": lease}}
@@ -578,7 +579,7 @@ def _lease(client=None) -> RemoteLease:
         {
             "token": "t1",
             "pool": "p",
-            "resource_id": "r1",
+            "rid": "r1",
             "slots": 2,
             "priority": 3,
             "use_limit": 5,
@@ -594,7 +595,7 @@ def _lease(client=None) -> RemoteLease:
 
 def test_remote_lease_exposes_wire_snapshot():
     lease = _lease()
-    assert (lease.token, lease.pool, lease.resource_id) == ("t1", "p", "r1")
+    assert (lease.token, lease.pool, lease.rid) == ("t1", "p", "r1")
     assert (lease.slots, lease.priority, lease.use_limit, lease.used) == (2, 3, 5, 1)
     assert (lease.consumer, lease.trace_id, lease.target) == ("crawler", "trace", "site")
     assert lease.replayed is True

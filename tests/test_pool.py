@@ -35,19 +35,31 @@ async def test_lifecycle_roundtrip(make_pool):
     assert res.state is ResourceState.IDLE
 
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    res = await pool.get(lease.resource_id)
-    assert res.state is ResourceState.FULL and res.concurrency.used_slots == 1
+    res = await pool.get(lease.rid)
+    assert res.state is ResourceState.FULL and res.slots.used_slots == 1
 
     await pool.release(lease, outcome=UsageOutcome.OK)
     res = await pool.get(rid)
-    assert res.state is ResourceState.IDLE and res.concurrency.used_slots == 0
+    assert res.state is ResourceState.IDLE and res.slots.used_slots == 0
+
+
+async def test_acquire_uses_rid_keyword_and_rejects_old_name(make_pool):
+    pool = make_pool()
+    [rid] = await seed(pool, n=1)
+
+    lease = await pool.acquire(rid=rid)
+    assert lease.rid == rid
+    await pool.release(lease)
+
+    with pytest.raises(TypeError):
+        await pool.acquire(**{"resource_" "id": rid})
 
 
 async def test_lease_context_manager_auto_release(make_pool):
     pool = make_pool()
     rid = (await seed(pool, n=1))[0]
     async with pool.lease(AcquireRequest(consumer="ctx")) as lease:
-        assert lease.resource_id == rid
+        assert lease.rid == rid
         assert lease.payload == {"host": "127.0.0.1", "port": 8000}
         assert lease.resource is not None
         assert lease.resource.id == rid
@@ -82,7 +94,7 @@ async def test_iter_resources_streams_filters_and_hydrates(make_pool):
     ]
     assert [r.id async for r in pool.iter_resources(search="eu")] == ["eu-1"]
 
-    lease = await pool.acquire(AcquireRequest(consumer="c", resource_id="r-0"))
+    lease = await pool.acquire(AcquireRequest(consumer="c", rid="r-0"))
     idle = [r.id async for r in pool.iter_resources(states={ResourceState.IDLE})]
     assert idle == ["eu-1", "r-1"]
     await pool.release(lease)
@@ -119,7 +131,7 @@ async def test_leases_query_lists_active_leases(make_pool):
     rids = await seed(pool, n=2)
     assert await pool.leases() == []
 
-    first = await pool.acquire(AcquireRequest(consumer="a", resource_id=rids[0]))
+    first = await pool.acquire(AcquireRequest(consumer="a", rid=rids[0]))
     second = await pool.acquire(AcquireRequest(consumer="b"))
     assert {lease.token for lease in await pool.leases()} == {
         first.token,
@@ -144,7 +156,7 @@ async def test_tags_filter(make_pool):
         import_validate="on_import",
     )
     lease = await pool.acquire(AcquireRequest(tags=frozenset({"EU"})))
-    assert lease.resource_id == "eu-0"
+    assert lease.rid == "eu-0"
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(tags=frozenset({"ASIA"}), timeout=0))
 
@@ -184,40 +196,40 @@ async def test_empty_pool_raises_immediately(make_pool):
 async def test_directed_acquire_and_busy_timeout(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    lease = await pool.acquire(AcquireRequest(resource_id=rid, consumer="a"))
-    assert lease.resource_id == rid
+    lease = await pool.acquire(AcquireRequest(rid=rid, consumer="a"))
+    assert lease.rid == rid
     with pytest.raises(ResourceBusy):
-        await pool.acquire(AcquireRequest(resource_id=rid, consumer="b", timeout=0.1))
+        await pool.acquire(AcquireRequest(rid=rid, consumer="b", timeout=0.1))
     await pool.release(lease)
-    again = await pool.acquire(AcquireRequest(resource_id=rid, consumer="b"))
-    assert again.resource_id == rid
+    again = await pool.acquire(AcquireRequest(rid=rid, consumer="b"))
+    assert again.rid == rid
 
 
 async def test_duplicate_hold_returns_existing_lease(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    first = await pool.acquire(AcquireRequest(consumer="dup", resource_id=rid))
-    second = await pool.acquire(AcquireRequest(consumer="dup", resource_id=rid))
+    first = await pool.acquire(AcquireRequest(consumer="dup", rid=rid))
+    second = await pool.acquire(AcquireRequest(consumer="dup", rid=rid))
     assert first.token == second.token
     await pool.release(first)
-    third = await pool.acquire(AcquireRequest(consumer="dup", resource_id=rid))
+    third = await pool.acquire(AcquireRequest(consumer="dup", rid=rid))
     assert third.token != first.token
 
 
-async def test_shared_concurrency(make_pool):
+async def test_shared_slots(make_pool):
     pool = make_pool(max_slots=3)
     [rid] = await seed(pool, n=1)
     l1 = await pool.acquire(AcquireRequest())
     l2 = await pool.acquire(AcquireRequest())
     l3 = await pool.acquire(AcquireRequest())
-    assert {lease.resource_id for lease in (l1, l2, l3)} == {rid}
+    assert {lease.rid for lease in (l1, l2, l3)} == {rid}
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(timeout=0))
     res = await pool.get(rid)
     assert res.state is ResourceState.FULL
     await pool.release(l1)
     res = await pool.get(rid)
-    assert res.state is ResourceState.ACTIVE and res.concurrency.used_slots == 2
+    assert res.state is ResourceState.ACTIVE and res.slots.used_slots == 2
     await pool.release(l2)
     await pool.release(l3)
     res = await pool.get(rid)
@@ -279,7 +291,7 @@ async def test_cooldown_after_release(make_pool):
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(consumer="c", timeout=0))
     again = await pool.acquire(AcquireRequest(consumer="c", ignore_cooldown=True))
-    assert again.resource_id == rid
+    assert again.rid == rid
 
 
 async def test_usage_quota_metering(make_pool):
@@ -309,7 +321,7 @@ async def test_ban_unban_cycle(make_pool):
     await pool.admin.unban(rid, operator="ops", reason="reviewed")
     assert (await pool.get(rid)).state is ResourceState.IDLE
     lease = await pool.acquire()
-    assert lease.resource_id == rid
+    assert lease.rid == rid
 
 
 async def test_suspend_resume(make_pool):
@@ -342,16 +354,16 @@ async def test_force_revoke(make_pool):
     await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="victim"))
     revoked = await pool.admin.force_revoke(
-        lease.resource_id, operator="admin", reason="emergency"
+        lease.rid, operator="admin", reason="emergency"
     )
     assert revoked.token == lease.token
-    res = await pool.get(lease.resource_id)
+    res = await pool.get(lease.rid)
     assert res.state is ResourceState.IDLE
     assert "cooldown:victim" in res.meta
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(consumer="victim", timeout=0))
     other = await pool.acquire(AcquireRequest(consumer="bystander"))
-    assert other.resource_id == lease.resource_id
+    assert other.rid == lease.rid
 
 
 async def test_import_dedup_report(make_pool):
@@ -405,7 +417,7 @@ async def test_import_auto_default_switches_to_background_by_batch_size(make_poo
 async def test_quarantine_gc_releases_after_cooloff(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool._on_validation_fail(rid, "flaky", operator="system")
+    await pool._validation.on_failure(rid, "flaky", operator="system")
     res = await pool.get(rid)
     assert res.state is ResourceState.QUARANTINED
     assert res.meta["quarantine_until"] > time.time()
@@ -425,7 +437,7 @@ async def test_periodic_unban_and_quota_reset(make_pool):
     pool = make_pool(unban_mode="auto_after_ttl", unban_after=0.0)
     [rid] = await seed(pool, n=1)
     for _ in range(3):
-        await pool._on_validation_fail(rid, "bad", operator="system")
+        await pool._validation.on_failure(rid, "bad", operator="system")
     assert (await pool.get(rid)).state is ResourceState.BANNED
     await pool.admin.run_maintenance("periodic_unban")
     assert (await pool.get(rid)).state is ResourceState.IDLE
@@ -504,7 +516,7 @@ async def test_site_failure_index_excludes_candidates(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     res = await pool.get(rid)
-    pool._record_site_failure(res.site_failures, "hot-site", time.time())
+    pool._state.record_site_failure(res.site_failures, "hot-site", time.time())
     await pool.storage.set_state(
         pool.name, rid, res.version, expect_state=res.state,
         patch=ResourcePatch(site_failures=res.site_failures),
@@ -512,7 +524,7 @@ async def test_site_failure_index_excludes_candidates(make_pool):
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(target="hot-site", timeout=0))
     lease = await pool.acquire(AcquireRequest(target="cold-site"))
-    assert lease.resource_id == rid
+    assert lease.rid == rid
 
 
 async def test_mutex_group_blocks_same_group(make_pool):
@@ -530,11 +542,11 @@ async def test_mutex_group_blocks_same_group(make_pool):
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(consumer="c", timeout=0.2))
     other = await pool.acquire(AcquireRequest(consumer="other", timeout=0.2))
-    assert other.resource_id != first.resource_id
+    assert other.rid != first.rid
     await pool.release(other)
     await pool.release(first)
     again = await pool.acquire(AcquireRequest(consumer="c", timeout=0.2))
-    assert again.resource_id in {"g-a", "g-b", "g-c"}
+    assert again.rid in {"g-a", "g-b", "g-c"}
     await pool.release(again)
 
 
@@ -887,7 +899,7 @@ async def test_import_default_validates_and_acquire_waits(make_pool):
     await pool.import_resources([{"id": "new-1", "host": "127.0.0.1", "port": 1}])
 
     lease = await pool.acquire(AcquireRequest(consumer="c", timeout=5))
-    assert lease.resource_id == "new-1"
+    assert lease.rid == "new-1"
     await pool.release(lease)
 
 
@@ -896,9 +908,9 @@ async def test_directed_acquire_waits_for_validation(make_pool):
     await pool.import_resources([{"id": "new-1", "host": "127.0.0.1", "port": 1}])
 
     lease = await pool.acquire(
-        AcquireRequest(consumer="c", resource_id="new-1", timeout=5)
+        AcquireRequest(consumer="c", rid="new-1", timeout=5)
     )
-    assert lease.resource_id == "new-1"
+    assert lease.rid == "new-1"
     await pool.release(lease)
 
 
@@ -911,7 +923,7 @@ async def test_directed_acquire_new_without_job_is_actionable(make_pool):
 
     with pytest.raises(PoolExhausted, match="validate_now"):
         await pool.acquire(
-            AcquireRequest(consumer="c", resource_id="new-1", timeout=1)
+            AcquireRequest(consumer="c", rid="new-1", timeout=1)
         )
 
 

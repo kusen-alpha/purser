@@ -4,11 +4,11 @@
 
 ## 资源
 
-**资源（Resource）** — 一条可被租用的对象：代理、账号或自定义类型。由 `id`、`kind`、`payload`、`tags`、`state`、槽位、健康样本、配额等字段组成。
+**资源（Resource）** — 一条可被租用的对象，如代理、账号或任意自定义类型。由 `id`、`kind`、`payload`、`tags`、`state`、槽位、健康样本、配额等字段组成。
 
 **资源池（Pool / ResourcePool）** — 同 `kind` 资源与一套调度配置的集合。池名在 `Purser` 实例内唯一。
 
-**适配器（Adapter / ResourceAdapter）** — 定义一种资源如何生成、验活、水合与处置的插件。内置 `proxy` / `account`；自定义类型通过 `register_adapter()` 接入。
+**适配器（Adapter / ResourceAdapter）** — 定义一种资源如何生成、验活、类型化装载（hydrate）与处置的插件。内置 `proxy` / `account`；自定义类型通过 `register_adapter()` 接入。
 
 **类型化 payload** — 适配器声明的字段（如 `host` / `port`）在读取时成为类型化属性；未声明的键进入 `Resource.extra`，不会丢弃。
 
@@ -48,7 +48,7 @@
 
 **租约（lease）** — 一段时间内对槽位的占用凭据，带唯一 `token`、TTL、心跳与使用上限。
 
-**token** — 租约的唯一切句；归还、续约、定向强制撤销都用它匹配。
+**token** — 租约的唯一句柄；归还、续约、定向强制撤销都用它匹配。
 
 **TTL** — 租约寿命（`lease_ttl`）。心跳按 `lease_ttl/3` 续约；过期后由 reaper 回收。
 
@@ -64,7 +64,7 @@
 
 **幂等键（idempotency key）** — 获取租约时同一键重复请求返回同一份仍存活的租约；REST 也可用于创建池、导入与恢复。
 
-**组合租约（bundle）** — 跨池一次获取多个成员（如账号 + 代理），失败时回滚已拿成员。`atomic` 全有或全无，`best_effort` 返回部分。
+**组合租约（bundle）** — 跨池一次获取多个成员（如账号 + 代理），失败时回滚已获取成员。`atomic` 全有或全无，`best_effort` 返回部分。
 
 **锚点（anchor）** — 组合中先获取、供其他槽派生约束的成员；`MatchRule` 从锚点读取字段并生成 `required_tag`。
 
@@ -86,7 +86,7 @@
 
 **调度器（scheduler）** — 等待队列的排队策略：默认 `priority_quota`（按优先级与配额排队），也可选 `fifo` 或 `token_bucket`（配合 `rate_limit` / `rate_burst` 做每消费者限速）。
 
-**准入（admission）** — 组合租约在拿成员前的配额与余量检查；由 `BundleFairness` 控制。
+**准入（admission）** — 组合租约在获取成员前的配额与余量检查；由 `BundleFairness` 控制。
 
 ## 后端与部署
 

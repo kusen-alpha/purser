@@ -29,8 +29,8 @@ async with Purser() as ps:      # 可选：提前启动 + 退出时 close()
 
 ```python
 ps = Purser()
-pool = ps.create_pool("proxies", "proxy")
-await pool.import_resources(records, import_validate="on_import")
+pool = ps.create_pool(name="proxies", kind="proxy")
+await pool.import_resources(records=records, import_validate="on_import")
 await ps.start()                # 可选：提前启动（幂等）
 ...
 await ps.close()
@@ -43,7 +43,7 @@ await ps.close()
 ```python
 from purser import AcquireRequest, UsageOutcome
 
-async with pool.lease(AcquireRequest(consumer="crawler-a", tags=["http"])) as lease:
+async with pool.lease(req=AcquireRequest(consumer="crawler-a", tags=["http"])) as lease:
     try:
         await fetch(lease.payload)
         lease.outcome = UsageOutcome.OK
@@ -51,14 +51,14 @@ async with pool.lease(AcquireRequest(consumer="crawler-a", tags=["http"])) as le
         lease.outcome = UsageOutcome.TIMEOUT
 ```
 
-退出时自动按 `lease.outcome` 归还。`lease.resource` 是 acquire 时加载的类型化快照；需要最新状态或租约由其他进程重建时，用 `await pool.require(lease.resource_id)`。
+退出时自动按 `lease.outcome` 归还。`lease.resource` 是 acquire 时加载的类型化快照；需要最新状态或租约由其他进程重建时，用 `await pool.require(rid=lease.rid)`。
 
 块内抛异常时仍按 `lease.outcome` 归还，默认是 `UsageOutcome.OK`——消费者异常不自动等同于资源故障。若异常本身说明资源不可用，请在 `except` 中显式设置 `lease.outcome = UsageOutcome.TIMEOUT / NETWORK_ERROR / BANNED`，或改用手动路径自定义 `release(outcome=...)`。
 
 ## 手动路径
 
 ```python
-lease = await pool.acquire(AcquireRequest(consumer="crawler-b"))
+lease = await pool.acquire(req=AcquireRequest(consumer="crawler-b"))
 try:
     ...
 finally:
@@ -71,14 +71,14 @@ finally:
 
 ## 无占用取样（`acquire_mode="stateless"`）
 
-只需要“拿一份资源、不归还、不占并发”的脚本可以整池切换模式，调用面保持不变：
+只需要“获取一份资源、不归还、不占并发”的脚本可以整池切换模式，调用面保持不变：
 
 ```python
-pool = ps.create_pool("proxies", "proxy", acquire_mode="stateless", allocator="random")
+pool = ps.create_pool(name="proxies", kind="proxy", acquire_mode="stateless", allocator="random")
 proxy = await pool.acquire()        # 仍返回 Lease，但不注册租约、不占槽位
 ```
 
-- 同一资源可以被无限次取样；`pool.leases()` 为空，`concurrency` 不变。
+- 同一资源可以被无限次取样；`pool.leases()` 为空，`resource.slots` 不变。
 - 容量、消费者持有、互斥组过滤被跳过；状态、标签、时间窗、冷却、站点失败与配额仍然生效。
 - `release()` 变为可选：显式调用只反馈用量/健康（`used`、`outcome`、冷却、隔离）并发布事件，重复调用是安全的 no-op。
 - 取样得到的租约不参与心跳续约、`max_lease_duration` 与抢占。
@@ -86,22 +86,22 @@ proxy = await pool.acquire()        # 仍返回 Lease，但不注册租约、不
 ## 批量获取
 
 ```python
-batch = await pool.acquire_many(5, req=req, mode="atomic")
+batch = await pool.acquire_many(n=5, req=req, mode="atomic")
 try:
     for lease in batch.leases:
         ...
 finally:
-    await batch.release_all(pool)
+    await batch.release_all(pool=pool)
 ```
 
 - `atomic`：任一项不足则整体回滚。
 - `best_effort`：按实际可用数量返回，低于 `n_min` 抛 `PoolExhausted`。
-- 异步 `release_all(pool, outcome=UsageOutcome.OK)` 必须传池；同步 Purser 的 `SyncBatchLease.release_all(outcome)` 不需要。
+- 异步 `release_all(pool=pool, outcome=UsageOutcome.OK)` 必须传池；同步 Purser 的 `SyncBatchLease.release_all(outcome)` 不需要。
 
 ## 定向获取
 
 ```python
-lease = await pool.acquire(AcquireRequest(resource_id="r42", timeout=5))
+lease = await pool.acquire(req=AcquireRequest(rid="r42", timeout=5))
 ```
 
 资源被占用时按 `timeout` 等待，超时抛 `ResourceBusy`。
@@ -118,16 +118,16 @@ lease = await pool.acquire(AcquireRequest(resource_id="r42", timeout=5))
 
 ```python
 # 不带 token：只撤销该资源的任意一条租约（并发资源可能仍有其它租约）
-await pool.admin.force_revoke("r42", operator="alice", reason="credential leak")
+await pool.admin.force_revoke(rid="r42", operator="alice", reason="credential leak")
 
 # 带 token：精确撤销指定租约
-await pool.admin.force_revoke("r42", operator="alice", reason="single lease", token="l_...")
+await pool.admin.force_revoke(rid="r42", operator="alice", reason="single lease", token="l_...")
 
 # 需要撤销该资源的全部租约时，由调用方遍历当前租约，并容忍并发归还
-for lease in list(await pool.leases("r42")):
+for lease in list(await pool.leases(rid="r42")):
     try:
         await pool.admin.force_revoke(
-            "r42", operator="alice", reason="credential leak", token=lease.token
+            rid=\"r42\", operator="alice", reason="credential leak", token=lease.token
         )
     except LeaseConflict:
         pass  # 已被并发归还或回收

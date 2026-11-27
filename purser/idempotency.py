@@ -29,13 +29,6 @@ class IdempotencyStore:
     def put(self, key: str, result: dict[str, Any]) -> None:
         self._items[key] = (time.time() + self.ttl, result)
 
-    def sweep(self, now: float | None = None) -> int:
-        now = now or time.time()
-        stale = [k for k, (exp, _) in self._items.items() if exp < now]
-        for k in stale:
-            self._items.pop(k, None)
-        return len(stale)
-
     async def aget(self, key: str) -> dict[str, Any] | None:
         return self.get(key)
 

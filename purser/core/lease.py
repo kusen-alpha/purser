@@ -100,11 +100,6 @@ class LeaseManager:
         self._renew.clear()
         self._errors.clear()
 
-    def prune(self, now: float | None = None) -> list[Lease]:
-        """Returns live leases; heartbeat tasks live on the shared ticker."""
-
-        return self.active()
-
     def expired(self, now: float | None = None) -> list[Lease]:
         now = time.time() if now is None else now
         return [lease for lease in self._leases.values() if lease.expired(now)]

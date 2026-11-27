@@ -52,7 +52,7 @@ class ValidationService:
             background_interval=cfg.background_interval,
             sample=cfg.background_validate_sample,
         )
-        self._sem = asyncio.Semaphore(cfg.validate_concurrency)
+        self._sem = asyncio.Semaphore(cfg.validate_workers)
 
     # -- background sampling ----------------------------------------------
 
@@ -133,7 +133,7 @@ class ValidationService:
         self._queues[job_id] = queue
         for rid in rids:
             queue.put_nowait(rid)
-        workers = max(1, min(self.ctx.cfg.validate_concurrency, len(rids)))
+        workers = max(1, min(self.ctx.cfg.validate_workers, len(rids)))
         for _ in range(workers):
             self._spawn(self._worker(job_id))
         self.ctx.bus.publish(

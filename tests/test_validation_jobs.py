@@ -35,7 +35,7 @@ class DeadChecker(FakeChecker):
 
 class CountingChecker(ResourceAdapter):
     kind = "counting"
-    default_concurrency = 1
+    default_slots = 1
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -69,7 +69,7 @@ def _records(prefix: str, n: int) -> list[dict]:
 
 
 async def test_batch_import_job_completes(purser, make_pool):
-    pool = make_pool("jobs", validate_concurrency=2)
+    pool = make_pool("jobs", validate_workers=2)
     await pool.import_resources(
         _records("r", 3), import_validate="batch", batch_id="job-1"
     )
@@ -116,7 +116,7 @@ async def test_batch_job_truncates_error_log_to_100():
     ps = Purser(maintenance_enabled=False)
     ps.register_adapter(FakeChecker())
     await ps.start()
-    pool = ps.create_pool("jobs-many", "fakecheck", validate_concurrency=16)
+    pool = ps.create_pool("jobs-many", "fakecheck", validate_workers=16)
     try:
         records = _records("m", 101)
         await pool.import_resources(records, import_validate="on_import")
@@ -135,7 +135,7 @@ async def test_batch_job_truncates_error_log_to_100():
 
 async def test_cancel_job_skips_pending_items(purser):
     purser.register_adapter(SlowChecker(delay=0.2))
-    pool = purser.ensure_pool("jobs-cancel", "slowcheck", validate_concurrency=1)
+    pool = purser.ensure_pool("jobs-cancel", "slowcheck", validate_workers=1)
     await pool.import_resources(
         _records("c", 4), import_validate="batch", batch_id="job-cancel"
     )
@@ -157,7 +157,7 @@ async def test_cancel_job_skips_pending_items(purser):
 
 async def test_second_import_extends_a_running_job(purser):
     purser.register_adapter(SlowChecker(delay=0.2))
-    pool = purser.ensure_pool("jobs-extend", "slowcheck", validate_concurrency=1)
+    pool = purser.ensure_pool("jobs-extend", "slowcheck", validate_workers=1)
     await pool.import_resources(
         _records("e", 2), import_validate="batch", batch_id="job-extend"
     )

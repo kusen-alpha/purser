@@ -18,12 +18,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from purser.core.resource import (
-    Concurrency,
     HealthStats,
     Lease,
     Quota,
     Resource,
     SiteFailure,
+    Slots,
 )
 from purser.core.state import ResourceState
 
@@ -48,7 +48,7 @@ class ResourcePatch:
     schedule_window: tuple[str, str] | None = None
     tags: frozenset[str] | None = None
     payload: dict[str, Any] | None = None
-    concurrency: Concurrency | None = None
+    slots: Slots | None = None
     meta_patch: dict[str, Any] | None = None
     meta_clear: frozenset[str] = frozenset()
     # Fields explicitly reset to ``None``; ``None`` alone means "unchanged"
@@ -96,8 +96,8 @@ class ResourcePatch:
             resource.tags = self.tags
         if self.payload is not None:
             resource.payload = self.payload
-        if self.concurrency is not None:
-            resource.concurrency = self.concurrency
+        if self.slots is not None:
+            resource.slots = self.slots
         if self.meta_clear:
             for name in self.meta_clear:
                 resource.meta.pop(name, None)
@@ -227,7 +227,7 @@ class StorageBackend(ABC):
         async for resource in self.scan(pool, states=states):
             if resource.state not in states:
                 continue
-            if resource.concurrency.available < slots:
+            if resource.slots.available < slots:
                 continue
             if tags and not tags <= resource.tags:
                 continue

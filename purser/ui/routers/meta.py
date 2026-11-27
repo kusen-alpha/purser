@@ -187,7 +187,7 @@ def build(ctx: UiContext) -> APIRouter:
                 {
                     "kind": adapter.kind,
                     "resource_class": adapter.resource_class.__name__,
-                    "default_concurrency": adapter.default_concurrency,
+                    "default_slots": adapter.default_slots,
                     "validators": [
                         {"name": spec.name, "both": spec.both}
                         for spec in adapter.validators()

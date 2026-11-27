@@ -73,7 +73,7 @@ async def test_two_phase_acquire_confirm_and_release():
     )
     try:
         bundle = await ps.acquire_bundle(_pair())
-        store = await ps._store()
+        store = await ps._bundle_service.ensure_store()
         res = await store.get(bundle.bundle_id)
         assert res is not None and res.status == "committed"
         assert set(res.members) == {"accounts", "proxies"}
@@ -91,7 +91,7 @@ async def test_two_phase_rolls_back_and_cleans_reservation():
     try:
         with pytest.raises(BundleAcquireFailed):
             await ps.acquire_bundle(_pair(consumer="w1", timeout=0))
-        store = await ps._store()
+        store = await ps._bundle_service.ensure_store()
         now = time.time()
         assert await store.active(now) == []
         assert (await accounts.get("a1")).state is ResourceState.IDLE
@@ -106,17 +106,17 @@ async def test_two_phase_gc_revokes_crashed_members():
     ps, accounts, proxies = await _harness(
         bundle_mode="two_phase", bundle_gc_interval=3600.0
     )
-    store = await ps._store()
+    store = await ps._bundle_service.ensure_store()
     lease_a = await accounts.acquire()
     lease_p = await proxies.acquire()
     bid = "bundle-crash"
     await store.admit(bid, "w1", ("accounts", "proxies"), 60.0)
     await store.begin_members(bid, 60.0)
     await store.add_member(
-        bid, ReservationMember(pool="accounts", rid=lease_a.resource_id, token=lease_a.token)
+        bid, ReservationMember(pool="accounts", rid=lease_a.rid, token=lease_a.token)
     )
     await store.add_member(
-        bid, ReservationMember(pool="proxies", rid=lease_p.resource_id, token=lease_p.token)
+        bid, ReservationMember(pool="proxies", rid=lease_p.rid, token=lease_p.token)
     )
     res = await store.get(bid)
     assert res is not None
@@ -124,8 +124,8 @@ async def test_two_phase_gc_revokes_crashed_members():
     try:
         report = await ps.bundle_gc()
         assert report["revoked"] == 2
-        assert (await accounts.get(lease_a.resource_id)).state is ResourceState.IDLE
-        assert (await proxies.get(lease_p.resource_id)).state is ResourceState.IDLE
+        assert (await accounts.get(lease_a.rid)).state is ResourceState.IDLE
+        assert (await proxies.get(lease_p.rid)).state is ResourceState.IDLE
         assert await store.get(bid) is None
     finally:
         await ps.close()
@@ -137,7 +137,7 @@ async def test_bundle_gc_keeps_live_bundle_marker():
     )
     try:
         bundle = await ps.acquire_bundle(_pair())
-        store = await ps._store()
+        store = await ps._bundle_service.ensure_store()
         res = await store.get(bundle.bundle_id)
         assert res is not None
         res.expires_at = 0.0  # would expire without a refresh
@@ -146,7 +146,7 @@ async def test_bundle_gc_keeps_live_bundle_marker():
         res = await store.get(bundle.bundle_id)
         assert res is not None and res.status == "committed"
         assert res.expires_at > time.time()
-        state = (await accounts.get(bundle.members["accounts"].resource_id)).state
+        state = (await accounts.get(bundle.members["accounts"].rid)).state
         assert state in (ResourceState.ACTIVE, ResourceState.FULL)
         await ps.release_bundle(bundle)
     finally:
@@ -157,7 +157,7 @@ async def test_bundle_gc_keeps_alive_committed_cross_instance():
     ps, accounts, proxies = await _harness(
         bundle_mode="two_phase", bundle_gc_interval=3600.0
     )
-    store = await ps._store()
+    store = await ps._bundle_service.ensure_store()
     lease_a = await accounts.acquire()
     lease_p = await proxies.acquire()
     bid = "bundle-other-instance"
@@ -165,11 +165,11 @@ async def test_bundle_gc_keeps_alive_committed_cross_instance():
     await store.begin_members(bid, 60.0)
     await store.add_member(
         bid,
-        ReservationMember(pool="accounts", rid=lease_a.resource_id, token=lease_a.token),
+        ReservationMember(pool="accounts", rid=lease_a.rid, token=lease_a.token),
     )
     await store.add_member(
         bid,
-        ReservationMember(pool="proxies", rid=lease_p.resource_id, token=lease_p.token),
+        ReservationMember(pool="proxies", rid=lease_p.rid, token=lease_p.token),
     )
     await store.confirm(bid, 60.0)
     res = await store.get(bid)
@@ -179,7 +179,7 @@ async def test_bundle_gc_keeps_alive_committed_cross_instance():
         report = await ps.bundle_gc()
         assert report["revived"] >= 1
         assert await store.get(bid) is not None
-        state = (await accounts.get(lease_a.resource_id)).state
+        state = (await accounts.get(lease_a.rid)).state
         assert state in (ResourceState.ACTIVE, ResourceState.FULL)
     finally:
         await accounts.release(lease_a)
@@ -192,7 +192,7 @@ async def test_bundle_gc_prunes_dead_committed_without_revoking():
     ps, accounts, proxies = await _harness(
         bundle_mode="two_phase", bundle_gc_interval=3600.0
     )
-    store = await ps._store()
+    store = await ps._bundle_service.ensure_store()
     lease_a = await accounts.acquire()
     lease_p = await proxies.acquire()
     bid = "bundle-dead"
@@ -200,11 +200,11 @@ async def test_bundle_gc_prunes_dead_committed_without_revoking():
     await store.begin_members(bid, 60.0)
     await store.add_member(
         bid,
-        ReservationMember(pool="accounts", rid=lease_a.resource_id, token=lease_a.token),
+        ReservationMember(pool="accounts", rid=lease_a.rid, token=lease_a.token),
     )
     await store.add_member(
         bid,
-        ReservationMember(pool="proxies", rid=lease_p.resource_id, token=lease_p.token),
+        ReservationMember(pool="proxies", rid=lease_p.rid, token=lease_p.token),
     )
     await store.confirm(bid, 60.0)
     await accounts.release(lease_a)
@@ -256,7 +256,7 @@ async def test_two_phase_retries_transient_failure():
         bundle = await ps.acquire_bundle(
             BundleRequest(
                 slots=(
-                    BundleSlot(pool="accounts", resource_id="a1"),
+                    BundleSlot(pool="accounts", rid="a1"),
                     BundleSlot(pool="proxies"),
                 ),
                 consumer="w1",
@@ -265,7 +265,7 @@ async def test_two_phase_retries_transient_failure():
             )
         )
         assert "proxies" in bundle.members
-        res = await (await ps._store()).get(bundle.bundle_id)
+        res = await (await ps._bundle_service.ensure_store()).get(bundle.bundle_id)
         assert res is not None and res.status == "committed"
         await ps.release_bundle(bundle)
         await releaser
@@ -279,11 +279,11 @@ async def test_two_phase_match_survives_deterministic_order():
         bundle_mode="two_phase", bundle_gc_interval=3600.0
     )
     try:
-        held = await proxies.acquire(AcquireRequest(resource_id="p2", timeout=0))
+        held = await proxies.acquire(AcquireRequest(rid="p2", timeout=0))
         bundle = await ps.acquire_bundle(
             BundleRequest(
                 slots=(
-                    BundleSlot(pool="accounts", resource_id="a1"),
+                    BundleSlot(pool="accounts", rid="a1"),
                     BundleSlot(
                         pool="proxies",
                         match=MatchRule(
@@ -296,7 +296,7 @@ async def test_two_phase_match_survives_deterministic_order():
                 consumer="w1",
             )
         )
-        assert bundle.members["proxies"].resource_id == "p1"
+        assert bundle.members["proxies"].rid == "p1"
         await ps.release_bundle(bundle)
         await proxies.release(held)
     finally:
@@ -397,7 +397,7 @@ async def test_fairness_marker_cleared_on_rollback():
             await ps.acquire_bundle(
                 BundleRequest(
                     slots=(
-                        BundleSlot(pool="accounts", resource_id="a1"),
+                        BundleSlot(pool="accounts", rid="a1"),
                         BundleSlot(
                             pool="proxies",
                             match=MatchRule(
@@ -412,7 +412,7 @@ async def test_fairness_marker_cleared_on_rollback():
                 )
             )
         now = time.time()
-        store = await ps._store()
+        store = await ps._bundle_service.ensure_store()
         assert await store.active(now) == []
         assert (await accounts.get("a1")).state is ResourceState.IDLE
     finally:
@@ -475,7 +475,7 @@ async def test_fairness_rollback_marker_records_members_and_refreshes():
     )
     try:
         bundle = await ps.acquire_bundle(_pair(consumer="c1"))
-        store = await ps._store()
+        store = await ps._bundle_service.ensure_store()
         res = await store.get(bundle.bundle_id)
         assert res is not None and res.status == "committed"
         assert set(res.members) == {"accounts", "proxies"}
@@ -511,7 +511,7 @@ async def test_fairness_distributed_poll_wakes_on_foreign_release():
         [{"id": "p1"}, {"id": "p2"}], import_validate="on_import"
     )
     await ps.start()
-    store = await ps._store()
+    store = await ps._bundle_service.ensure_store()
     try:
         # A marker written by another instance occupies the only quota slot;
         # releasing it emits no local event, so the waiter must wake by
@@ -581,7 +581,7 @@ async def test_two_phase_redis_coordination_end_to_end():
     try:
         bundle = await ps.acquire_bundle(_pair())
         assert set(bundle.members) == {"accounts", "proxies"}
-        store = await ps._store()
+        store = await ps._bundle_service.ensure_store()
         res = await store.get(bundle.bundle_id)
         assert res is not None and res.status == "committed"
         await ps.release_bundle(bundle)

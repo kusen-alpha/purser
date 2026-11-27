@@ -20,7 +20,7 @@
        └─ 调度子进程            # 唯一持有 SyncPurser、存储与协调
             ▲
             │ JSON over multiprocessing.connection
-            │（长度前缀、协议版本 1、单条上限 32 MB）
+            │（长度前缀、单条上限 32 MB）
        ┌────┴────┐
      worker 1  worker 2 ...     # 各自持有 LocalSchedulerClient
 ```
@@ -38,12 +38,12 @@ with LocalScheduler(
     sqlite_path="/var/lib/purser/purser.db",
     adapters=[MyResourceAdapter()],
 ) as sched:
-    sched.create_pool("workers", "my-resource", lease_ttl=120)
-    sched.import_resources("workers", [{"id": "r1"}, {"id": "r2"}])
-    print(sched.stats("workers"))
+    sched.create_pool(name="workers", kind="my-resource", lease_ttl=120)
+    sched.import_resources(pool="workers", records=[{"id": "r1"}, {"id": "r2"}])
+    print(sched.stats(pool="workers"))
 
-    with sched.lease("workers", AcquireRequest(consumer="parent")) as lease:
-        print(lease.resource_id, lease.payload)
+    with sched.lease(pool="workers", req=AcquireRequest(consumer="parent")) as lease:
+        print(lease.rid, lease.payload)
 ```
 
 构造参数：
@@ -72,7 +72,7 @@ def worker_init():
 
 def task():
     client = get_client()
-    with client.lease("workers", AcquireRequest(consumer="w1")) as lease:
+    with client.lease(pool="workers", req=AcquireRequest(consumer="w1")) as lease:
         ...
 ```
 
@@ -101,7 +101,7 @@ from purser.local import LocalSchedulerClient
 
 def worker(address):
     with LocalSchedulerClient(address) as client:
-        lease = client.acquire("workers", {"consumer": "w1"})
+        lease = client.acquire(pool="workers", req={"consumer": "w1"})
         try:
             ...
         finally:
@@ -125,18 +125,18 @@ def worker(address):
 | `pool_call(pool, method, ...)` | 调用白名单内的池方法；管理方法（`ban` / `drain` / `validate_now` 等）路由到调度进程的 `pool.admin` |
 | `shutdown()` / `close()` | 关闭调度进程 / 仅断开客户端 |
 
-`RemoteLease` 暴露 `token` / `resource_id` / `consumer` / `slots` / `expires_at` / `payload` / `resource` / `replayed` 等属性，并支持 `with` 与显式 `release()`。它是一次**快照**：调度进程会自动续约，但 worker 手里的 `expires_at` 只在 `acquire()` / `renew()` 时刷新，因此 `expired()` 仅供本地参考。
+`RemoteLease` 暴露 `token` / `rid` / `consumer` / `slots` / `expires_at` / `payload` / `resource` / `replayed` 等属性，并支持 `with` 与显式 `release()`。它是一次**快照**：调度进程会自动续约，但 worker 手里的 `expires_at` 只在 `acquire()` / `renew()` 时刷新，因此 `expired()` 仅供本地参考。
 
 ### 异步门面 `connect()`
 
-需要 `async`/`await` 时，用 `connect(pool, address)` 得到与 `ResourcePool` 同形的远端池，IPC 调用跑在线程池里：
+需要 `async`/`await` 时，用 `connect(pool, address)` 得到与 `ResourcePool` 同形的远端池，IPC 调用在线程池中执行：
 
 ```python
 from purser import AcquireRequest, connect
 
-async with connect("workers", sched.address) as pool:
-    async with pool.lease(AcquireRequest(consumer="w1")) as lease:
-        print(lease.resource_id, lease.payload)
+async with connect(pool="workers", address=sched.address) as pool:
+    async with pool.lease(req=AcquireRequest(consumer="w1")) as lease:
+        print(lease.rid, lease.payload)
     print(await pool.stats())
 ```
 

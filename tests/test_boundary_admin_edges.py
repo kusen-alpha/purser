@@ -61,7 +61,7 @@ async def test_ban_revokes_active_leases(make_pool):
     await pool.admin.ban(rid, operator="ops", reason="abuse")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.BANNED
-    assert res.concurrency.used_slots == 0
+    assert res.slots.used_slots == 0
     assert await pool._coordination.active(pool.name) == []
     assert await pool.release(lease) is True  # stale release is harmless
 
@@ -107,7 +107,7 @@ async def test_outcome_captcha_and_timeout(make_pool):
         ids, [UsageOutcome.CAPTCHA, UsageOutcome.TIMEOUT]
     ):
         lease = await pool.acquire(
-            AcquireRequest(resource_id=rid, consumer="c", target="site.com")
+            AcquireRequest(rid=rid, consumer="c", target="site.com")
         )
         await pool.release(lease, outcome=outcome)
         res = await pool.get(rid)
@@ -235,7 +235,7 @@ async def test_restart_cooldown_preserved(tmp_path, storage_kind, coordination_k
             patch=ResourcePatch(next_available_at=0.0),
         )
         ok = await pool2.acquire(AcquireRequest(consumer="c"))
-        assert ok.resource_id == rid
+        assert ok.rid == rid
         await pool2.release(ok, used=0)
     finally:
         await ps2.close()

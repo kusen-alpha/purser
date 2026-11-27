@@ -39,6 +39,11 @@ def test_import_validate_defaults_to_pool_config():
     assert args.import_validate is None
 
 
+def test_action_parser_uses_subcommand():
+    args = cli._parser().parse_args(["ban", "proxies", "1.2.3.4:8080"])
+    assert args.action == "ban"
+
+
 def test_serve_parser_accepts_persistence_options():
     args = cli._parser().parse_args(
         [
@@ -125,7 +130,7 @@ def test_cmd_lease_and_release_handlers():
             return {
                 "leases": [
                     {
-                        "resource_id": "r-0",
+                        "rid": "r-0",
                         "token": "tok",
                         "payload": {"host": "1.1.1.1"},
                         "expires_at": 123.0,

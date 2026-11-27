@@ -147,7 +147,7 @@ def test_acquire_many_and_release_all(sync_ps):
 
     batch = pool.acquire_many(2, mode="best_effort", req=None)
     assert isinstance(batch, SyncBatchLease)
-    assert len(batch) == 2 and {lease.resource_id for lease in batch.leases}
+    assert len(batch) == 2 and {lease.rid for lease in batch.leases}
     batch.release_all()
     assert len(batch) == 0
     assert pool.leases() == []
@@ -187,7 +187,7 @@ def test_shared_instance_across_threads(sync_ps):
             barrier.wait(timeout=10)
             lease = pool.acquire(consumer=f"t{index}")
             try:
-                results.append((lease.token, lease.resource_id))
+                results.append((lease.token, lease.rid))
                 # Hold every lease until all four are in hand so the distinct
                 # resource ids below are a simultaneous-hold property.
                 barrier.wait(timeout=10)
@@ -383,7 +383,7 @@ def test_admin_methods_forward(sync_ps):
     assert pool.get("r1") is None
 
     lease = other.acquire(consumer="c")
-    revoked = other.admin.force_revoke(lease.resource_id, reason="kick")
+    revoked = other.admin.force_revoke(lease.rid, reason="kick")
     assert revoked.token == lease.token
     assert other.leases() == []
 

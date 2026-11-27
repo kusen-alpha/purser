@@ -1,12 +1,12 @@
-# 教程：账号 + 代理组合租约
+# 教程：组合租约实战
 
-目标：一次拿到“账号 + 与账号地区匹配的代理”，两者要么都成功，要么都不占用；任务结束后成套归还。
+目标：一次获取“账号 + 与账号地区匹配的代理”，两者要么都成功，要么都不占用；任务结束后成套归还。
 
-组合租约（bundle）解决的是**跨池原子性**：普通 `acquire()` 只保证单池内的一次占用，连续两次 `acquire()` 可能在第二次失败时把第一个资源白占住。bundle 会把已拿到的成员回滚释放。
+组合租约（bundle）解决的是**跨池原子性**：普通 `acquire()` 只保证单池内的一次占用，连续两次 `acquire()` 可能在第二次失败时把第一个资源被空占、无法使用。bundle 会把已获取的成员回滚释放。
 
-## 0. 数据准备
+## 1. 数据准备
 
-配对靠标签。约定：
+配对依赖标签。约定：
 
 - 账号的自定义 payload 带 `region: "us"`；
 - 代理的 `tags` 带 `region:us`。
@@ -16,11 +16,11 @@ from purser import Purser
 
 ps = Purser()
 
-accounts = ps.create_pool("accounts", "account", lease_ttl=300)
-proxies = ps.create_pool("proxies", "proxy", lease_ttl=300)
+accounts = ps.create_pool(name="accounts", kind="account", lease_ttl=300)
+proxies = ps.create_pool(name="proxies", kind="proxy", lease_ttl=300)
 
 await accounts.import_resources(
-    [
+    records=[
         {
             "id": "acct-us-1",
             "username": "user-us-1",
@@ -39,7 +39,7 @@ await accounts.import_resources(
 )
 
 await proxies.import_resources(
-    [
+    records=[
         {"host": "1.2.3.4", "port": 8080, "tags": ["region:us", "http"]},
         {"host": "5.6.7.8", "port": 1080, "protocol": "socks5", "tags": ["region:jp", "socks"]},
     ]
@@ -48,7 +48,7 @@ await proxies.import_resources(
 
 `region` 不是 `AccountResource` 的声明字段，因此会进入自定义 payload，通过 `resource.extra` 读取；`MatchRule` 查找 `from_field` 时先看类型化属性，再看 payload 键，所以直接写 `region` 即可。
 
-## 1. 组合申请
+## 2. 组合获取
 
 ```python title="bundle_job.py"
 from purser import (
@@ -62,7 +62,7 @@ from purser import (
 
 async def run_job(ps, region: str = "us"):
     bundle = await ps.acquire_bundle(
-        BundleRequest(
+        request=BundleRequest(
             slots=(
                 BundleSlot(
                     pool="accounts",
@@ -87,9 +87,9 @@ async def run_job(ps, region: str = "us"):
     )
 
     try:
-        account = bundle.member("accounts")
-        proxy = bundle.member("proxies")
-        print(bundle.bundle_id, account.resource_id, proxy.resource_id)
+        account = bundle.member(pool="accounts")
+        proxy = bundle.member(pool="proxies")
+        print(bundle.bundle_id, account.rid, proxy.rid)
         # ... 用 account.cookie / account.resource.username 与 proxy.resource.host ...
         outcome = {
             "accounts": UsageOutcome.OK,
@@ -109,22 +109,22 @@ async def run_job(ps, region: str = "us"):
         )
 ```
 
-`MatchRule` 生成的是硬约束 `required_tag="region:us"`，不是“优先选择”。如果没有任何代理带该标签，这个 bundle 会失败，而不是退而求其次拿一个不匹配的代理。
+`MatchRule` 生成的是硬约束 `required_tag="region:us"`，不是“优先选择”。如果没有任何代理带该标签，这个 bundle 会失败，而不是退而求其次获取一个不匹配的代理。
 
-## 2. 失败语义
+## 3. 失败语义
 
 | 情况 | `mode="atomic"`（默认） | `mode="best_effort"` |
 | --- | --- | --- |
-| 第二个成员超时 | 释放第一个成员，抛 `BundleAcquireFailed` | 返回已拿到的成员 |
-| 一个成员都没拿到 | 抛 `BundleAcquireFailed` | 同样抛错 |
+| 第二个成员超时 | 释放第一个成员，抛 `BundleAcquireFailed` | 返回已获取的成员 |
+| 一个成员都未获取到 | 抛 `BundleAcquireFailed` | 同样抛错 |
 | 匹配字段缺失 | 抛 `ConfigError`（锚点资源没有该字段） | 同左 |
-| 同一 `bundle_id` 重复申请 | 返回已持有的 bundle（幂等） | 同左 |
+| 同一 `bundle_id` 重复获取 | 返回已持有的 bundle（幂等） | 同左 |
 
-`order="scarce_first"` 会先拿候选更少的池，降低“拿了热门资源却卡在稀缺资源上”的概率；`match` 槽始终排在锚点之后。
+`order="scarce_first"` 会优先获取候选更少的池，降低“占用热门资源后被稀缺资源阻塞”的概率；`match` 槽始终排在锚点之后。
 
-`max_retries` 用于两个 bundle 以相反顺序互相抢占时的抖动重试：每次失败都会先回滚已拿成员，再随机退避重试。它不会引入全局锁。
+`max_retries` 用于两个 bundle 以相反顺序互相抢占时的抖动重试：每次失败都会先回滚已获取成员，再随机退避重试。它不会引入全局锁。
 
-## 3. 控制准入
+## 4. 控制准入
 
 默认不做跨池配额。需要限制“每个消费者最多同时持有几个 bundle”或“整个池只允许 N 个 bundle”时：
 
@@ -141,20 +141,20 @@ ps = Purser(
 )
 ```
 
-`per_pool_headroom=1` 表示申请前要求每个参与池至少还剩 1 个可分配槽位，避免 bundle 把池吃空。准入失败抛 `BundleQuotaExceeded`，此时还没有占用任何成员。
+`per_pool_headroom=1` 表示获取前要求每个参与池至少还剩 1 个可分配槽位，避免 bundle 耗尽池内可用槽位。准入失败抛 `BundleQuotaExceeded`，此时还没有占用任何成员。
 
-## 4. 固定绑定
+## 5. 固定绑定
 
 如果账号与代理是固定的一对一关系，不需要匹配规则，直接指定资源：
 
 ```python
-BundleSlot(pool="accounts", resource_id="acct-us-1")
-BundleSlot(pool="proxies", resource_id="proxy://1.2.3.4:8080")
+BundleSlot(pool="accounts", rid="acct-us-1")
+BundleSlot(pool="proxies", rid="proxy://1.2.3.4:8080")
 ```
 
 固定绑定仍然享有“任一失败就回滚”的原子性。更多边界与排序规则见[组合租约](../guides/bundle-leases.md)。
 
-## 5. 检查
+## 6. 检查
 
 ```python
 print(bundle.ids())                 # {"accounts": "acct-us-1", "proxies": "proxy://..."}

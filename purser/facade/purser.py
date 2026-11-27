@@ -82,7 +82,6 @@ from purser.isolation import (
 from purser.metrics import Metrics
 from purser.pool.pool import ResourcePool
 from purser.protocols import MISSING
-from purser.results import ImportReport as ImportReport
 
 
 class Purser:
@@ -470,9 +469,6 @@ class Purser:
 
         return await self._bundle_service.gc()
 
-    async def _store(self) -> BundleStore:
-        return await self._bundle_service.ensure_store()
-
     # -- usage report (R1) -------------------------------------------------
 
     async def report_usage(
@@ -599,7 +595,7 @@ class Purser:
                     "leases": [
                         {
                             "token": lease.token,
-                            "resource_id": lease.resource_id,
+                            "rid": lease.rid,
                             "consumer": lease.consumer,
                             "slots": lease.slots,
                             "started_at": lease.started_at,
@@ -618,7 +614,7 @@ class Purser:
         document = {
             "format": BACKUP_FORMAT,
             "version": BACKUP_VERSION,
-            "schema_version": 1,
+            "schema_version": 2,
             "created_at": _now(),
             "pools": pools,
         }

@@ -73,8 +73,8 @@ curl http://127.0.0.1:8000/config/schema
 ```text
 {
   "format": "purser-backup",
-  "version": 1,
-  "schema_version": 1,
+  "version": 2,
+  "schema_version": 2,
   "created_at": 1731000000.0,
   "pools": [
     {
@@ -82,7 +82,7 @@ curl http://127.0.0.1:8000/config/schema
       "kind": "proxy",
       "config": {"...": "PoolConfig.to_dict()"},
       "resources": [{"...": "Resource.to_dict()，leases 已剔除"}],
-      "leases": [{"token": "...", "resource_id": "r2", "consumer": "c1", "slots": 1}]
+      "leases": [{"token": "...", "rid": "r2", "consumer": "c1", "slots": 1}]
     }
   ]
 }

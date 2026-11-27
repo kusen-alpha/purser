@@ -30,7 +30,7 @@ async def test_max_lease_duration_caps_renewal(make_pool):
     pool = make_pool(max_lease_duration=0.3, lease_ttl=10)
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    assert lease.resource_id == rid
+    assert lease.rid == rid
     assert isinstance(await pool.renew(lease), float)
     assert lease.expires_at <= lease.started_at + 0.3 + 0.1  # capped, not ttl-sized
     await asyncio.sleep(0.5)
@@ -56,14 +56,14 @@ async def test_started_pool_reaper_auto_returns_expired(storage_kind, coordinati
         async def wait_until_freed() -> None:
             while True:
                 res = await pool.get(rid)
-                if res is not None and res.concurrency.used_slots == 0:
+                if res is not None and res.slots.used_slots == 0:
                     return
                 await asyncio.sleep(0.05)
 
         await asyncio.wait_for(wait_until_freed(), timeout=10.0)
         res = await pool.get(rid)
         assert res is not None and res.state is ResourceState.IDLE
-        assert res.concurrency.used_slots == 0
+        assert res.slots.used_slots == 0
     finally:
         await ps.close()
 

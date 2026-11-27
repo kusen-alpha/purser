@@ -15,7 +15,7 @@ import pytest
 from purser.backends.base import ResourcePatch
 from purser.backends.coordination import _encode_lease
 from purser.config import PoolConfig
-from purser.core.resource import Concurrency, HealthStats, Lease, Resource
+from purser.core.resource import HealthStats, Lease, Resource, Slots
 from purser.core.state import ResourceState
 
 POOL = "p0"
@@ -28,7 +28,7 @@ def make_resource(rid: str, *, tags=(), max_slots: int = 1, state: ResourceState
         payload={"host": "127.0.0.1", "port": 8080},
         state=state,
         tags=frozenset(tags),
-        concurrency=Concurrency(max_slots=max_slots),
+        slots=Slots(max_slots=max_slots),
         health=HealthStats(score=0.9, samples=3),
         meta={"created_at": time.time()},
     )
@@ -53,7 +53,7 @@ async def test_put_get_roundtrip(storage):
     loaded = await storage.get(POOL, "a")
     assert loaded is not None
     assert loaded.id == "a" and loaded.state is ResourceState.IDLE
-    assert loaded.concurrency.max_slots == 1
+    assert loaded.slots.max_slots == 1
     assert loaded.health.score == 0.9
     assert loaded.tags == frozenset({"us"})
     assert loaded.version == 1
@@ -112,13 +112,13 @@ async def test_transition_acquire_release_semantics(storage):
     assert result.ok and result.state is ResourceState.FULL
     res = await storage.get(POOL, "a")
     assert res is not None and res.state is ResourceState.FULL
-    assert res.concurrency.used_slots == 1
+    assert res.slots.used_slots == 1
     # Over-commit rejected.
     assert not (await storage.transition_acquire(POOL, "a", 1)).ok
     good = await storage.transition_release(POOL, "a", 1)
     assert good.ok and good.state is ResourceState.IDLE
     res = await storage.get(POOL, "a")
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     # Double release rejected.
     assert not (await storage.transition_release(POOL, "a", 1)).ok
 
@@ -154,11 +154,11 @@ async def test_reset_usage_reconciliation(storage):
     await storage.put(POOL, make_resource("a", max_slots=2))
     await storage.transition_acquire(POOL, "a", 2)
     res = await storage.get(POOL, "a")
-    assert res is not None and res.concurrency.used_slots == 2
+    assert res is not None and res.slots.used_slots == 2
     assert await storage.reset_usage(POOL, "a") is True
     res = await storage.get(POOL, "a")
     assert res is not None and res.state is ResourceState.IDLE
-    assert res.concurrency.used_slots == 0
+    assert res.slots.used_slots == 0
     # Nothing to reset the second time.
     assert await storage.reset_usage(POOL, "a") is False
 
@@ -240,6 +240,8 @@ def test_encoded_lease_drops_process_local_snapshot():
     lease.resource = make_resource("a")
     encoded = json.loads(_encode_lease(lease))
     assert encoded["token"] == lease.token
+    assert encoded["rid"] == "a"
+    assert "resource_" "id" not in encoded
     assert "payload" not in encoded and "resource" not in encoded
 
 

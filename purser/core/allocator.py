@@ -104,7 +104,7 @@ class HealthWeightedAllocator(Allocator):
             score = (
                 w.health * res.health.score
                 + w.age * age
-                - w.load * res.concurrency.load_ratio
+                - w.load * res.slots.load_ratio
                 + w.preference * pref
                 + w.affinity * aff
                 + w.jitter * ctx.rng.random()
@@ -147,7 +147,7 @@ class LeastLoadedAllocator(Allocator):
 
     def rank(self, candidates: list[Resource], ctx: AllocationContext) -> list[tuple[Resource, float]]:
         return sorted(
-            ((res, -res.concurrency.used_slots + res.health.score * 0.01) for res in candidates),
+            ((res, -res.slots.used_slots + res.health.score * 0.01) for res in candidates),
             key=lambda item: item[1],
             reverse=True,
         )

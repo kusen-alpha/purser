@@ -23,7 +23,7 @@ async def test_release_negative_used_rejected(make_pool):
         await pool.release(lease, used=-1)
     # Nothing was mutated: the slot is still held and the lease is untouched.
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 1
+    assert res is not None and res.slots.used_slots == 1
     assert await pool._coordination.get_lease(pool.name, lease.token) is not None
     assert await pool.release(lease) is True
 
@@ -42,7 +42,7 @@ async def test_use_limit_blocks_renewal(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     exhausted = await pool.acquire(AcquireRequest(consumer="a", use_limit=0))
-    assert exhausted.resource_id == rid
+    assert exhausted.rid == rid
     with pytest.raises(LeaseLimitReached):
         await pool.renew(exhausted)  # already at the limit
     await pool.release(exhausted)
@@ -74,7 +74,7 @@ async def test_update_resource_rejects_bad_max_slots(make_pool):
     with pytest.raises(ConfigError):
         await pool.admin.update_resource(rid, operator="ops", reason="x", max_slots=-1)
     updated = await pool.admin.update_resource(rid, operator="ops", reason="x", max_slots=2)
-    assert updated.concurrency.max_slots == 2
+    assert updated.slots.max_slots == 2
 
 
 async def test_empty_import_report(make_pool):
@@ -137,8 +137,8 @@ async def test_restart_partial_active_reconciled(tmp_path, storage_kind, coordin
         await pool2.start()
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.IDLE
-        assert res.concurrency.used_slots == 0
-        assert res.concurrency.max_slots == 2
+        assert res.slots.used_slots == 0
+        assert res.slots.max_slots == 2
     finally:
         await ps2.close()
 

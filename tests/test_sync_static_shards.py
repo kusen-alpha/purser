@@ -182,7 +182,7 @@ def _delete_pool(cfg: dict, name: str) -> None:
         for lease in list(pool.leases()):
             with contextlib.suppress(PurserError):
                 pool.admin.force_revoke(
-                    lease.resource_id,
+                    lease.rid,
                     operator="cleanup",
                     reason="static-shard cleanup",
                     token=lease.token,
@@ -221,7 +221,7 @@ def _shard_worker(
         _seed(pool, host)
         lease = pool.acquire(
             AcquireRequest(
-                resource_id="r0",
+                rid="r0",
                 consumer=f"shard-{os.getpid()}",
                 slots=1,
                 timeout=10.0,
@@ -232,10 +232,10 @@ def _shard_worker(
             {
                 "ok": True,
                 "token": lease.token,
-                "used": resource.concurrency.used_slots,
+                "used": resource.slots.used_slots,
                 "leases": [item.token for item in pool.leases("r0")],
                 "host": resource.payload.get("host"),
-                "resource_ids": sorted(item.id for item in pool.query()),
+                "rids": sorted(item.id for item in pool.query()),
                 "stats_active": pool.stats()["active_leases"],
             }
         )
@@ -248,7 +248,7 @@ def _shard_worker(
             time.sleep(0.02)
 
         result["released"] = pool.release(lease)
-        result["used_after"] = pool.require("r0").concurrency.used_slots
+        result["used_after"] = pool.require("r0").slots.used_slots
         result["leases_after"] = [item.token for item in pool.leases("r0")]
     except BaseException:
         result["error"] = traceback.format_exc()
@@ -279,7 +279,7 @@ def _inspect(cfg: dict, name: str) -> tuple[list[str], list[str], dict]:
         return (
             sorted(resource.id for resource in resources),
             sorted(str(resource.payload.get("host")) for resource in resources),
-            {resource.id: resource.concurrency.used_slots for resource in resources},
+            {resource.id: resource.slots.used_slots for resource in resources},
         )
     finally:
         with contextlib.suppress(BaseException):
@@ -353,7 +353,7 @@ def test_static_shards_run_independently(shape, tmp_path, mysql_cleanup):
     for item in results:
         # Same resource ids in every shard, and each shard independently
         # admits one holder even though both have max_slots == 1.
-        assert item["resource_ids"] == ["r0", "r1"]
+        assert item["rids"] == ["r0", "r1"]
         assert item["used"] == 1, item
         assert item["leases"] == [item["token"]], item
         assert item["stats_active"] == 1, item
@@ -405,9 +405,9 @@ def test_memory_coordinated_shard_rejects_overlapping_instances(
         pool_a = _open_pool(ps_a, name)
         _seed(pool_a, "overlap.internal")
         lease_a = pool_a.acquire(
-            AcquireRequest(resource_id="r0", consumer="old", slots=1, timeout=2.0)
+            AcquireRequest(rid="r0", consumer="old", slots=1, timeout=2.0)
         )
-        assert pool_a.require("r0").concurrency.used_slots == 1
+        assert pool_a.require("r0").slots.used_slots == 1
 
         ps_b = _new_instance(cfg)
         try:
@@ -446,18 +446,18 @@ def test_shared_backend_override_allows_double_booking(tmp_path, caplog):
         pool_a = _open_pool(ps_a, name)
         _seed(pool_a, "override.internal")
         lease_a = pool_a.acquire(
-            AcquireRequest(resource_id="r0", consumer="old", slots=1, timeout=2.0)
+            AcquireRequest(rid="r0", consumer="old", slots=1, timeout=2.0)
         )
-        assert pool_a.require("r0").concurrency.used_slots == 1
+        assert pool_a.require("r0").slots.used_slots == 1
 
         with caplog.at_level(logging.WARNING, logger="purser"):
             pool_b = _open_pool(ps_b, name)
         assert any(
             "instance-private" in record.getMessage() for record in caplog.records
         ), caplog.text
-        assert pool_b.require("r0").concurrency.used_slots == 0
+        assert pool_b.require("r0").slots.used_slots == 0
         lease_b = pool_b.acquire(
-            AcquireRequest(resource_id="r0", consumer="new", slots=1, timeout=0.6)
+            AcquireRequest(rid="r0", consumer="new", slots=1, timeout=0.6)
         )
         assert lease_b.token != lease_a.token
     finally:
@@ -511,17 +511,17 @@ def test_shared_redis_requires_distinct_shard_names(tmp_path):
         pool_a = _open_pool(ps_a, name)
         _seed(pool_a, "collision-a.internal")
         lease_a = pool_a.acquire(
-            AcquireRequest(resource_id="r0", consumer="a", slots=1, timeout=2.0)
+            AcquireRequest(rid="r0", consumer="a", slots=1, timeout=2.0)
         )
 
         pool_b = _open_pool(ps_b, name)
-        assert pool_b.require("r0").concurrency.used_slots == 1, (
+        assert pool_b.require("r0").slots.used_slots == 1, (
             "private storage shard did not adopt the shared lease"
         )
         assert [item.token for item in pool_b.leases("r0")] == [lease_a.token]
         with pytest.raises(BUSY):
             pool_b.acquire(
-                AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=0.6)
+                AcquireRequest(rid="r0", consumer="b", slots=1, timeout=0.6)
             )
     finally:
         if lease_a is not None:

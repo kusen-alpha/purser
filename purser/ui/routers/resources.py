@@ -231,7 +231,7 @@ def build(ctx: UiContext) -> APIRouter:
         resource = await pool.get(rid)
         if resource is None:
             raise HTTPException(status_code=404, detail=f"resource {rid!r} not found")
-        if resource.concurrency.used_slots > 0:
+        if resource.slots.used_slots > 0:
             try:
                 await pool.admin.drain(rid, operator=operator, reason="api delete")
             except PurserError as exc:

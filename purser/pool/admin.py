@@ -10,10 +10,10 @@ from purser.backends.base import ResourcePatch
 from purser.core.health import HealthReport
 from purser.core.meta import ResourceMeta
 from purser.core.resource import (
-    Concurrency,
     Lease,
     Quota,
     Resource,
+    Slots,
     UsageOutcome,
 )
 from purser.core.state import (
@@ -74,7 +74,7 @@ class AdminService:
             leases = await self.ctx.coordination.leases_for(self.ctx.name, rid)
             if not leases:
                 resource = await require_resource(self.ctx, rid)
-                if resource.concurrency.used_slots > 0:
+                if resource.slots.used_slots > 0:
                     await self.ctx.storage.reset_usage(self.ctx.name, rid)
                 break
             lease = leases[0]
@@ -261,9 +261,9 @@ class AdminService:
             resource.state,
             Event.UNDRAIN,
             ctx=StateContext(
-                used_slots=resource.concurrency.used_slots,
+                used_slots=resource.slots.used_slots,
                 slots=0,
-                max_slots=resource.concurrency.max_slots,
+                max_slots=resource.slots.max_slots,
             ),
         )
         meta = {
@@ -327,7 +327,7 @@ class AdminService:
         if target not in ADMIN_ALLOWED:
             raise BadState(f"admin_set_state disallows {target.value}") from None
         resource = await require_resource(self.ctx, rid)
-        if resource.concurrency.used_slots > 0:
+        if resource.slots.used_slots > 0:
             raise BadState(f"cannot force-set state while {rid} is busy")
         StateMachine.trigger(
             resource.state,
@@ -475,7 +475,7 @@ class AdminService:
         """
 
         resource = await require_resource(self.ctx, rid)
-        if resource.concurrency.used_slots > 0:
+        if resource.slots.used_slots > 0:
             raise BadState("cannot update a resource with active leases")
         if max_slots is not None and max_slots <= 0:
             raise ConfigError("max_slots must be > 0")
@@ -548,10 +548,10 @@ class AdminService:
         patch = ResourcePatch(
             payload=payload,
             tags=tags if tags is not None else resource.tags,
-            concurrency=(
-                Concurrency(max_slots=max_slots)
+            slots=(
+                Slots(max_slots=max_slots)
                 if max_slots is not None
-                else resource.concurrency
+                else resource.slots
             ),
             meta_patch=meta_patch,
             meta_clear=frozenset(meta_clear),
@@ -584,7 +584,7 @@ class AdminService:
         """
 
         resource = await require_resource(self.ctx, rid)
-        if resource.concurrency.used_slots > 0:
+        if resource.slots.used_slots > 0:
             raise BadState("cannot switch a resource with active leases")
         if resource.state in (
             ResourceState.ARCHIVED,
@@ -677,7 +677,7 @@ class AdminService:
         """Cross-pool migration; busy resources are rejected."""
 
         resource = await require_resource(self.ctx, rid)
-        if resource.concurrency.used_slots > 0:
+        if resource.slots.used_slots > 0:
             raise BadState("cannot move a resource with active leases")
         if target_pool.cfg.kind != self.ctx.cfg.kind:
             raise BadState(
@@ -754,18 +754,18 @@ class PoolAdminView:
 
     async def validate_now(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
     ) -> HealthReport:
         """Validate one resource immediately and apply the verdict."""
 
-        return await self._pool._validation.validate_now(resource_id, operator=operator)
+        return await self._pool._validation.validate_now(rid, operator=operator)
 
-    async def validate_check(self, resource_id: str, check: str) -> HealthReport:
+    async def validate_check(self, rid: str, check: str) -> HealthReport:
         """Run one named check without changing the resource state."""
 
-        return await self._pool._validation.validate_check(resource_id, check)
+        return await self._pool._validation.validate_check(rid, check)
 
     async def apply_defaults(
         self,
@@ -779,14 +779,14 @@ class PoolAdminView:
 
     # -- lifecycle operations ----------------------------------------------
 
-    async def ban(self, resource_id: str, *, reason: str, operator: str = "system") -> None:
+    async def ban(self, rid: str, *, reason: str, operator: str = "system") -> None:
         """Ban one resource after a hard failure or operator decision."""
 
-        await self._pool._admin.ban(resource_id, reason=reason, operator=operator)
+        await self._pool._admin.ban(rid, reason=reason, operator=operator)
 
     async def unban(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str = "manual unban",
@@ -795,19 +795,19 @@ class PoolAdminView:
         """Lift a ban; ``revalidate=True`` parks it in VALIDATING first."""
 
         await self._pool._admin.unban(
-            resource_id, operator=operator, reason=reason, revalidate=revalidate
+            rid, operator=operator, reason=reason, revalidate=revalidate
         )
 
     async def suspend(
-        self, resource_id: str, *, operator: str = "system", reason: str
+        self, rid: str, *, operator: str = "system", reason: str
     ) -> None:
         """Temporarily remove a resource from allocation without banning it."""
 
-        await self._pool._admin.suspend(resource_id, operator=operator, reason=reason)
+        await self._pool._admin.suspend(rid, operator=operator, reason=reason)
 
     async def resume(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str = "manual resume",
@@ -816,12 +816,12 @@ class PoolAdminView:
         """Return a suspended resource to allocation (optionally re-validating)."""
 
         await self._pool._admin.resume(
-            resource_id, operator=operator, reason=reason, revalidate=revalidate
+            rid, operator=operator, reason=reason, revalidate=revalidate
         )
 
     async def top_up(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         amount: int | None = None,
@@ -829,40 +829,40 @@ class PoolAdminView:
     ) -> None:
         """Replenish a quota-exhausted resource and return it to IDLE."""
 
-        await self._pool._admin.top_up(resource_id, operator=operator, amount=amount, reason=reason)
+        await self._pool._admin.top_up(rid, operator=operator, amount=amount, reason=reason)
 
     async def drain(
-        self, resource_id: str, *, operator: str = "system", reason: str
+        self, rid: str, *, operator: str = "system", reason: str
     ) -> None:
         """Stop new acquires; the resource archives once its leases drain."""
 
-        await self._pool._admin.drain(resource_id, operator=operator, reason=reason)
+        await self._pool._admin.drain(rid, operator=operator, reason=reason)
 
     async def cancel_drain(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str = "cancel drain",
     ) -> None:
         """Undo a drain and return the resource to allocation."""
 
-        await self._pool._admin.cancel_drain(resource_id, operator=operator, reason=reason)
+        await self._pool._admin.cancel_drain(rid, operator=operator, reason=reason)
 
     async def restore_resource(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str = "manual restore",
     ) -> None:
         """Restore an archived resource through VALIDATING."""
 
-        await self._pool._admin.restore_resource(resource_id, operator=operator, reason=reason)
+        await self._pool._admin.restore_resource(rid, operator=operator, reason=reason)
 
     async def admin_set_state(
         self,
-        resource_id: str,
+        rid: str,
         *,
         target: ResourceState,
         operator: str = "system",
@@ -871,12 +871,12 @@ class PoolAdminView:
         """Force a state the operator chooses; only safe targets are accepted."""
 
         await self._pool._admin.admin_set_state(
-            resource_id, target=target, operator=operator, reason=reason
+            rid, target=target, operator=operator, reason=reason
         )
 
     async def force_revoke(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str,
@@ -885,12 +885,12 @@ class PoolAdminView:
         """Revoke one live lease immediately and return the released snapshot."""
 
         return await self._pool._admin.force_revoke(
-            resource_id, operator=operator, reason=reason, token=token
+            rid, operator=operator, reason=reason, token=token
         )
 
     async def update_resource(
         self,
-        resource_id: str,
+        rid: str,
         *,
         payload: dict[str, Any] | None = None,
         tags: frozenset[str] | None = None,
@@ -909,7 +909,7 @@ class PoolAdminView:
         """Patch scheduling fields; omitted fields keep their value."""
 
         return await self._pool._admin.update_resource(
-            resource_id,
+            rid,
             payload=payload,
             tags=tags,
             max_slots=max_slots,
@@ -927,7 +927,7 @@ class PoolAdminView:
 
     async def switch_resource(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str = "manual switch",
@@ -935,12 +935,12 @@ class PoolAdminView:
         """Switch an ACTIVE resource to its alternate endpoint/payload."""
 
         return await self._pool._admin.switch_resource(
-            resource_id, operator=operator, reason=reason
+            rid, operator=operator, reason=reason
         )
 
     async def move_resource(
         self,
-        resource_id: str,
+        rid: str,
         target_pool: ResourcePool,
         *,
         operator: str = "system",
@@ -949,7 +949,7 @@ class PoolAdminView:
         """Move a resource to another pool owned by the same Purser."""
 
         return await self._pool._admin.move_resource(
-            resource_id, target_pool, operator=operator, reason=reason
+            rid, target_pool, operator=operator, reason=reason
         )
 
     async def recall_batch(

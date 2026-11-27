@@ -1,12 +1,12 @@
 # Purser
 
-通用采集资源调度库：统一管理代理、账号和自定义资源，按状态、健康度、配额与公平性规则完成**获取（acquire）、验活（validate）、封禁（ban）与归还（release）**。
+通用资源调度库：把任意可租用对象统一为资源，按状态、健康度、配额与公平性规则完成**获取（acquire）、验活（validate）、封禁（ban）与归还（release）**。
 
-基于 [purser 设计文档](docs/design/design-doc.md) 实现，遵循三条设计原则：
+遵循三条设计原则：
 
-- **通用内核 + 适配器插件**：内核只关心状态机、调度、租约与后端一致性，代理/账号等差异全部收敛到 `ResourceAdapter` 插件。
+- **通用内核 + 适配器插件**：内核只关心状态机、调度、租约与后端一致性，不同资源的类型差异全部收敛到 `ResourceAdapter` 插件。
 - **异步优先**：全链路 `asyncio`，单事件循环内零锁竞争。
-- **后端可插拔**：`memory` 后端开箱即用，`redis` 后端提供多实例共享与跨进程原子性，切换后端不需要修改业务代码。
+- **后端可插拔**：`memory` 后端无需额外配置即可使用，`redis` 后端提供多实例共享与跨进程原子性，切换后端不需要修改业务代码。
 
 ## 快速开始（嵌入式）
 
@@ -23,19 +23,19 @@ from purser import Purser
 
 async def main():
     ps = Purser()
-    pool = ps.create_pool("proxies", "proxy")
+    pool = ps.create_pool(name="proxies", kind="proxy")
     await pool.import_resources(
-        [{"host": "1.2.3.4", "port": 8080, "country": "US", "tags": ["http"]}]
+        records=[{"host": "1.2.3.4", "port": 8080, "country": "US", "tags": ["http"]}]
     )
 
     async with pool.lease(consumer="crawler-a", tags=["http"]) as lease:
-        res = lease.resource  # acquire 时加载的类型化快照，不再多读一次库
+        res = lease.resource  # acquire 时加载的类型化快照，无需再次读取存储
         print(res.host, res.port, res.country, res.extra)  # 8080 已是 int
 
 asyncio.run(main())
 ```
 
-就这么多：首次 `acquire` 会自动启动运行时，结束时用 `await ps.close()`（或
+至此完成：首次 `acquire` 会自动启动运行时，结束时用 `await ps.close()`（或
 `async with ps:`）做清理。`lease()` 退出块时无条件归还租约；手动路径用
 `await pool.acquire(consumer=...)` + `await pool.release(lease, outcome=UsageOutcome.OK)`。
 
@@ -43,9 +43,9 @@ asyncio.run(main())
 让数据面只保留 acquire / lease / release / renew 几个动词：
 
 ```python
-await pool.admin.ban("p2", reason="dead upstream")
-await pool.admin.drain("p3", reason="rotate")
-await pool.admin.run_maintenance("validating_gc")
+await pool.admin.ban(rid="p2", reason="dead upstream")
+await pool.admin.drain(rid="p3", reason="rotate")
+await pool.admin.run_maintenance(name="validating_gc")
 ```
 
 > `tags` 是用户标签，只用于调度筛选；`host` / `port` / `country` / `province` /
@@ -56,10 +56,10 @@ await pool.admin.run_maintenance("validating_gc")
 > 导入验活默认 `auto`：≤10 条记录在导入时同步验活（导入返回即可用），更多记录
 > 自动转后台任务（导入立即返回，首次 `acquire()` 等待验活完成）。需要固定行为时
 > 显式传 `import_validate="on_import" | "batch" | "none"`；`none` 只入库，
-> 资源停在 `NEW`，要用 `await pool.admin.validate_now(<id>)` 手动验活。详见
+> 资源停在 `NEW`，要用 `await pool.admin.validate_now(rid=<id>)` 手动验活。详见
 > [导入与验活](docs/guides/import-and-validate.md)。
 
-> 示例里的 IP 是占位符：会真实验活，请替换成可达代理；想完全离线跑通流程，
+> 示例里的 IP 是占位符：会真实验活，请替换成可达代理；想完全离线验证流程，
 > 参照 [examples/quickstart.py](examples/quickstart.py) 注册一个 `validate()`
 > 恒为 OK 的自定义 `ResourceAdapter`。
 
@@ -68,25 +68,25 @@ await pool.admin.run_maintenance("validating_gc")
 
 ### 同机多进程：`connect()`
 
-调度进程持有唯一的 `Purser`，业务进程用 `connect()` 拿到覆盖数据面与只读目录的异步门面
-（`acquire`/`lease`/`release`/`renew`/`stats`/`query`/`counts`/`get` 等；IPC 调用跑在线程池里，
+调度进程持有唯一的 `Purser`，业务进程用 `connect()` 获取覆盖数据面与只读目录的异步门面
+（`acquire`/`lease`/`release`/`renew`/`stats`/`query`/`counts`/`get` 等；IPC 调用在线程池中执行，
 不阻塞事件循环）：
 
 ```python
 from purser import AcquireRequest, LocalScheduler, connect
 
 sched = LocalScheduler(adapters=[MyAdapter()]).start()
-sched.create_pool("proxies", "proxy")
-sched.import_resources("proxies", [{"host": "1.2.3.4", "port": 8080}])
+sched.create_pool(name="proxies", kind="proxy")
+sched.import_resources(pool="proxies", records=[{"host": "1.2.3.4", "port": 8080}])
 
-pool = connect("proxies", sched.address)   # 或省略地址，读 PURSER_LOCAL_SCHEDULER
+pool = connect(pool="proxies", address=sched.address)   # 或省略地址，读 PURSER_LOCAL_SCHEDULER
 async with pool.lease(consumer="worker") as lease:
-    print(lease.resource_id, lease.payload)
+    print(lease.rid, lease.payload)
 ```
 
 `connect(..., resource_types={"proxy": ProxyResource})` 后，跨进程的 `lease.resource` 会恢复为
 类型化对象（未注册时是通用 `Resource`）。所有租约对象都满足 `LeaseView` 协议
-（`token` / `pool` / `resource_id` / `payload` / `resource` / `used` / `outcome` / `expired()`），
+（`token` / `pool` / `rid` / `payload` / `resource` / `used` / `outcome` / `expired()`），
 异步、同步、远端三种视图可以共用同一段只读代码。
 
 `release(..., outcome=...)` 同时接受 `UsageOutcome` 与字符串值（如 `"banned"`）。异常对象带
@@ -151,20 +151,16 @@ ps = Purser(storage="sqlite", coordination="redis",
 
 库分两个平面：**存储层**（资源主数据、状态、审计，sqlite/mysql，重启不丢）与**协调层**
 （运行期租约、心跳、唤醒，memory/redis）。池级调度参数可按需传字段
-（`ps.create_pool("proxies", "proxy", lease_ttl=120)`），也可用 `profile="validated"`
-等场景预设；完整字段、合并顺序与丢失语义见[配置](docs/reference/configuration.md)
-与[数据平面](docs/design/data-planes.md)。注意多实例下 Redis 必须开启持久化，不能当纯缓存使用。
+（`ps.create_pool(name="proxies", kind="proxy", lease_ttl=120)`），也可用 `profile="validated"`
+等场景预设；完整字段与合并顺序见[配置](docs/reference/configuration.md)。注意多实例下 Redis 必须开启持久化，不能当纯缓存使用。
 
 ## 更多文档
 
-文档站按“上手 / 指南 / 参考 / 设计 / 贡献”组织：
+文档站按“上手 / 教程 / 指南 / 参考”组织：
 
 - [文档首页](docs/index.md)：安装、两个快速开始与按角色划分的文档地图。
 - 指南：[资源可用性判定](docs/guides/availability.md)、[租约生命周期](docs/guides/lease-lifecycle.md)、[导入与验活](docs/guides/import-and-validate.md)、[多实例部署](docs/guides/multi-instance.md)、[门面选择](docs/guides/facades.md)。
 - 参考：[Python API](docs/reference/python-api/index.md)、[REST API](docs/reference/rest-api/index.md)、[CLI](docs/reference/cli.md)、[配置](docs/reference/configuration.md)、[内置资源适配器](docs/reference/resource-adapters.md)、[LocalScheduler](docs/reference/local-scheduler.md)、[错误处理](docs/reference/errors.md)、[状态机](docs/reference/state-machine.md)。
-- 设计与内部：[架构](docs/design/architecture.md)、[数据平面与丢失语义](docs/design/data-planes.md)、[算法与不变量](docs/design/algorithms.md)。
-- [贡献指南](docs/contributing/index.md)与[测试规范](docs/contributing/testing.md)。
-- 归档：[设计文档](docs/design/design-doc.md)、[可行性分析](docs/design/feasibility.md)。
 
 本地构建：
 

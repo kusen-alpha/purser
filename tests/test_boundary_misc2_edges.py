@@ -26,7 +26,7 @@ async def test_required_tag_hard_constraint(make_pool):
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(required_tag="ASIA", timeout=0.05))
     lease = await pool.acquire(AcquireRequest(required_tag="US", timeout=2.0))
-    assert lease.resource_id == "us"
+    assert lease.rid == "us"
     await pool.release(lease)
 
 
@@ -34,11 +34,11 @@ async def test_affinity_records_and_normalises(make_pool):
     pool = make_pool(affinity_weight=1.0)
     ids = await seed(pool, n=2)
     lease = await pool.acquire(AcquireRequest(consumer="c", timeout=2.0))
-    assert lease.resource_id in ids
-    assert pool._affinity["c"].get(lease.resource_id, 0) >= 1
+    assert lease.rid in ids
+    assert pool._affinity["c"].get(lease.rid, 0) >= 1
     candidates = [await pool.get(rid) for rid in ids]
-    scores = await pool._affinity_scores("c", candidates)
-    assert scores[lease.resource_id] == 1.0
+    scores = await pool._lease._affinity_scores("c", candidates)
+    assert scores[lease.rid] == 1.0
     await pool.release(lease)
 
 
@@ -80,10 +80,10 @@ async def test_force_revoke_specific_token(make_pool):
     )
     assert revoked.token == first.token
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 1
+    assert res is not None and res.slots.used_slots == 1
     await pool.release(second)
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
 
 
 def test_secret_codec_base64_env(monkeypatch):

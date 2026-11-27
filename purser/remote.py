@@ -26,30 +26,11 @@ from purser.local.client import (
     LocalSchedulerClient,
     RemoteLease,
     _resource_from_dict,
+    resolve_address,
 )
 from purser.local.protocol import SchedulerAddress
 
 __all__ = ["RemotePool", "connect"]
-
-
-def _resolve_address(
-    address: SchedulerAddress | dict[str, Any] | str | None,
-) -> SchedulerAddress:
-    if address is None:
-        resolved = SchedulerAddress.from_env()
-    elif isinstance(address, SchedulerAddress):
-        resolved = address
-    elif isinstance(address, dict):
-        resolved = SchedulerAddress.from_dict(address)
-    elif isinstance(address, str):
-        resolved = SchedulerAddress.from_env(address)
-    else:
-        raise TypeError("address must be SchedulerAddress, dict, str or None")
-    if resolved is None:
-        raise ConfigError(
-            "no scheduler address; pass one or set PURSER_LOCAL_SCHEDULER"
-        )
-    return resolved
 
 
 class _RemotePoolAdmin:
@@ -59,7 +40,7 @@ class _RemotePoolAdmin:
         self._pool = pool
 
     async def ban(
-        self, resource_id: str, *, reason: str, operator: str = "system"
+        self, rid: str, *, reason: str, operator: str = "system"
     ) -> None:
         """Ban one resource after a hard failure or operator decision."""
 
@@ -67,14 +48,14 @@ class _RemotePoolAdmin:
             self._pool._client.pool_call,
             self._pool.name,
             "ban",
-            resource_id,
+            rid,
             reason=reason,
             operator=operator,
         )
 
     async def unban(
         self,
-        resource_id: str,
+        rid: str,
         *,
         reason: str | None = None,
         operator: str = "system",
@@ -88,7 +69,7 @@ class _RemotePoolAdmin:
             self._pool._client.pool_call,
             self._pool.name,
             "unban",
-            resource_id,
+            rid,
             operator=operator,
             **kwargs,
         )
@@ -206,17 +187,17 @@ class RemotePool:
         return stats
 
     # -- read-only plane --------------------------------------------------
-    async def get(self, resource_id: str) -> Resource | None:
+    async def get(self, rid: str) -> Resource | None:
         """Return one resource snapshot, or ``None`` when it does not exist."""
 
-        return self._resource(await self._call("get", resource_id))
+        return self._resource(await self._call("get", rid))
 
-    async def require(self, resource_id: str) -> Resource:
+    async def require(self, rid: str) -> Resource:
         """Return one resource snapshot or raise :class:`ResourceNotFound`."""
 
-        resource = self._resource(await self._call("get", resource_id))
+        resource = self._resource(await self._call("get", rid))
         if resource is None:
-            raise ResourceNotFound(f"{self.name}:{resource_id}")
+            raise ResourceNotFound(f"{self.name}:{rid}")
         return resource
 
     async def query(self, **kwargs: Any) -> list[Resource]:
@@ -247,10 +228,10 @@ class RemotePool:
 
         return list(await self._call("batches") or [])
 
-    async def leases(self, resource_id: str | None = None) -> list[RemoteLease]:
+    async def leases(self, rid: str | None = None) -> list[RemoteLease]:
         """Live leases known to the scheduler, optionally for one resource."""
 
-        data = await self._call("leases", resource_id)
+        data = await self._call("leases", rid)
         return [
             RemoteLease(
                 self._client,
@@ -337,7 +318,7 @@ def connect(
     """
 
     if client is None:
-        resolved = _resolve_address(address)
+        resolved = resolve_address(address)
         client = LocalSchedulerClient(resolved, resource_types=dict(resource_types or {}))
         owns_client = True
         resource_types = None

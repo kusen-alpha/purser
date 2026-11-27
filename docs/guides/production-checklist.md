@@ -1,6 +1,6 @@
 # 生产检查清单
 
-这是一份可逐项勾选的上线清单，覆盖“选型 → 配置 → 发布 → 观察 → 演练”。它不替代安全页与运维页，而是把散落的约束串成一条可执行的路径。
+这是一份可逐项勾选的上线清单，覆盖“选型 → 配置 → 发布 → 观察 → 演练”。它不替代安全页与运维页，而是把散落的约束组合成一条可执行的路径。
 
 ## 1. 先确定形态
 
@@ -18,7 +18,7 @@
 
 ## 2. 依赖与运行时
 
-- [ ] Python 3.10–3.14；生产镜像固定小版本，升级前跑 `pytest` 与自己的契约测试。
+- [ ] Python 3.10–3.14；生产镜像固定小版本，升级前运行 `pytest` 与自己的契约测试。
 - [ ] 安装正确的 extras：服务端 `purser[server]`，CLI `purser[cli]`，MySQL `purser[mysql]`。
 - [ ] 时区与 NTP 已同步。协调层依赖时间判断租约过期；时钟漂移会表现为莫名 `LeaseLost`。
 - [ ] Windows 使用 `spawn`：入口加 `if __name__ == "__main__":` 与 `freeze_support()`，详见[平台差异](platform-differences.md)。
@@ -41,7 +41,7 @@
 ### Redis
 
 - [ ] `PURSER_COORDINATION=redis` 已显式设置；只有 URL 不会切换协调层。
-- [ ] 开启 AOF（`appendfsync everysec` 或更强），并纳入高可用与备份；丢失语义见[数据平面](../design/data-planes.md#redis-persistence)。
+- [ ] 开启 AOF（`appendfsync everysec` 或更强），并纳入高可用与备份。
 - [ ] 使用独立 DB（如 `/2`）；当前公开接口不暴露 key 前缀，键统一以 `purser:` 开头，不要与其它业务共用 DB。
 - [ ] 已接受 Redis 丢数据 = 在途租约丢失 = 可能重复占用。
 
@@ -67,7 +67,7 @@
 | `import_validate` | 大批量导入用后台任务；小批量保持默认 `auto` |
 | `fail_open` | 生产默认 `false`；只有明确接受“可能重复占用”时才开 |
 
-其余参数（`max_lease_duration`、`max_leases_per_consumer`、`validate_concurrency`、`unban_mode`、各类 `*_retention`、`event_queue_size`）逐项见[配置参考](../reference/configuration.md)。
+其余参数（`max_lease_duration`、`max_leases_per_consumer`、`validate_workers`、`unban_mode`、各类 `*_retention`、`event_queue_size`）逐项见[配置参考](../reference/configuration.md)。
 
 `fail_open=True` 不是高可用开关：它让本实例在协调层故障时继续放行，但其他实例看不到这些租约。
 

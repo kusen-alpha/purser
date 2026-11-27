@@ -21,7 +21,7 @@ from purser.adapter_spec import AdapterSpec, load_adapter
 from purser.core.resource import Resource
 from purser.errors import ConfigError, IsolationConflict, PoolExists, PoolNotFound
 from purser.isolation import PICKLE_MESSAGE
-from purser.local.client import LocalSchedulerClient
+from purser.local.client import LocalSchedulerClient, resolve_address
 from purser.local.errors import SchedulerUnavailable
 from purser.local.protocol import SchedulerAddress
 from purser.local.scheduler import LocalScheduler
@@ -31,27 +31,6 @@ from purser.remote import RemotePool
 _T = TypeVar("_T")
 
 __all__ = ["ProcessPurser"]
-
-
-def _resolve_address(
-    address: SchedulerAddress | Mapping[str, Any] | str | None,
-) -> SchedulerAddress:
-    if isinstance(address, SchedulerAddress):
-        resolved: SchedulerAddress | None = address
-    elif isinstance(address, Mapping):
-        resolved = SchedulerAddress.from_dict(dict(address))
-    elif isinstance(address, str):
-        resolved = SchedulerAddress.from_env(address)
-    elif address is None:
-        resolved = SchedulerAddress.from_env()
-    else:
-        raise TypeError("address must be SchedulerAddress, mapping, str or None")
-    if resolved is None:
-        raise ConfigError(
-            "no scheduler address; pass address or set "
-            "PURSER_LOCAL_SCHEDULER"
-        )
-    return resolved
 
 
 def _require_zero_arg(adapter: Any) -> type:
@@ -171,7 +150,7 @@ class ProcessPurser:
                     "attach mode (address=) cannot be combined with scheduler "
                     f"options: {', '.join(sorted(provided))}"
                 )
-            self._address: SchedulerAddress | None = _resolve_address(address)
+            self._address: SchedulerAddress | None = resolve_address(address)
             self._scheduler: LocalScheduler | None = None
         else:
             self._address = None

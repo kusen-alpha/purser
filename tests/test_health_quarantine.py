@@ -46,11 +46,8 @@ def test_threshold_trial_protection():
     old = now - 48 * 3600  # outside
     assert policy.threshold_for(fresh, now) == 2
     assert policy.threshold_for(old, now) == 3
-    assert policy.first_failure_ban(fresh, now) is False
-    assert policy.first_failure_ban(old, now) is False
     strict = QuarantinePolicy(max_failures=1)
     assert strict.threshold_for(old, now) == 1
-    assert strict.first_failure_ban(old, now) is True
 
 
 def test_probe_guard_disables_flaky_probe():

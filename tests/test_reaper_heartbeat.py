@@ -23,10 +23,10 @@ async def test_watchdog_reaps_expired_lease(make_pool):
     await pool._leases.reap()
     res = await pool.get(rid)
     assert res.state is ResourceState.IDLE
-    assert res.concurrency.used_slots == 0
+    assert res.slots.used_slots == 0
     # The pool can be re-acquired.
     again = await pool.acquire(AcquireRequest(consumer="next"))
-    assert again.resource_id == rid
+    assert again.rid == rid
 
 
 async def test_heartbeat_renewal_keeps_lease_alive(make_pool):

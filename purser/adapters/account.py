@@ -25,7 +25,7 @@ class AccountResource(Resource):
 
 class AccountAdapter(ResourceAdapter):
     kind = "account"
-    default_concurrency = 4
+    default_slots = 4
     resource_class = AccountResource
 
     async def generate(self, spec: dict[str, Any]) -> Resource:

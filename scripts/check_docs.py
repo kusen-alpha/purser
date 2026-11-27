@@ -28,7 +28,6 @@ ATTR_RE = re.compile(r"\s*\{([^}]*)\}\s*$")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 
-NAV_MD_RE = re.compile(r":\s*[\"']?([^\"'\s]+\.md)[\"']?\s*$")
 EXCLUDE_BLOCK_RE = re.compile(r"^exclude_docs:\s*\|?\s*$")
 
 
@@ -113,9 +112,16 @@ def parse_nav(text: str) -> tuple[list[str], list[str]]:
                 excludes.append(stripped)
             continue
         if in_nav:
-            match = NAV_MD_RE.search(line)
-            if match:
-                nav.append(match.group(1))
+            value = stripped.lstrip("-").strip()
+            if not value or value.startswith("#"):
+                continue
+            if ":" in value:
+                value = value.rsplit(":", 1)[1].strip()
+            value = value.strip("\"'")
+            if value.endswith(".md") and not any(
+                char.isspace() for char in value
+            ):
+                nav.append(value)
     return nav, excludes
 
 
@@ -317,7 +323,6 @@ def compare(label: str, code: set[str], documented: set[str]) -> list[str]:
 
 
 ADMIN_REF_RE = re.compile(r"pool\.admin\.([a-z_]+)")
-VERSION_RE = re.compile(r"^\s*version\s*=\s*\"([^\"]+)\"", re.MULTILINE)
 
 
 def code_error_details() -> dict[str, tuple[str, bool]]:
@@ -443,31 +448,6 @@ def check_admin_refs(
     return errors
 
 
-def check_versions(root: Path) -> list[str]:
-    pyproject = read(root / "pyproject.toml")
-    match = VERSION_RE.search(pyproject)
-    if not match:
-        return ["pyproject.toml: version not found"]
-    version = match.group(1)
-    errors: list[str] = []
-    checks = {
-        "docs/index.md": [
-            rf"version-{re.escape(version)}-",
-            rf"当前版本 `{re.escape(version)}`",
-        ],
-        "docs/reference/index.md": [rf"当前文档对应 `{re.escape(version)}`"],
-        "docs/reference/python-api/index.md": [
-            rf"当前文档对应 `{re.escape(version)}`"
-        ],
-    }
-    for rel, patterns in checks.items():
-        text = read(root / rel)
-        for pattern in patterns:
-            if not re.search(pattern, text):
-                errors.append(f"{rel}: expected version {version} ({pattern})")
-    return errors
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
@@ -535,7 +515,6 @@ def main() -> int:
     errors.extend(check_error_table(root / "docs/reference/error-codes.md"))
     errors.extend(check_counts(root))
     errors.extend(check_admin_refs(docs_files, excludes))
-    errors.extend(check_versions(root))
 
     if errors:
         print(f"docs check failed with {len(errors)} problem(s):", file=sys.stderr)

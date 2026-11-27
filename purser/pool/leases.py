@@ -216,7 +216,7 @@ class LeaseService:
 
     async def _acquire_request(self, request: AcquireRequest) -> Lease:
         timeout = request.timeout if request.timeout is not None else self.ctx.cfg.wait_timeout
-        if request.resource_id is not None:
+        if request.rid is not None:
             return await self._acquire_directed(request, timeout)
 
         lease = await self._try_allocate(request)
@@ -351,7 +351,7 @@ class LeaseService:
         self, resource: Resource, request: AcquireRequest, now: float
     ) -> str:
         stateless = self.ctx.cfg.acquire_mode == "stateless"
-        if not stateless and resource.concurrency.available < request.slots:
+        if not stateless and resource.slots.available < request.slots:
             return "slots"
         if request.tags and not request.tags <= resource.tags:
             return "tags"
@@ -510,18 +510,18 @@ class LeaseService:
         if lease.token in self._degraded_tokens:
             self._degraded_tokens.discard(lease.token)
             await self.ctx.storage.transition_release(
-                self.ctx.name, lease.resource_id, lease.slots
+                self.ctx.name, lease.rid, lease.slots
             )
             self.ctx.leases.unregister(lease.token)
             return
         await self.ctx.coordination.unregister_lease(self.ctx.name, lease.token)
         await self.ctx.storage.transition_release(
-            self.ctx.name, lease.resource_id, lease.slots
+            self.ctx.name, lease.rid, lease.slots
         )
         self.ctx.leases.unregister(lease.token)
         if lease.consumer:
             self.consumer_holds.get(lease.consumer, set()).discard(
-                lease.resource_id
+                lease.rid
             )
 
     async def _abandon_wait_handle(self, handle: _WaitHandle) -> None:
@@ -534,7 +534,7 @@ class LeaseService:
             await self._abandon_lease(handle.future.result())
 
     async def _acquire_directed(self, req: AcquireRequest, timeout: float) -> Lease:
-        rid = req.resource_id
+        rid = req.rid
         assert rid is not None
         deadline = time.monotonic() + timeout
         while True:
@@ -547,7 +547,7 @@ class LeaseService:
                     held.payload = deepcopy(resource._payload_view())
                     held.resource = resource
                     return held
-            if resource.allocatable and resource.concurrency.available >= req.slots:
+            if resource.allocatable and resource.slots.available >= req.slots:
                 lease = await self._commit(req, rid)
                 if lease is not None:
                     return lease
@@ -579,15 +579,15 @@ class LeaseService:
 
     async def _try_allocate(self, req: AcquireRequest) -> Lease | None:
         stateless = self.ctx.cfg.acquire_mode == "stateless"
-        if req.resource_id is not None:
+        if req.rid is not None:
             if stateless:
-                return await self._commit(req, req.resource_id)
-            resource = await self.ctx.storage.get(self.ctx.name, req.resource_id)
+                return await self._commit(req, req.rid)
+            resource = await self.ctx.storage.get(self.ctx.name, req.rid)
             if resource is None or not (
-                resource.allocatable and resource.concurrency.available >= req.slots
+                resource.allocatable and resource.slots.available >= req.slots
             ):
                 return None
-            return await self._commit(req, req.resource_id)
+            return await self._commit(req, req.rid)
 
         candidates = await self._hard_filtered_candidates(req)
         if not candidates:
@@ -658,7 +658,7 @@ class LeaseService:
         victims.sort(key=lambda lease: (lease.priority, lease.started_at))
         victim: Lease | None = None
         for candidate in victims:
-            resource = await self.ctx.storage.get(self.ctx.name, candidate.resource_id)
+            resource = await self.ctx.storage.get(self.ctx.name, candidate.rid)
             if resource is None or resource.state not in (
                 ResourceState.IDLE,
                 ResourceState.ACTIVE,
@@ -675,7 +675,7 @@ class LeaseService:
             return False
         try:
             await self._revoke(
-                victim.resource_id,
+                victim.rid,
                 operator="purser",
                 reason="preempted",
                 token=victim.token,
@@ -691,7 +691,7 @@ class LeaseService:
         self.ctx.purser.bus.publish(
             "lease_preempted",
             self.ctx.name,
-            rid=victim.resource_id,
+            rid=victim.rid,
             data={
                 "by": req.consumer,
                 "priority": req.priority,
@@ -779,7 +779,7 @@ class LeaseService:
         now: float,
         stateless: bool,
     ) -> bool:
-        if not stateless and resource.concurrency.available < req.slots:
+        if not stateless and resource.slots.available < req.slots:
             return False
         if req.tags and not req.tags <= resource.tags:
             return False
@@ -870,7 +870,7 @@ class LeaseService:
                 return None
         else:
             if not (
-                resource.allocatable and resource.concurrency.available >= req.slots
+                resource.allocatable and resource.slots.available >= req.slots
             ):
                 return None
             if self._consumer_at_limit(req.consumer):

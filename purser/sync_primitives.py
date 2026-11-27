@@ -73,8 +73,8 @@ class SyncLease:
         return self._lease.pool
 
     @property
-    def resource_id(self) -> str:
-        return self._lease.resource_id
+    def rid(self) -> str:
+        return self._lease.rid
 
     @property
     def consumer(self) -> str | None:
@@ -166,7 +166,7 @@ class SyncLease:
     def __repr__(self) -> str:
         return (
             f"SyncLease(token={self.token[:8]!r}, pool={self.pool!r}, "
-            f"resource_id={self.resource_id!r}, slots={self.slots})"
+            f"rid={self.rid!r}, slots={self.slots})"
         )
 
 

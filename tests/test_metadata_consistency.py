@@ -1,4 +1,4 @@
-"""Version numbers must agree across packaging, docs and security policy."""
+"""Version numbers must agree across packaging and security policy."""
 
 from __future__ import annotations
 
@@ -15,9 +15,6 @@ UNPUBLISHED = {
     "docs/design/feasibility.md",
     "docs/design/bundle-v2.md",
 }
-# The semver policy page deliberately names hypothetical future versions
-# (patch/minor/major examples), so it is exempt from the stale-literal scan.
-ILLUSTRATIVE = {"docs/reference/stability.md"}
 
 
 def _read(rel: str) -> str:
@@ -44,19 +41,6 @@ def test_changelog_top_release_matches():
     assert match.group(1) == _version()
 
 
-def test_docs_version_markers():
-    version = _version()
-    badge = re.search(r"version-(\d+\.\d+\.\d+)", _read("docs/index.md"))
-    assert badge is not None, "docs/index.md has no version badge"
-    assert badge.group(1) == version
-    for rel in (
-        "docs/index.md",
-        "docs/reference/index.md",
-        "docs/reference/python-api/index.md",
-    ):
-        assert f"`{version}`" in _read(rel), rel
-
-
 def test_security_support_table_matches():
     major, minor, _ = _version().split(".")
     assert f"| {major}.{minor}.x | 是 |" in _read("SECURITY.md")
@@ -72,7 +56,7 @@ def test_no_stale_versions_in_docs():
     stale: list[str] = []
     for path in sorted((ROOT / "docs").rglob("*.md")):
         rel = path.relative_to(ROOT).as_posix()
-        if rel in UNPUBLISHED or rel in ILLUSTRATIVE:
+        if rel in UNPUBLISHED:
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             for found in pattern.findall(line):

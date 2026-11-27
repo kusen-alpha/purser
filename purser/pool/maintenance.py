@@ -64,7 +64,7 @@ class MaintenanceService:
                 continue
             try:
                 await self._revoke(
-                    lease.resource_id,
+                    lease.rid,
                     operator="purser",
                     reason="drain_timeout",
                     token=lease.token,
@@ -223,7 +223,7 @@ class MaintenanceService:
             expired_at = resource.meta.get("expired_at")
             if expired_at is None:
                 continue
-            if resource.concurrency.used_slots > 0:
+            if resource.slots.used_slots > 0:
                 continue
             if now - float(expired_at) < retention:
                 continue

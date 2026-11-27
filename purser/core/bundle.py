@@ -29,7 +29,7 @@ class BundleSlot:
     """One bundle member: a single-pool acquire with optional binding."""
 
     pool: str
-    resource_id: str | None = None  # O12 directed acquire (fixed binding)
+    rid: str | None = None  # O12 directed acquire (fixed binding)
     req: AcquireRequest | None = None  # per-pool filters
     match: MatchRule | None = None  # derive companion constraints
 
@@ -107,7 +107,7 @@ class BundleLease:
         return self.members[pool]
 
     def ids(self) -> dict[str, str]:
-        return {pool: lease.resource_id for pool, lease in self.members.items()}
+        return {pool: lease.rid for pool, lease in self.members.items()}
 
 
 def bundle_request_from_dict(data: dict[str, Any]) -> BundleRequest:
@@ -142,13 +142,13 @@ def bundle_request_from_dict(data: dict[str, Any]) -> BundleRequest:
                 from_field=match_raw["from_field"],
                 to_tag=match_raw["to_tag"],
             )
-        resource_id = item.get("resource_id")
-        if resource_id is not None and not isinstance(resource_id, str):
-            raise ConfigError("bundle slot resource_id must be a string")
+        rid = item.get("rid")
+        if rid is not None and not isinstance(rid, str):
+            raise ConfigError("bundle slot rid must be a string")
         slots.append(
             BundleSlot(
                 pool=pool,
-                resource_id=resource_id,
+                rid=rid,
                 req=req,
                 match=match,
             )

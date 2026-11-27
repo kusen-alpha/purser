@@ -7,7 +7,7 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `POST` | `/pools/{pool}/leases` | 获取租约；支持 `count` 批量；支持 `Idempotency-Key` |
-| `GET` | `/pools/{pool}/leases` | 活跃租约，`?consumer=&resource_id=` 过滤 |
+| `GET` | `/pools/{pool}/leases` | 活跃租约，`?consumer=&rid=` 过滤 |
 | `GET` | `/pools/{pool}/leases/{token}` | 单个租约 |
 | `POST` | `/pools/{pool}/leases/{token}/renew` | 手动续约 |
 | `DELETE` | `/pools/{pool}/leases/{token}` | 归还单个租约 |
@@ -35,7 +35,7 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/leases \
 | `slots` | `1` | 占用槽位数 |
 | `tags` | `[]` | 资源需包含全部标签 |
 | `timeout` | `null` | 等待秒数；不传则用池 `wait_timeout` |
-| `resource_id` | `null` | 定向获取；被占用按 timeout 等待 |
+| `rid` | `null` | 定向获取；被占用按 timeout 等待 |
 | `required_tag` | `null` | 硬约束标签 |
 | `use_limit` | `null` | 本租约允许的使用次数 |
 | `allow_duplicate` | `false` | 同 consumer 可重复持有同一资源 |
@@ -53,7 +53,7 @@ curl -X POST http://127.0.0.1:8000/pools/proxies/leases \
   "leases": [
     {
       "token": "l_...",
-      "resource_id": "r2",
+      "rid": "r2",
       "consumer": "crawler-a",
       "slots": 1,
       "started_at": 1731000000.0,

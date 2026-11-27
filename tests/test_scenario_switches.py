@@ -29,7 +29,7 @@ async def test_stateless_mode_does_not_occupy(make_pool):
     assert len({lease.token for lease in leases}) == 3
     assert await pool.leases() == []
     resource = (await pool.query())[0]
-    assert resource.concurrency.available == 1
+    assert resource.slots.available == 1
     await pool.release(leases[0], used=2)
     # Second release of the same borrow stays a safe no-op.
     assert await pool.release(leases[0]) is True
@@ -42,7 +42,7 @@ async def test_random_allocator_spreads_picks(make_pool):
     picked = set()
     for _ in range(12):
         lease = await pool.acquire(timeout=0)
-        picked.add(lease.resource_id)
+        picked.add(lease.rid)
         await pool.release(lease)
     assert len(picked) > 1
 
@@ -83,7 +83,7 @@ async def test_idempotent_acquire_replays_live_lease(make_pool):
     first = await pool.acquire(consumer="c", idempotency_key="once")
     second = await pool.acquire(consumer="c", idempotency_key="once")
     assert first.token == second.token
-    assert first.resource_id == second.resource_id
+    assert first.rid == second.rid
 
 
 async def test_fifo_scheduler_keeps_arrival_order(make_pool, monkeypatch):
@@ -195,6 +195,6 @@ async def test_request_affinity_key_is_shared(make_pool):
     pool = make_pool()
     await seed(pool, 2)
     lease = await pool.acquire(consumer="c", affinity="team", timeout=0)
-    assert pool._affinity["team"][lease.resource_id] == 1.0
+    assert pool._affinity["team"][lease.rid] == 1.0
     assert "c" not in pool._affinity
     await pool.release(lease)

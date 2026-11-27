@@ -191,10 +191,10 @@ async def test_hard_crash_reclaims_slot_after_ttl(tmp_path):
     try:
         with pytest.raises((ResourceBusy, PoolExhausted, PurserError)):
             await pool.acquire(
-                AcquireRequest(resource_id="r0", consumer="c2", slots=1, timeout=0.5)
+                AcquireRequest(rid="r0", consumer="c2", slots=1, timeout=0.5)
             )
         res = await pool.get("r0")
-        assert res is not None and res.concurrency.used_slots == 1
+        assert res is not None and res.slots.used_slots == 1
 
         # The Redis TTL must actually fire and drop the lease.
         client = _redis()
@@ -210,20 +210,20 @@ async def test_hard_crash_reclaims_slot_after_ttl(tmp_path):
         # Restart path reconciles the orphaned slot, master data stays intact.
         await pool.start()
         res = await pool.get("r0")
-        assert res is not None and res.concurrency.used_slots == 0
+        assert res is not None and res.slots.used_slots == 0
         assert res.payload == {"host": "10.0.0.9", "port": 9001}
         assert res.state.value in ("idle", "active")
 
         lease = await pool.acquire(
-            AcquireRequest(resource_id="r0", consumer="c2", slots=1, timeout=1.0)
+            AcquireRequest(rid="r0", consumer="c2", slots=1, timeout=1.0)
         )
         assert lease.slots == 1
         res = await pool.get("r0")
-        assert res is not None and res.concurrency.used_slots == 1
+        assert res is not None and res.slots.used_slots == 1
         assert len(await pool._coordination.active("crash")) == 1
         await pool.release(lease)
         res = await pool.get("r0")
-        assert res is not None and res.concurrency.used_slots == 0
+        assert res is not None and res.slots.used_slots == 0
         assert await pool._coordination.active("crash") == []
     finally:
         await ps.close()
@@ -256,26 +256,26 @@ async def test_cross_instance_visibility_revoke_and_stale_release(
         ]
         with pytest.raises((ResourceBusy, PoolExhausted, PurserError)):
             await pool_b.acquire(
-                AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=0.5)
+                AcquireRequest(rid="r0", consumer="b", slots=1, timeout=0.5)
             )
 
         revoked = await pool_b.admin.force_revoke("r0", operator="test", reason="real redis")
         assert revoked.token == lease_a.token
         res = await pool_b.get("r0")
-        assert res is not None and res.concurrency.used_slots == 0
+        assert res is not None and res.slots.used_slots == 0
 
         # B re-acquires before A ever calls release (the realistic late-release).
         lease_b = await pool_b.acquire(
-            AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=1.0)
+            AcquireRequest(rid="r0", consumer="b", slots=1, timeout=1.0)
         )
         res = await pool_b.get("r0")
-        assert res is not None and res.concurrency.used_slots == 1
+        assert res is not None and res.slots.used_slots == 1
 
         # A's stale release arrived after the revoke: it must be a no-op on the
         # storage plane, not a decrement of B's freshly acquired slot.
         assert await pool_a.release(lease_a) is True
         res = await pool_b.get("r0")
-        assert res is not None and res.concurrency.used_slots == 1, "stale release stole a slot"
+        assert res is not None and res.slots.used_slots == 1, "stale release stole a slot"
         assert [lease.token for lease in await pool_b._coordination.active("x")] == [
             lease_b.token
         ]
@@ -283,7 +283,7 @@ async def test_cross_instance_visibility_revoke_and_stale_release(
         # B can still release cleanly and leave the pool empty.
         assert await pool_b.release(lease_b) is True
         res = await pool_b.get("r0")
-        assert res is not None and res.concurrency.used_slots == 0
+        assert res is not None and res.slots.used_slots == 0
         assert await pool_b._coordination.active("x") == []
     finally:
         await ps_a.close()
@@ -461,8 +461,8 @@ async def test_multiprocess_real_redis_no_oversell(tmp_path):
     await pool_check.start()
     try:
         res = await pool_check.get("r0")
-        assert res is not None and res.concurrency.used_slots == 0, (
-            f"slots leaked across processes: {res.concurrency.used_slots}"
+        assert res is not None and res.slots.used_slots == 0, (
+            f"slots leaked across processes: {res.slots.used_slots}"
         )
     finally:
         await check.close()

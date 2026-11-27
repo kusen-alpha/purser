@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -153,8 +153,3 @@ class UsageLedger:
             "groups_total": len(rows),
             "truncated": len(rows) > len(trimmed),
         }
-
-    def export(self) -> list[dict[str, Any]]:
-        """Raw retained rows (diagnostics / manual export)."""
-
-        return [asdict(item) for item in self._records]

@@ -51,12 +51,6 @@ class PeriodicScheduler:
             self._start_runner(task)
         return task
 
-    def remove(self, name: str) -> None:
-        self._tasks.pop(name, None)
-        runner = self._runners.pop(name, None)
-        if runner is not None:
-            runner.cancel()
-
     def get(self, name: str) -> PeriodicTask | None:
         return self._tasks.get(name)
 

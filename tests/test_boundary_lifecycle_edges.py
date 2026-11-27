@@ -33,12 +33,12 @@ async def test_runtime_ops_auto_start_management_ops_do_not():
 
         # First runtime use auto-starts the Purser; no explicit start() needed.
         lease = await pool.acquire(AcquireRequest(consumer="c"))
-        assert lease.resource_id == "p1"
+        assert lease.rid == "p1"
         await pool.release(lease)
         assert ps.started is True and pool.started is True
 
         async with pool.lease(AcquireRequest(consumer="c")) as lease:
-            assert lease.resource_id == "p1"
+            assert lease.rid == "p1"
 
         batch = await pool.acquire_many(1)
         assert len(batch) == 1
@@ -62,7 +62,7 @@ async def test_pool_created_after_start_is_immediately_usable():
         # create_pool() starts the pool on a pending task; acquire must wait for
         # that reconcile instead of racing it.
         lease = await pool.acquire(AcquireRequest(consumer="c"))
-        assert lease.resource_id == "p1"
+        assert lease.rid == "p1"
         await pool.release(lease)
 
 
@@ -70,7 +70,7 @@ async def test_close_fails_inflight_waiters_promptly(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     holder = await pool.acquire(AcquireRequest(consumer="holder"))
-    assert holder.resource_id == rid
+    assert holder.rid == rid
     waiter = asyncio.create_task(
         pool.acquire(AcquireRequest(consumer="waiter", timeout=30.0))
     )
@@ -106,7 +106,7 @@ async def test_reap_survives_failing_on_expire():
 async def test_concurrent_duplicate_maintenance_safe(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    await pool._on_validation_fail(rid, "flaky", operator="system")
+    await pool._validation.on_failure(rid, "flaky", operator="system")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.QUARANTINED
     await pool.storage.set_state(
@@ -125,7 +125,7 @@ async def test_concurrent_duplicate_maintenance_safe(make_pool):
     assert sum(r["quarantine_gc"] for r in results) >= 1
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
-    assert res.concurrency.used_slots == 0
+    assert res.slots.used_slots == 0
 
 
 async def test_allow_duplicate_second_lease_same_consumer(make_pool):
@@ -135,12 +135,12 @@ async def test_allow_duplicate_second_lease_same_consumer(make_pool):
     second = await pool.acquire(
         AcquireRequest(consumer="c", allow_duplicate=True)
     )
-    assert first.resource_id == second.resource_id == rid
+    assert first.rid == second.rid == rid
     assert first.token != second.token
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.FULL
-    assert res.concurrency.used_slots == 2
+    assert res.slots.used_slots == 2
     await pool.release(first)
     await pool.release(second)
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0

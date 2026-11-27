@@ -138,7 +138,7 @@ class ResourceAdapter:
     """
 
     kind: str = ""
-    default_concurrency: int = 1
+    default_slots: int = 1
     resource_class: ClassVar[type[Resource]] = Resource
     secret_fields: tuple[str, ...] = ()
     _validators: ClassVar[dict[str, Validator]] = {}
@@ -401,7 +401,7 @@ class ResourceAdapter:
         """Pool-level defaults merged by create_pool / default_for."""
 
         return AdapterDefaults(
-            max_slots=self.default_concurrency,
+            max_slots=self.default_slots,
             secret_fields=self.secret_fields,
         )
 

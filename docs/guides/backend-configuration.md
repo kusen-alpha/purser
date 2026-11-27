@@ -1,12 +1,8 @@
 # 后端配置示例
 
-Purser 把状态拆成两个独立平面：**存储层（storage）** 保存资源主数据、状态、槽位与密文；**协调层（coordination）** 跟踪在途租约、心跳与唤醒。后端按**池**配置，`Purser(...)` 只是建池时的默认值。两平面的丢失语义与选型表见 [数据平面与丢失语义](../design/data-planes.md)，字段级说明见 [配置参考](../reference/configuration.md) 与 [后端契约](../reference/python-api/backends.md)。
+Purser 把状态拆成两个独立平面：**存储层（storage）** 保存资源主数据、状态、槽位与密文；**协调层（coordination）** 跟踪在途租约、心跳与唤醒。后端按**池**配置，`Purser(...)` 只是建池时的默认值。两平面的丢失语义见 [多实例部署](multi-instance.md)，字段级说明见 [配置参考](../reference/configuration.md) 与 [后端契约](../reference/python-api/backends.md)。
 
-## 平面组合
-
-存储层与协调层的组合、选型与丢失语义只有一份，见[数据平面与丢失语义](../design/data-planes.md#selection)。本页只讲怎么配。
-
-## 场景一：本地开发（memory + memory）
+## 场景一：本地开发（内存存储 + 内存协调）
 
 零依赖，进程退出即清空。
 
@@ -14,7 +10,7 @@ Purser 把状态拆成两个独立平面：**存储层（storage）** 保存资�
 from purser import Purser
 
 ps = Purser()                     # 默认 storage="memory", coordination="memory"
-pool = ps.create_pool("proxies", "proxy")
+pool = ps.create_pool(name="proxies", kind="proxy")
 ```
 
 服务方式：
@@ -23,7 +19,7 @@ pool = ps.create_pool("proxies", "proxy")
 PURSER_STORAGE=memory PURSER_COORDINATION=memory purser serve
 ```
 
-## 场景二：单机持久化（sqlite + memory）
+## 场景二：单机持久化（sqlite + 内存协调）
 
 资源主数据落盘，调度仍在本进程。SQLite 自动启用 WAL，写锁冲突最多短重试 3 次。
 
@@ -52,9 +48,9 @@ purser serve
 - 敏感字段在库内 AES-GCM 加密，密钥由 `PURSER_SECRET_KEY` 提供，或用 sqlite 同目录自动生成的密钥；
 - 数据库文件要纳入备份与权限管理，见 [运维操作](operations.md)。
 
-## 场景三：多实例（sqlite / mysql + redis） {#multi-instance-setup}
+## 场景三：多实例（sqlite/mysql + Redis 协调） {#multi-instance-setup}
 
-多个进程共享同一批资源：存储用共享的 sqlite / mysql，调度用 redis。协调 Redis 必须按持久化组件部署（AOF），不能当纯缓存。
+多个进程共享同一批资源：存储用共享的 sqlite/mysql，调度用 redis。协调 Redis 必须按持久化组件部署（AOF），不能当纯缓存。
 
 ```bash
 export PURSER_STORAGE=sqlite
@@ -84,7 +80,7 @@ ps = Purser(
     mysql_url="mysql://purser:secret@mysql.example:3306/purser",
     redis_url="redis://:password@redis.example:6379/2",
 )
-pool = ps.create_pool("proxies", "proxy")
+pool = ps.create_pool(name="proxies", kind="proxy")
 ```
 
 准备与注意：
@@ -100,8 +96,8 @@ pool = ps.create_pool("proxies", "proxy")
 
 ```python
 ps = Purser(storage="sqlite", sqlite_path="purser.db", coordination="redis", redis_url="redis://...")
-pool = ps.create_pool("proxies", "proxy")                       # 继承默认
-pool2 = ps.create_pool("accounts", "account", storage="memory") # 单池改存储
+pool = ps.create_pool(name="proxies", kind="proxy")  # 继承默认
+pool2 = ps.create_pool(name="accounts", kind="account", storage="memory")  # 单池改存储
 ```
 
 ## 密钥、审计与检查
@@ -117,4 +113,4 @@ curl http://127.0.0.1:8000/service    # 每个实例的 storage / coordination �
 curl http://127.0.0.1:8000/audit/verify
 ```
 
-相关页面：[多实例部署](multi-instance.md)、[数据平面与丢失语义](../design/data-planes.md)、[配置参考](../reference/configuration.md)、[安全模型](security.md)。
+相关页面：[多实例部署](multi-instance.md)、[配置参考](../reference/configuration.md)、[安全模型](security.md)。

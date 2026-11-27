@@ -4,7 +4,7 @@
 
 ## 平面组合
 
-存储层与协调层的组合、各自保存什么、丢失后能否对账，统一见[数据平面与丢失语义](../design/data-planes.md)；环境变量与逐场景配置见[后端配置示例](backend-configuration.md#multi-instance-setup)。
+存储层保存资源主数据、状态与槽位；协调层保存运行期租约、心跳与唤醒。两者独立取值、可分别对账；环境变量与逐场景配置见[后端配置示例](backend-configuration.md#multi-instance-setup)。
 
 `PURSER_REDIS_URL` 只提供连接串，**不会**自动切换协调层；多实例必须同时设置 `PURSER_COORDINATION=redis`（或 `--coordination redis`）。
 
@@ -16,11 +16,11 @@
 2. 按“存活租约槽位之和”重设存储里的占用计数；
 3. 全孤儿归零，部分孤儿收敛，资源主数据不变。
 
-但“可对账”不等于“可以随意丢弃”：单实例重启后协调端清空，存储里的占用会按对账规则收敛。迟到 release（token 已不在协调端）是幂等的，不会误扣新持有者槽位。详见[数据平面与丢失语义](../design/data-planes.md)。
+但“可对账”不等于“可以随意丢弃”：单实例重启后协调端清空，存储里的占用会按对账规则收敛。迟到 release（token 已不在协调端）是幂等的，不会误扣新持有者槽位。
 
 !!! danger "多实例下协调记录丢失 = 重复占用"
 
-    协调记录丢失会让其他实例看不到在途租约，同一资源可能被重复并发使用。生产环境必须把 Redis 当持久化组件部署，完整语义见[数据平面：多实例丢失](../design/data-planes.md#redis-persistence)。
+    协调记录丢失会让其他实例看不到在途租约，同一资源可能被重复并发使用。生产环境必须把 Redis 当持久化组件部署。
 
 ## fail-closed
 
@@ -52,4 +52,4 @@ curl http://127.0.0.1:8000/audit/verify
 
 `/service` 返回当前 `storage` / `coordination` 与池列表，用于确认每个实例确实接入了同一套后端。
 
-相关页面：[后端配置示例](backend-configuration.md)、[数据平面与丢失语义](../design/data-planes.md)、[生产检查清单](production-checklist.md)、[可观测性](observability.md)。
+相关页面：[后端配置示例](backend-configuration.md)、[生产检查清单](production-checklist.md)、[可观测性](observability.md)。

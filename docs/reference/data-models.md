@@ -27,7 +27,7 @@
   "state": "idle",
   "version": 3,
   "tags": ["http", "region:us"],
-  "concurrency": {"max_slots": 1, "used_slots": 0},
+  "slots": {"max_slots": 1, "used_slots": 0},
   "health": {
     "score": 0.82,
     "samples": 12,
@@ -62,7 +62,7 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `token` | `str` | 唯一凭据 |
-| `pool` / `resource_id` | `str` | 所属池与资源 |
+| `pool` / `rid` | `str` | 所属池与资源 |
 | `consumer` / `target` | `str \| None` | 请求上下文 |
 | `slots` | `int` | 占用槽位 |
 | `started_at` / `expires_at` / `heartbeat_at` | `float` | epoch 秒 |
@@ -138,6 +138,6 @@ REST 的租约视图只包含上表除 `pool`、`heartbeat_at`、`resource` 之�
 - `Event` 是**瞬时通知**，`seq` 进程内递增、重启归零，不保证投递。
 - `AuditEntry` 是**持久记录**，`seq` 在链内连续，配置 `audit_path` 后跨重启延续。
 
-## 版本与兼容
+## 字段兼容
 
-这些结构是 Python API 的返回契约，字段只增不减（major 版本除外）。REST 视图是独立的序列化层，可能包含派生字段或省略内部字段；以 `/docs` 的 OpenAPI 为准。见[版本与弃用政策](stability.md)。
+这些结构是 Python API 的返回契约，字段只增不减。REST 视图是独立的序列化层，可能包含派生字段或省略内部字段；以 `/docs` 的 OpenAPI 为准。

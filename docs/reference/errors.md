@@ -28,7 +28,7 @@ except PurserError as exc:
 | `PoolExhausted` | 等待超时仍未满足请求；池内资源全部为 `NEW` 时立即抛出 | 扩容、缩短占用、提高超时，或先用 `pool.admin.validate_now()` 验活 |
 | `NoSuitableResource` | 候选存在但全部被请求级校验拒绝 | 调整 `target` / 探测配置 |
 | `ResourceBusy` | 定向获取等待超时 | 重试或换资源 |
-| `BundleAcquireFailed` | 跨池组合获取未完成，已拿到的成员已回滚释放 | 补充资源、调整约束或改用 `best_effort` |
+| `BundleAcquireFailed` | 跨池组合获取未完成，已获取的成员已回滚释放 | 补充资源、调整约束或改用 `best_effort` |
 | `LeaseConflict` | token 不匹配或乐观锁冲突 | 用最新租约状态重试 |
 | `LeaseExpired` | 租约已过期 | 续约或重新获取 |
 | `LeaseRevoked` | 租约被管理员强制撤销 | 停止使用该资源 |
@@ -42,7 +42,7 @@ except PurserError as exc:
 | `BackendUnavailable` | 存储后端不可用（fail-closed） | 检查 Redis/MySQL 连接，恢复后重试 |
 | `SchedulerUnavailable` | `LocalScheduler` 不可连接、已关闭或启动超时 | 检查调度进程是否存活与地址 |
 | `SchedulerTimeout` | 本地调度 IPC 在期限内未响应 | 检查调度进程负载与请求超时 |
-| `SchedulerProtocolError` | IPC 地址/消息格式非法或响应 id 不匹配 | 检查 `PURSER_LOCAL_SCHEDULER` 与协议版本 |
+| `SchedulerProtocolError` | IPC 地址/消息格式非法或响应 id 不匹配 | 检查 `PURSER_LOCAL_SCHEDULER` 与消息格式 |
 
 `Scheduler*` 异常从 `purser.local` 导入，同样继承 `PurserError`。
 

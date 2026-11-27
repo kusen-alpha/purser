@@ -1,6 +1,6 @@
 # 自定义资源适配器
 
-内核不认识“代理”或“账号”，只认识 `ResourceAdapter` 插件。自定义适配器负责三件事：怎么生成、怎么验活、怎么在请求边界做校验；这三件事都有默认实现，只有需要定制时才覆盖对应钩子。
+内核不认识“代理”或“账号”，只认识 `ResourceAdapter` 插件。自定义适配器负责三件事：生成、验活与请求边界校验；这三件事都有默认实现，只有需要定制时才覆盖对应钩子。
 
 ## 最小实现
 
@@ -12,8 +12,8 @@ class SmsAdapter(ResourceAdapter):
     kind = "sms"
 
 ps = Purser()
-ps.register_adapter(SmsAdapter())
-pool = ps.create_pool("sms", "sms")
+ps.register_adapter(adapter=SmsAdapter())
+pool = ps.create_pool(name="sms", kind="sms")
 ```
 
 `generate` 与 `validate` 都有默认实现：前者按类型化字段把 spec 映射成 `Resource`（并自动补 `kind`），后者返回 `HealthReport.ok(latency_ms=1.0)` 视为存活。需要真实验活或特殊构造时再覆盖：
@@ -24,7 +24,7 @@ from purser import HealthReport, Resource, ResourceAdapter
 
 class SmsAdapter(ResourceAdapter):
     kind = "sms"
-    default_concurrency = 3
+    default_slots = 3
 
     async def generate(self, spec):
         return Resource(id=spec["id"], kind=self.kind, payload=spec)
@@ -47,7 +47,7 @@ class SmsAdapter(ResourceAdapter):
 ```
 
 ```python
-await pool.import_resources([{"id": "sms-001", "phone": "+8613800138000", "retries": 2}])
+await pool.import_resources(records=[{"id": "sms-001", "phone": "+8613800138000", "retries": 2}])
 ```
 
 `phone`、`retries` 会落在类型化字段上；若 spec 里出现未声明字段（如 `note`），会进入 `resource.extra`。需要自定义 id（如 `proxy://host:port`）时，覆盖 `derive_id(spec)` 或整个 `generate`。
@@ -59,7 +59,7 @@ await pool.import_resources([{"id": "sms-001", "phone": "+8613800138000", "retri
 | `kind` | — | 类型标识，建池时使用 |
 | `resource_class` | `Resource` | 存储读回时重建的类型化子类 |
 | `secret_fields` | `()` | 需要加密的 payload 字段；默认由声明字段里的 `PayloadField(secret=True)` 推导 |
-| `default_concurrency` | `1` | 资源默认槽位数 |
+| `default_slots` | `1` | 资源默认槽位数 |
 
 ## 生命周期钩子
 
@@ -100,7 +100,7 @@ class SmsAdapter(ResourceAdapter):
 
 钩子异常由 `on_error` 承接，不会破坏核心流程；不要在钩子里做长阻塞操作。
 
-5 个租约级钩子默认都是空实现，按调度路径依次触发：`on_acquire`（签发）、`on_renew`（每次续约）、`before_release`（归还前，持约者还没放手）、`on_revoke`（`force_revoke` 踢人）、`on_lease_lost`（超时/心跳失败被回收）。它们只做观察与副作用，不改变内核的槽位与状态流转。
+5 个租约级钩子默认都是空实现，按调度路径依次触发：`on_acquire`（签发）、`on_renew`（每次续约）、`before_release`（归还前，持约者还没放手）、`on_revoke`（`force_revoke`，强制撤销）、`on_lease_lost`（超时/心跳失败被回收）。它们只做观察与副作用，不改变内核的槽位与状态流转。
 
 `switch` 是预留的切换/轮换扩展点（默认返回 `None`）。覆写时由你决定切换逻辑：直接改 `resource` 的数据并返回它，池会原地更新该行；或返回一个全新的 `Resource`，池会导入新行并把旧行归档。对应的池方法是 `pool.admin.switch_resource(rid, reason=...)`，忙（有活跃租约）或终态（archived/draining/banned/lost）会拒绝切换。
 
@@ -119,7 +119,7 @@ class SmsAdapter(ResourceAdapter):
     async def check_credential(self, resource) -> HealthReport:
         if resource.payload.get("api_key"):
             return HealthReport.ok(latency_ms=2.0)
-        return HealthReport.fail("missing api_key")
+        return HealthReport.fail(error="missing api_key")
 
     @validator(both=False)                     # 只注册，按名手动触发
     async def check_expiry(self, resource) -> HealthReport:
@@ -132,7 +132,7 @@ class SmsAdapter(ResourceAdapter):
 | `both` | `False` | 是否自动并入生命周期验活 |
 
 - `both=True`：执行 `admin.validate_now()` / `import_validate="on_import"` / 后台验活时，先按声明顺序逐个运行这些检查项，首个失败即短路；失败与 `validate()` 失败同流程，进入 `QUARANTINED`、连续失败升级 `BANNED`。组合发生在 `validate_with_checks()`，覆写 `validate()` 无需自己处理。
-- `both=False`：只做注册（供 UI `GET /adapters` 展示），不自动执行；需要时用 `await pool.admin.validate_check(rid, "check_expiry")` 按名运行单条，只返回 `HealthReport`，不写健康统计、不改状态。
+- `both=False`：只做注册（供 UI `GET /adapters` 展示），不自动执行；需要时用 `await pool.admin.validate_check(rid=rid, check="check_expiry")` 按名运行单条，只返回 `HealthReport`，不写健康统计、不改状态。
 - 检查项沿 MRO 合并，子类同名覆盖父类；必须是 `async` 方法，否则在类创建时报 `TypeError`。
 
 UI 侧一致性：`GET /adapters` 会在每个适配器下返回 `validators: [{"name", "both"}]`；`POST /pools/{pool}/resources/{rid}/validate` 带 `{"check": "name"}` 触发单条检查（只出报告，审计动作 `validate_check`），不带 `check` 时仍是完整生命周期验活。
@@ -194,7 +194,7 @@ class RetrySmsAdapter(ResourceAdapter):
 
 ```python
 ps = Purser()                  # 自动装载默认目录：内置 proxy/account + @register_default_adapter 条目
-pool = ps.create_pool("sms", "sms", config={"max_slots": 2})
+pool = ps.create_pool(name="sms", kind="sms", config={"max_slots": 2})
 ```
 
 `kind` 在默认目录里重复（包括与内置 `proxy` / `account` 冲突）时，`@register_default_adapter` 装饰阶段就会报错；测试/多实例隔离用 `Purser(default_adapters="builtin")`（只装内置）、`Purser(default_adapters="none")`（空注册表）或 `clear_default_adapters()`（清掉 `@register_default_adapter` 条目，保留内置）。
@@ -205,14 +205,14 @@ pool = ps.create_pool("sms", "sms", config={"max_slots": 2})
 from purser import ProxyAdapter
 
 ps = Purser()
-ps.register_adapter(ProxyAdapter(probe_targets=["http://example.com:80"]))
+ps.register_adapter(adapter=ProxyAdapter(probe_targets=["http://example.com:80"]))
 ```
 
 手动注册（精确控制，优先于默认目录）：
 
 ```python
-ps.register_adapter(SmsAdapter())
-pool = ps.create_pool("sms", "sms", config={"max_slots": 2})
+ps.register_adapter(adapter=SmsAdapter())
+pool = ps.create_pool(name="sms", kind="sms", config={"max_slots": 2})
 ```
 
 服务模式下自定义适配器需要自行组装：
@@ -221,7 +221,7 @@ pool = ps.create_pool("sms", "sms", config={"max_slots": 2})
 from purser.ui.server import create_app
 
 ps = Purser()
-ps.register_adapter(SmsAdapter())
+ps.register_adapter(adapter=SmsAdapter())
 app = create_app(ps)
 ```
 

@@ -8,7 +8,7 @@
 - `fork` 继承的实例在子进程首次调用时报错；
 - 同一进程内的两个实例不能共享同一 SQLite 文件、MySQL 库、Redis DB 或适配器实例（装配时抛 `IsolationConflict`）；半共享会产生无法对账的租约 / 槽位视图。
 
-## 两条路径怎么选
+## 两条路径的选择
 
 | 需求 | 方案 | 入口 |
 | --- | --- | --- |
@@ -34,14 +34,14 @@ def worker_init() -> None:
 def task(seed: int) -> str:
     from purser.local import get_client
     client = get_client()              # 进程内懒创建，复用连接
-    with client.lease("proxies", AcquireRequest(consumer=f"p{seed}")) as lease:
-        return lease.resource_id       # RemoteLease 是快照
+    with client.lease(pool="proxies", req=AcquireRequest(consumer=f"p{seed}")) as lease:
+        return lease.rid       # RemoteLease 是快照
 
 if __name__ == "__main__":
     freeze_support()                   # Windows / spawn 必需
     with LocalScheduler(storage="sqlite", sqlite_path="purser.db") as sched:
-        sched.create_pool("proxies", "proxy")
-        sched.import_resources("proxies", [
+        sched.create_pool(name="proxies", kind="proxy")
+        sched.import_resources(pool="proxies", records=[
             {"id": "p1", "host": "1.2.3.4", "port": 8080},
             {"id": "p2", "host": "5.6.7.8", "port": 3128},
         ])
@@ -63,7 +63,7 @@ if __name__ == "__main__":
 多实例部署见 [多实例部署](multi-instance.md)：每个实例连同一套 `sqlite` / `mysql` + `redis`，通过 REST API 或各实例自己的客户端共享同一资源集合。此时注意：
 
 - `PURSER_REDIS_URL` 只提供连接串，**不会**自动切换协调层；必须同时设置 `PURSER_COORDINATION=redis`；
-- 协调层 Redis 必须按持久化组件部署（AOF），丢失在途租约会导致同一资源被并发使用，见[数据平面](../design/data-planes.md#redis-persistence)；
+- 协调层 Redis 必须按持久化组件部署（AOF），丢失在途租约会导致同一资源被并发使用；
 - worker 与实例之间不传 purser 对象，只通过服务地址交互。
 
 ## 常见问题
@@ -73,6 +73,6 @@ if __name__ == "__main__":
 | `IsolationConflict`（pickle / 跨进程） | 传递了实例对象 | 每进程独立创建，共享走 `LocalScheduler` / 服务 |
 | 子进程首次调用报错（fork 继承） | fork 继承了实例 | 用 `spawn`，子进程内重新构造或连客户端 |
 | `SchedulerUnavailable` | 连不上调度进程 / 已关闭 | 检查进程存活与 `PURSER_LOCAL_SCHEDULER` |
-| worker 拿到的数据不刷新 | `RemoteLease` 是快照 | 需要最新状态时重新 `acquire` / `stats` |
+| worker 获取的数据不刷新 | `RemoteLease` 是快照 | 需要最新状态时重新 `acquire` / `stats` |
 
 客户端 API 与错误表见 [LocalScheduler](../reference/local-scheduler.md)。

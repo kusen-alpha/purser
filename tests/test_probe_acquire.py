@@ -26,7 +26,7 @@ class ProbeAdapter(ResourceAdapter):
     """Records on_request_check calls; verdict programmable."""
 
     kind = "prob"
-    default_concurrency = 1
+    default_slots = 1
 
     def __init__(self, verdict: CheckVerdict = CheckVerdict.PASS) -> None:
         self.verdict = verdict
@@ -79,7 +79,7 @@ async def test_probe_pass_acquires_and_records_target():
         lease = await pool.acquire(
             AcquireRequest(probe="http://target.example:80")
         )
-        assert lease.resource_id == "r1"
+        assert lease.rid == "r1"
         assert adapter.calls == [("r1", "http://target.example:80")]
         await pool.release(lease)
     finally:

@@ -32,7 +32,7 @@ async def test_waiter_cancelled_during_wait_leaves_no_debt(make_pool):
     await pool.release(holder)
     assert pool._waiters == []  # the dead waiter's handle was swept
     ok = await pool.acquire(AcquireRequest(consumer="next"))
-    assert ok.resource_id == rid
+    assert ok.rid == rid
     await pool.release(ok)
 
 
@@ -123,9 +123,9 @@ async def test_reaper_races_holder_release(make_pool):
     assert not [e for e in results if isinstance(e, Exception)]
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
-    assert res.concurrency.used_slots == 0
+    assert res.slots.used_slots == 0
     again = await pool.acquire(AcquireRequest(consumer="next"))
-    assert again.resource_id == rid
+    assert again.rid == rid
     await pool.release(again)
 
 
@@ -144,7 +144,7 @@ async def test_double_force_revoke_race(make_pool):
     outcomes = await asyncio.gather(revoke(), revoke())
     assert set(outcomes) == {"won", "lost"}
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     assert await pool._coordination.active(pool.name) == []
 
 

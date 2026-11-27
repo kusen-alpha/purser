@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "purser"
 version = "0.6.0"
-description = "Generic resource scheduling library for scraping: proxies, accounts, and custom resources."
+description = "Generic resource scheduling library for leased resources: acquisition, validation, and fair allocation."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

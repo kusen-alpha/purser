@@ -1,6 +1,6 @@
 # AdapterSpec 与远程注册
 
-`AdapterSpec` 是资源适配器的**可序列化描述**：一个模块路径加一组 JSON 构造参数。它解决的唯一问题是“调度进程不在当前进程里，怎么把适配器带过去”。
+`AdapterSpec` 是资源适配器的**可序列化描述**：一个模块路径加一组 JSON 构造参数。它解决的唯一问题是“调度进程不在当前进程里，如何将适配器传入调度进程”。
 
 ## 结构
 
@@ -40,7 +40,7 @@ adapter = load_adapter(spec)   # 等价于 import 后 MyAdapter(**kwargs)
 ```python
 from purser import AdapterSpec
 
-ps.register_adapter(AdapterSpec.of(MyAdapter, region="cn"))
+ps.register_adapter(adapter=AdapterSpec.of(MyAdapter, region="cn"))
 ```
 
 `register_adapter()` 在远程/进程门面上接受四类目标：

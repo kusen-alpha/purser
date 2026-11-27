@@ -88,7 +88,7 @@ scrape_configs:
 
 当前没有内置的获取延迟直方图、验活延迟直方图与池内等待时长。需要这些数据时：
 
-- 在业务侧包一层计时并写 `ps.metrics.observe("custom.acquire_ms", value)`；
+- 在业务侧包一层计时并写 `ps.metrics.observe(name="custom.acquire_ms", value=value)`；
 - 或从[事件](events.md)的 `ts` / `trace_id` 计算端到端耗时；
 - 或使用 `PoolStats`（`waiting` / `active_leases` / `allocatable`）做瞬时容量监控。
 

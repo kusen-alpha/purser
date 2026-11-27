@@ -12,12 +12,12 @@ from purser.config import IMPORT_VALIDATE_AUTO_MAX, ImportValidate, _coerce_kind
 from purser.core.health import Action
 from purser.core.meta import ResourceMeta
 from purser.core.resource import (
-    Concurrency,
     HealthStats,
     Lease,
     Quota,
     Resource,
     SiteFailure,
+    Slots,
     describe_resource,
 )
 from purser.core.state import ResourceState
@@ -243,18 +243,18 @@ class CatalogService:
     def describe(self, resource: Resource, *, secret: bool = False) -> dict[str, Any]:
         return describe_resource(resource, secret=secret)
 
-    async def leases(self, resource_id: str | None = None) -> list[Lease]:
+    async def leases(self, rid: str | None = None) -> list[Lease]:
         """Active leases from the coordination plane.
 
-        ``resource_id=None`` returns every active lease in the pool.  Leases
+        ``rid=None`` returns every active lease in the pool.  Leases
         issued by other instances sharing the same coordination backend are
         included; their ``resource`` snapshot is ``None``.
         """
 
-        if resource_id is None:
+        if rid is None:
             return list(await self.ctx.coordination.active(self.ctx.name))
         return list(
-            await self.ctx.coordination.leases_for(self.ctx.name, resource_id)
+            await self.ctx.coordination.leases_for(self.ctx.name, rid)
         )
 
     # -- import / generate ------------------------------------------------
@@ -314,7 +314,7 @@ class CatalogService:
             resource.meta.setdefault("source", source)
             resource.meta["batch_id"] = report.batch_id
             if not explicit_slots and self.ctx.cfg.max_slots:
-                resource.concurrency.max_slots = self.ctx.cfg.max_slots
+                resource.slots.max_slots = self.ctx.cfg.max_slots
             if resource.expires_at is None and self.ctx.cfg.expires_in:
                 resource.expires_at = _now() + self.ctx.cfg.expires_in
             if self.ctx.cfg.usage_quota is not None and resource.usage_quota is None:
@@ -329,7 +329,7 @@ class CatalogService:
                     break
                 if existing is not None:
                     resource.state = existing.state
-                    resource.concurrency = existing.concurrency
+                    resource.slots = existing.slots
                     resource.health = existing.health
                     resource.quota = existing.quota
                     resource.site_failures = existing.site_failures
@@ -552,13 +552,13 @@ class CatalogService:
         if normalized:
             for key in _RESTORE_TRANSIENT_META:
                 meta.pop(key, None)
-        concurrency_raw = entry.get("concurrency")
-        concurrency_raw = concurrency_raw if isinstance(concurrency_raw, dict) else {}
-        slots_raw = concurrency_raw.get("max_slots", entry.get("max_slots"))
+        slots_raw = entry.get("slots")
+        slots_raw = slots_raw if isinstance(slots_raw, dict) else {}
+        max_slots_raw = slots_raw.get("max_slots", entry.get("max_slots"))
         max_slots = (
-            int(slots_raw)
-            if slots_raw is not None
-            else (self.ctx.cfg.max_slots or self.ctx.adapter.default_concurrency)
+            int(max_slots_raw)
+            if max_slots_raw is not None
+            else (self.ctx.cfg.max_slots or self.ctx.adapter.default_slots)
         )
         if max_slots <= 0:
             raise ValueError("max_slots must be positive")
@@ -598,7 +598,7 @@ class CatalogService:
             payload=payload,
             state=state,
             tags=frozenset(str(tag) for tag in tags_raw),
-            concurrency=Concurrency(max_slots=max_slots),
+            slots=Slots(max_slots=max_slots),
             health=health,
             site_failures=site_failures,
             quota=quota,

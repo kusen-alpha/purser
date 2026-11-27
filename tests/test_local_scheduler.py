@@ -69,7 +69,7 @@ def _worker_with_address(address: SchedulerAddress, pool: str, consumer: str) ->
             return {
                 "pid": os.getpid(),
                 "token": lease.token,
-                "resource_id": lease.resource_id,
+                "rid": lease.rid,
                 "expired": lease.expired(),
             }
     finally:
@@ -106,7 +106,6 @@ def test_protocol_bytes_roundtrip():
 def test_in_process_data_plane_and_idempotency():
     with _scheduler() as sched:
         health = sched.health()
-        assert health["protocol"] == 1
         assert health["storage"] == "memory"
         assert health["coordination"] == "memory"
         assert health["pools"] == []
@@ -115,7 +114,7 @@ def test_in_process_data_plane_and_idempotency():
         assert sched.pool_names() == ["p"]
 
         lease = sched.acquire("p", consumer="c1", idempotency_key="k1")
-        assert lease.resource_id == rid and not lease.replayed
+        assert lease.rid == rid and not lease.replayed
         replay = sched.acquire("p", consumer="c1", idempotency_key="k1")
         assert replay.token == lease.token and replay.replayed
 
@@ -133,7 +132,7 @@ def test_in_process_data_plane_and_idempotency():
         assert sched.client.release("p", lease.token) is True
 
         with sched.lease("p", consumer="c3") as second:
-            assert second.resource_id == rid
+            assert second.rid == rid
             assert second.renew() == pytest.approx(second.expires_at)
             assert second.expires_at >= lease.started_at
         assert sched.stats("p")["active_leases"] == 0
@@ -243,7 +242,7 @@ def test_release_wakes_blocked_acquire():
 
         def waiter() -> None:
             with sched.client.lease("p", consumer="waiter", timeout=10.0) as lease:
-                result["resource_id"] = lease.resource_id
+                result["rid"] = lease.rid
 
         thread = threading.Thread(target=waiter)
         thread.start()
@@ -256,7 +255,7 @@ def test_release_wakes_blocked_acquire():
         holder.release()
         thread.join(10)
         assert not thread.is_alive()
-        assert result["resource_id"] == holder.resource_id
+        assert result["rid"] == holder.rid
 
 
 # -- same-host processes --------------------------------------------------
@@ -277,7 +276,7 @@ def test_multiprocessing_process_worker():
         assert sched.stats("p")["counts"]["idle"] == 1
         # The worker's acquire/release must be visible to the scheduler.
         lease = sched.acquire("p", consumer="main")
-        assert lease.resource_id == rid
+        assert lease.rid == rid
         lease.release()
 
 

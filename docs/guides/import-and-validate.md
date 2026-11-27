@@ -34,7 +34,7 @@ flowchart TD
 只有显式使用 `import_validate="none"` 时，资源才会长期停在 `NEW`。此时池内资源全部为 `NEW` 且没有进行中的验活任务，`acquire()` 会立即抛出带操作的 `PoolExhausted`，而不是空等到 `wait_timeout`。推进方式：
 
 ```python
-await pool.admin.validate_now("r1", operator="alice")
+await pool.admin.validate_now(rid="r1", operator="alice")
 ```
 
 或用 `on_import` / `batch` 重新导入。除非确实要离线预装数据，否则保持默认的 `auto`。
@@ -43,7 +43,7 @@ await pool.admin.validate_now("r1", operator="alice")
 
 ```python
 report = await pool.import_resources(
-    [
+    records=[
         {"id": "r1", "host": "1.2.3.4", "port": 8080, "tags": ["http"]},
         {"id": "r2", "host": "5.6.7.8", "port": 3128, "tags": ["http"]},
     ],
@@ -83,7 +83,7 @@ print(report.validation)   # 同步验活的逐条结果（on_import / auto 小�
 - 验活结果由 `ResourceAdapter.validate()` 返回 `HealthReport`；失败进入 `QUARANTINED`，连续失败升级 `BANNED`。
 - 命名检查项（`@validator`）先于 `validate()` 自动执行：`both=True` 的检查项失败与验活失败同流程（`QUARANTINED` / 连续失败升 `BANNED`）；`both=False` 的检查项只按名手动触发，不改状态。详见[自定义资源适配器](custom-resource-adapter.md)。
 - 请求级校验（`on_request_check`）发生在获取路径，按目标站拒绝不合适的候选；它与导入验活是两条独立路径。
-- 验活并发度由 `validate_concurrency` 控制；后台任务 worker 数取 `min(validate_concurrency, 本批资源数)`。
+- 验活并发度由 `validate_workers` 控制；后台任务 worker 数取 `min(validate_workers, 本批资源数)`。
 
 ## CLI 文本格式
 

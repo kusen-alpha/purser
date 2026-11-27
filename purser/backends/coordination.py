@@ -120,8 +120,8 @@ class MemoryCoordination(Coordination):
         return self._by_rid.setdefault(pool, {}).setdefault(rid, {})
 
     async def register_lease(self, pool: str, lease: Lease) -> None:
-        self._tokens(pool)[lease.token] = lease.resource_id
-        self._leases(pool, lease.resource_id)[lease.token] = lease
+        self._tokens(pool)[lease.token] = lease.rid
+        self._leases(pool, lease.rid)[lease.token] = lease
 
     async def unregister_lease(self, pool: str, token: str) -> Lease | None:
         rid = self._tokens(pool).pop(token, None)
@@ -218,10 +218,10 @@ class RedisCoordination(Coordination):
 
     @_fail_closed
     async def register_lease(self, pool: str, lease: Lease) -> None:
-        key = self._lease_key(pool, lease.resource_id)
+        key = self._lease_key(pool, lease.rid)
         await self._client.hset(key, lease.token, _encode_lease(lease))
-        await self._client.hset(self._token_key(pool), lease.token, lease.resource_id)
-        await self._client.sadd(self._ids_key(pool), lease.resource_id)
+        await self._client.hset(self._token_key(pool), lease.token, lease.rid)
+        await self._client.sadd(self._ids_key(pool), lease.rid)
         await self._client.pexpire(key, self._lease_ttl(lease) * 1000)
 
     @_fail_closed

@@ -37,9 +37,3 @@ class QuarantinePolicy:
         if in_trial:
             return max(2, math.ceil(self.max_failures / 2.0))
         return max(1, self.max_failures)
-
-    def first_failure_ban(self, created_at: float, now: float | None = None) -> bool:
-        """True only when the very first failure may ban (threshold == 1 and
-        outside the trial window)."""
-
-        return self.threshold_for(created_at, now) <= 1

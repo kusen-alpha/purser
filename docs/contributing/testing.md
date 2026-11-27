@@ -10,7 +10,7 @@ python -m venv .venv
 ```
 
 Linux / macOS 使用 `.venv/bin/pip`。真实 Redis / MySQL 用例由环境变量门控，未设置时自动跳过。
-本地跑 Redis 协调用例需要 Lua 支持：`pip install -e ".[dev,lua]"`。只装 `[dev]` 时，这些用例会因
+本地运行 Redis 协调用例需要 Lua 支持：`pip install -e ".[dev,lua]"`。只装 `[dev]` 时，这些用例会因
 `unknown command 'eval'` 失败。
 
 ## 快速运行

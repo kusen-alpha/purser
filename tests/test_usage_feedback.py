@@ -101,7 +101,7 @@ async def test_release_still_succeeds_when_feedback_is_dropped(make_pool):
 
     assert await pool.release(lease, outcome=UsageOutcome.OK) is True
     res = await pool.get(rid)
-    assert res.concurrency.used_slots == 0
+    assert res.slots.used_slots == 0
 
 
 async def test_ok_release_feeds_latency_into_health(make_pool):

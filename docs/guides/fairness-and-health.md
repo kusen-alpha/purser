@@ -64,7 +64,7 @@ class CheapestFirst(Allocator):
 
 ## 抢占
 
-`preemptible=True` 时，获取失败会尝试踢出一个低优先级持有者：
+`preemptible=True` 时，获取失败会尝试抢占（撤销）一个低优先级持有者：
 
 - 条件：`请求 priority - 持有者 priority >= preempt_threshold`（默认 10）。
 - 被抢占方进入 10 秒消费者冷却（`cooldown:<consumer>`），记录一条 `PREEMPTED` 用量事件，并发布 `lease_preempted`。
@@ -87,7 +87,7 @@ class CheapestFirst(Allocator):
 - 默认 `base=30s`、`cap=1800s`、`jitter=10s` 指数退避。
 - `max_failures=3`；24 小时试用期内阈值减半，首次失败不直接封禁。
 - `unban_mode=mixed`：`unban_after=86400s` 后自动转 `VALIDATING`，也支持人工 `unban`。
-- 风控类结果按策略处理，不等同于“直接封禁”：`CAPTCHA` 计入站点失败并触发冷却，`BANNED` 结果才走失败计数/阈值升级。
+- 适配器上报的风险类结果按策略处理，不等同于“直接封禁”：以代理适配器为例，`CAPTCHA` 计入站点失败并触发冷却，`BANNED` 结果才走失败计数/阈值升级。
 
 ## 站点失败索引
 

@@ -92,7 +92,7 @@ def test_post_init_rejects_scheduling_knobs(kwargs, match):
         ({"max_lease_duration": 0}, "max_lease_duration must be finite and > 0"),
         ({"quota_cooldown": -1.0}, "quota_cooldown"),
         ({"unban_after": -1.0}, "unban_after"),
-        ({"validate_concurrency": 0}, "validate_concurrency"),
+        ({"validate_workers": 0}, "validate_workers"),
         ({"site_failure_max": 0}, "site_failure_max"),
         ({"event_queue_size": 0}, "event_queue_size"),
         ({"drain_timeout": -1.0}, "drain_timeout must be a finite"),
@@ -192,7 +192,7 @@ def test_default_for_applies_adapter_defaults_then_call_overrides():
     from purser.config import PoolConfig
 
     cfg = PoolConfig.default_for("fakecheck", adapter=FakeChecker())
-    assert cfg.max_slots == FakeChecker.default_concurrency
+    assert cfg.max_slots == FakeChecker.default_slots
     overridden = PoolConfig.default_for(
         "fakecheck", adapter=FakeChecker(), max_slots=5, lease_ttl=11
     )
@@ -208,7 +208,7 @@ def test_adapter_defaults_fill_secret_fields_only_when_missing():
 
     class SecretAdapter(ResourceAdapter):
         kind = "secretcheck"
-        default_concurrency = 2
+        default_slots = 2
         secret_fields = ("password",)
 
     cfg = PoolConfig.default_for("secretcheck", adapter=SecretAdapter())

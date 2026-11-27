@@ -70,7 +70,7 @@ def build(ctx: UiContext) -> APIRouter:
                 status_code=422, detail="tags must contain non-empty strings"
             )
         optional_strings = {
-            "resource_id": body.get("resource_id"),
+            "rid": body.get("rid"),
             "required_tag": body.get("required_tag"),
             "consumer": body.get("consumer"),
             "target": body.get("target"),
@@ -106,7 +106,7 @@ def build(ctx: UiContext) -> APIRouter:
             use_limit=coerce(body.get("use_limit"), name="use_limit", cast=int, minimum=1),
             allow_duplicate=bool(body.get("allow_duplicate")),
             ignore_cooldown=bool(body.get("ignore_cooldown")),
-            resource_id=body.get("resource_id"),
+            rid=body.get("rid"),
             required_tag=body.get("required_tag"),
             probe=body.get("probe"),
         )
@@ -139,7 +139,7 @@ def build(ctx: UiContext) -> APIRouter:
         request: Request,
         pool_name: str,
         consumer: str | None = None,
-        resource_id: str | None = None,
+        rid: str | None = None,
     ) -> dict[str, Any]:
         ctx.require(request, write=False)
         pool = ctx.pool_of(pool_name)
@@ -147,7 +147,7 @@ def build(ctx: UiContext) -> APIRouter:
         admin = role == "admin"
         # Read through the coordination plane so leases issued by other
         # instances sharing it are visible here too.
-        leases = await pool.leases(resource_id)
+        leases = await pool.leases(rid)
         if consumer is not None:
             leases = [lease for lease in leases if lease.consumer == consumer]
         return {

@@ -13,7 +13,7 @@ from conftest import FakeChecker
 from purser import Purser
 from purser.backends.sqlite import SqliteStorage
 from purser.core.audit import AuditLog
-from purser.core.resource import AcquireRequest, Concurrency, HealthStats, Resource
+from purser.core.resource import AcquireRequest, HealthStats, Resource, Slots
 from purser.core.state import ResourceState
 
 POOL = "p0"
@@ -28,7 +28,7 @@ def make_resource(
         payload=payload if payload is not None else {"host": "127.0.0.1", "port": 8080},
         state=ResourceState.IDLE,
         tags=frozenset(tags),
-        concurrency=Concurrency(max_slots=max_slots),
+        slots=Slots(max_slots=max_slots),
         health=HealthStats(score=0.9, samples=3),
         meta={"created_at": time.time()},
     )
@@ -52,7 +52,7 @@ async def test_persists_across_restart(tmp_path):
     try:
         res = await s2.get(POOL, "a")
         assert res is not None and res.state is ResourceState.FULL
-        assert res.version == 2 and res.concurrency.used_slots == 2
+        assert res.version == 2 and res.slots.used_slots == 2
         # Slots survive the restart and can be returned without a token.
         result = await s2.transition_release(POOL, "a", 2)
         assert result.ok and result.state is ResourceState.IDLE
@@ -78,7 +78,7 @@ async def test_purser_restart_reconciles_orphan_leases(tmp_path):
         import_validate="on_import",
     )
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    assert lease.resource_id == "r1"
+    assert lease.rid == "r1"
     # Hard kill: no release, in-memory coordination is lost with the process.
     await ps1.close()
 
@@ -96,11 +96,11 @@ async def test_purser_restart_reconciles_orphan_leases(tmp_path):
         res = await pool2.get("r1")
         # Master data is accurate; orphaned slots were returned on start.
         assert res is not None and res.state is ResourceState.IDLE
-        assert res.concurrency.used_slots == 0
+        assert res.slots.used_slots == 0
         assert res.payload["host"] == "10.0.0.1"
         # The pool is usable again straight away.
         again = await pool2.acquire(AcquireRequest(consumer="c"))
-        assert again.resource_id == "r1"
+        assert again.rid == "r1"
         await pool2.release(again)
         assert len(ps2.audit) >= 3
         assert ps2.audit.verify()
@@ -155,7 +155,7 @@ async def test_concurrent_transition_acquire_no_oversell(storage):
     )
     assert sum(1 for r in results if r.ok) == 1
     res = await storage.get(POOL, "a")
-    assert res is not None and res.concurrency.used_slots == 1
+    assert res is not None and res.slots.used_slots == 1
 
 
 async def test_roundtrip_exotic_fields_and_ids(storage):
@@ -171,7 +171,7 @@ async def test_roundtrip_exotic_fields_and_ids(storage):
     loaded = await storage.get(POOL, rid)
     assert loaded.id == rid
     assert loaded.tags == frozenset({"? ?", "a&b"})
-    assert loaded.concurrency.max_slots == 3
+    assert loaded.slots.max_slots == 3
     assert loaded.usage_quota == 10 and loaded.used_count == 4
     assert loaded.expires_at == 123.0 and loaded.next_available_at == 456.0
     assert loaded.mutex_group == "g1"
@@ -224,6 +224,6 @@ async def test_reset_usage_preserves_master_data(storage):
     await storage.transition_acquire(POOL, "a", 2)
     assert await storage.reset_usage(POOL, "a") is True
     res = await storage.get(POOL, "a")
-    assert res.state is ResourceState.IDLE and res.concurrency.used_slots == 0
+    assert res.state is ResourceState.IDLE and res.slots.used_slots == 0
     assert res.payload == {"host": "keep.me"}  # master data untouched
     assert "created_at" in res.meta

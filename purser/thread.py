@@ -30,16 +30,16 @@ class _ThreadPoolAdmin:
     def __init__(self, pool: ThreadPool) -> None:
         self._pool = pool
 
-    async def ban(self, resource_id: str, *, reason: str, operator: str = "system") -> None:
+    async def ban(self, rid: str, *, reason: str, operator: str = "system") -> None:
         """Ban one resource after a hard failure or operator decision."""
 
         await asyncio.to_thread(
-            self._pool._pool.admin.ban, resource_id, reason=reason, operator=operator
+            self._pool._pool.admin.ban, rid, reason=reason, operator=operator
         )
 
     async def unban(
         self,
-        resource_id: str,
+        rid: str,
         *,
         reason: str | None = None,
         operator: str = "system",
@@ -51,7 +51,7 @@ class _ThreadPoolAdmin:
             kwargs["reason"] = reason
         return await asyncio.to_thread(
             self._pool._pool.admin.unban,
-            resource_id,
+            rid,
             operator=operator,
             **kwargs,
         )

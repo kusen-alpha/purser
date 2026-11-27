@@ -14,7 +14,7 @@ Quick start (the runtime auto-starts on first acquire)::
     pool = ps.create_pool("proxies", "proxy")
     await pool.import_resources([{"host": "1.2.3.4", "port": 8080}])
     async with pool.lease(consumer="crawler-a") as lease:
-        print(lease.resource_id, lease.payload)
+        print(lease.rid, lease.payload)
 
 Low-frequency operator work (ban / drain / revoke / maintenance) lives on
 ``pool.admin`` so the data plane stays small::

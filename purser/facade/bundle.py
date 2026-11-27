@@ -92,7 +92,7 @@ class BundleService:
             # Global deterministic order across instances: no ABBA cycle.
             ordered_slots = sorted(
                 slots,
-                key=lambda slot: (slot.pool, slot.resource_id or ""),
+                key=lambda slot: (slot.pool, slot.rid or ""),
             )
         elif req.order == "scarce_first":
             idle: dict[str, int] = {}
@@ -358,8 +358,8 @@ class BundleService:
                             req.consumer if req.consumer is not None else areq.consumer
                         )
                         areq = replace(areq, consumer=consumer)
-                        if slot.resource_id is not None:
-                            areq = replace(areq, resource_id=slot.resource_id)
+                        if slot.rid is not None:
+                            areq = replace(areq, rid=slot.rid)
                         if slot.match is not None:
                             anchor = next(
                                 (
@@ -382,7 +382,7 @@ class BundleService:
                                 raise ConfigError(
                                     "bundle match field "
                                     f"{slot.match.from_field!r} missing on "
-                                    f"resource {anchor.resource_id!r}"
+                                    f"resource {anchor.rid!r}"
                                 )
                             areq = replace(
                                 areq, required_tag=f"{slot.match.to_tag}:{value}"
@@ -396,7 +396,7 @@ class BundleService:
                                 bundle_id,
                                 ReservationMember(
                                     pool=slot.pool,
-                                    rid=lease.resource_id,
+                                    rid=lease.rid,
                                     token=lease.token,
                                 ),
                             )

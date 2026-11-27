@@ -19,10 +19,10 @@ from purser.core.allocator import (
 from purser.core.lease import LeaseManager
 from purser.core.resource import (
     AcquireRequest,
-    Concurrency,
     HealthStats,
     Lease,
     Resource,
+    Slots,
 )
 from purser.core.state import ALLOCATABLE_STATES, ResourceState
 from purser.pool.leases import LeaseService
@@ -43,7 +43,7 @@ def resource(
         kind="fakecheck",
         payload={},
         state=state,
-        concurrency=Concurrency(max_slots=max_slots, used_slots=used),
+        slots=Slots(max_slots=max_slots, used_slots=used),
         health=HealthStats(score=0.5, samples=3),
         tags=tags,
         meta={"created_at": 0.0, "last_used_at": 0.0},
@@ -212,7 +212,7 @@ async def test_acquire_uses_sampling_not_scan(purser, make_pool, storage_kind, m
     monkeypatch.setattr(pool.storage, "scan", no_scan)
 
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    assert lease.resource_id in names
+    assert lease.rid in names
     await pool.release(lease)
 
     expected = max(LeaseService._CANDIDATE_BATCH, pool.cfg.top_k * 8)

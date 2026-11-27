@@ -29,7 +29,7 @@ class SimpleAdapter(ResourceAdapter):
     """Tiny adapter that copies the spec into the payload (tag-aware)."""
 
     kind = "sim"
-    default_concurrency = 1
+    default_slots = 1
 
     async def generate(self, spec: dict):
         payload = {
@@ -84,7 +84,7 @@ async def test_bundle_atomic_acquire_and_release():
         )
         assert isinstance(bundle, BundleLease)
         assert set(bundle.members) == {"accounts", "proxies"}
-        account_rid = bundle.members["accounts"].resource_id
+        account_rid = bundle.members["accounts"].rid
         assert (await accounts.get(account_rid)).state in (
             ResourceState.ACTIVE,
             ResourceState.FULL,
@@ -92,9 +92,9 @@ async def test_bundle_atomic_acquire_and_release():
         await ps.release_bundle(bundle)
         assert (await accounts.get(account_rid)).state is ResourceState.IDLE
         lease = await accounts.acquire(
-            AcquireRequest(resource_id=account_rid, timeout=0)
+            AcquireRequest(rid=account_rid, timeout=0)
         )
-        assert lease.resource_id == account_rid
+        assert lease.rid == account_rid
         await accounts.release(lease)
     finally:
         await ps.close()
@@ -154,7 +154,7 @@ async def test_bundle_match_rule_derives_region_tag():
         bundle = await ps.acquire_bundle(
             BundleRequest(
                 slots=(
-                    BundleSlot(pool="accounts", resource_id="a1"),
+                    BundleSlot(pool="accounts", rid="a1"),
                     BundleSlot(
                         pool="proxies",
                         match=MatchRule(
@@ -168,7 +168,7 @@ async def test_bundle_match_rule_derives_region_tag():
                 order="declared",
             )
         )
-        assert bundle.members["proxies"].resource_id == "p1"
+        assert bundle.members["proxies"].rid == "p1"
         await ps.release_bundle(bundle)
     finally:
         await ps.close()
@@ -180,8 +180,8 @@ async def test_bundle_directed_binding_pins_both_ids():
         bundle = await ps.acquire_bundle(
             BundleRequest(
                 slots=(
-                    BundleSlot(pool="accounts", resource_id="a1"),
-                    BundleSlot(pool="proxies", resource_id="p2"),
+                    BundleSlot(pool="accounts", rid="a1"),
+                    BundleSlot(pool="proxies", rid="p2"),
                 ),
                 consumer="worker-1",
                 order="declared",
@@ -200,12 +200,12 @@ async def test_bundle_match_survives_scarce_first_ordering():
         # accounts; scarce_first would pick proxies first without the anchor
         # ordering constraint.
         held = await proxies.acquire(
-            AcquireRequest(resource_id="p2", timeout=0)
+            AcquireRequest(rid="p2", timeout=0)
         )
         bundle = await ps.acquire_bundle(
             BundleRequest(
                 slots=(
-                    BundleSlot(pool="accounts", resource_id="a1"),
+                    BundleSlot(pool="accounts", rid="a1"),
                     BundleSlot(
                         pool="proxies",
                         match=MatchRule(
@@ -218,7 +218,7 @@ async def test_bundle_match_survives_scarce_first_ordering():
                 consumer="worker-1",
             )
         )
-        assert bundle.members["proxies"].resource_id == "p1"
+        assert bundle.members["proxies"].rid == "p1"
         await ps.release_bundle(bundle)
         await proxies.release(held)
     finally:
@@ -239,7 +239,7 @@ async def test_bundle_retries_transient_failure_with_max_retries():
         bundle = await ps.acquire_bundle(
             BundleRequest(
                 slots=(
-                    BundleSlot(pool="accounts", resource_id="a1"),
+                    BundleSlot(pool="accounts", rid="a1"),
                     BundleSlot(pool="proxies"),
                 ),
                 consumer="worker-1",
@@ -264,7 +264,7 @@ async def test_bundle_max_retries_exhausted_raises_and_rolls_back():
             await ps.acquire_bundle(
                 BundleRequest(
                     slots=(
-                        BundleSlot(pool="accounts", resource_id="a1"),
+                        BundleSlot(pool="accounts", rid="a1"),
                         BundleSlot(pool="proxies"),
                     ),
                     consumer="worker-1",
@@ -303,7 +303,7 @@ class SessionAdapter(ResourceAdapter):
     """Composite resource: one row models an account + proxy pair (scenario C)."""
 
     kind = "session"
-    default_concurrency = 1
+    default_slots = 1
 
     async def generate(self, spec: dict):
         payload = {

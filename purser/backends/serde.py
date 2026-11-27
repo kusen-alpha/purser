@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any, Protocol
 
-from purser.core.resource import Concurrency, HealthStats, Quota, Resource, SiteFailure
+from purser.core.resource import HealthStats, Quota, Resource, SiteFailure, Slots
 from purser.core.state import ResourceState
 
 # Column order shared by the INSERT/UPDATE statements of every SQL backend.
@@ -118,8 +118,8 @@ def serialize_row(
     return {
         "kind": resource.kind,
         "state": resource.state.value,
-        "max_slots": resource.concurrency.max_slots,
-        "used_slots": resource.concurrency.used_slots,
+        "max_slots": resource.slots.max_slots,
+        "used_slots": resource.slots.used_slots,
         "payload": json_str(
             codec.encrypt_payload(resource._payload_view(), secret_fields)
         ),
@@ -171,7 +171,7 @@ def deserialize_row(
         state=ResourceState(row["state"]),
         version=int(row["version"]),
         tags=frozenset(parse(row["tags"], [])),
-        concurrency=Concurrency(
+        slots=Slots(
             max_slots=int(row["max_slots"]),
             used_slots=int(row["used_slots"]),
         ),

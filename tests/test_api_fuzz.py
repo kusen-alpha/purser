@@ -106,5 +106,5 @@ def test_api_fuzz_no_500(make_client):
     pool = ps.get_pool("px")
     resources = asyncio.run(pool.query(limit=10_000))
     for resource in resources:
-        assert 0 <= resource.concurrency.used_slots <= resource.concurrency.max_slots
+        assert 0 <= resource.slots.used_slots <= resource.slots.max_slots
         assert resource.state in ResourceState

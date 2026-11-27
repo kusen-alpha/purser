@@ -58,7 +58,7 @@ def parse_endpoint(target: str) -> tuple[str, int]:
 
 class ProxyAdapter(ResourceAdapter):
     kind = "proxy"
-    default_concurrency = 1
+    default_slots = 1
     resource_class = ProxyResource
 
     def __init__(

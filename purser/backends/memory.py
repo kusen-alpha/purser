@@ -237,7 +237,7 @@ class MemoryStorage(StorageBackend):
             resource = store.get(rid)
             if resource is None or resource.state not in states:
                 continue
-            if resource.concurrency.available < slots:
+            if resource.slots.available < slots:
                 continue
             out.append(resource)
             if len(out) >= limit:
@@ -261,21 +261,21 @@ class MemoryStorage(StorageBackend):
         resource = self._store(pool).get(rid)
         if resource is None or resource.state not in ALLOCATABLE_STATES:
             return TransitionResult(ok=False)
-        if not resource.concurrency.can_acquire(slots):
+        if not resource.slots.can_acquire(slots):
             return TransitionResult(ok=False)
         was_open = resource.allocatable
         old_state = resource.state
-        used_before = resource.concurrency.used_slots
+        used_before = resource.slots.used_slots
         target = StateMachine.trigger(
             resource.state,
             Event.ACQUIRE,
             ctx=StateContext(
                 used_slots=used_before,
                 slots=slots,
-                max_slots=resource.concurrency.max_slots,
+                max_slots=resource.slots.max_slots,
             ),
         )
-        resource.concurrency.acquire(slots)
+        resource.slots.acquire(slots)
         now = _now()
         resource.meta["last_used_at"] = now
         resource.meta["updated_at"] = now
@@ -291,17 +291,17 @@ class MemoryStorage(StorageBackend):
         resource = self._store(pool).get(rid)
         if resource is None:
             return TransitionResult(ok=False)
-        if resource.concurrency.used_slots <= 0:
+        if resource.slots.used_slots <= 0:
             return TransitionResult(ok=False)
         was_open = resource.allocatable
-        return_slots = min(slots, resource.concurrency.used_slots)
-        resource.concurrency.release(return_slots)
+        return_slots = min(slots, resource.slots.used_slots)
+        resource.slots.release(return_slots)
         resource.version += 1
         resource.meta["updated_at"] = _now()
         if resource.state is ResourceState.DRAINING:
             new_state = (
                 ResourceState.ARCHIVED
-                if resource.concurrency.used_slots <= 0
+                if resource.slots.used_slots <= 0
                 else ResourceState.DRAINING
             )
         else:
@@ -309,9 +309,9 @@ class MemoryStorage(StorageBackend):
                 resource.state,
                 Event.RELEASE,
                 ctx=StateContext(
-                    used_slots=resource.concurrency.used_slots + return_slots,
+                    used_slots=resource.slots.used_slots + return_slots,
                     slots=return_slots,
-                    max_slots=resource.concurrency.max_slots,
+                    max_slots=resource.slots.max_slots,
                 ),
             )
         old_state = resource.state
@@ -326,7 +326,7 @@ class MemoryStorage(StorageBackend):
             return False
         if slots < 0:
             return False
-        slots = min(slots, resource.concurrency.max_slots)
+        slots = min(slots, resource.slots.max_slots)
         was_open = resource.allocatable
         old_state = resource.state
         if resource.state is ResourceState.DRAINING:
@@ -340,20 +340,20 @@ class MemoryStorage(StorageBackend):
             resource.state in set(ALLOCATABLE_STATES) | {ResourceState.FULL}
         ):
             if slots == 0:
-                if resource.concurrency.used_slots == 0:
+                if resource.slots.used_slots == 0:
                     return False
                 new_state = ResourceState.IDLE
-            elif resource.concurrency.used_slots == slots:
+            elif resource.slots.used_slots == slots:
                 return False
             else:
                 new_state = (
                     ResourceState.FULL
-                    if slots >= resource.concurrency.max_slots
+                    if slots >= resource.slots.max_slots
                     else ResourceState.ACTIVE
                 )
         else:
             return False
-        resource.concurrency.used_slots = slots
+        resource.slots.used_slots = slots
         resource.state = new_state
         resource.version += 1
         resource.meta["updated_at"] = _now()

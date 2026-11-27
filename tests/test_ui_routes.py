@@ -69,7 +69,7 @@ def test_revoke_route_wins_over_action_catch_all(make_client) -> None:
     )
     assert imported.status_code == 200, imported.text
     acquired = client.post(
-        "/pools/p/leases", json={"resource_id": "r-0"}, headers=ADMIN
+        "/pools/p/leases", json={"rid": "r-0"}, headers=ADMIN
     )
     assert acquired.status_code == 200, acquired.text
     token = acquired.json()["leases"][0]["token"]

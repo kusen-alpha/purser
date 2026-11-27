@@ -33,7 +33,7 @@ flowchart TB
     end
 
     subgraph Backend["后端适配层"]
-        B1["Storage: memory / sqlite / mysql"]
+        B1["Storage: memory / sqlite/mysql"]
         B2["Coordination: memory / redis"]
     end
 

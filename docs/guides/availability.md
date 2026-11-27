@@ -85,9 +85,9 @@
 ## 排查一条具体资源
 
 ```python
-resource = await pool.require("r42")
+resource = await pool.require(rid="r42")
 print(resource.state)                 # 是否可分配
-print(resource.concurrency.available) # 剩余槽位
+print(resource.slots.available)        # 剩余槽位
 print(resource.expires_at)            # 绝对截止时间
 print(resource.next_available_at)     # 冷却
 print(resource.meta.get("quarantine_until"))

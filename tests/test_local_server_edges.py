@@ -86,7 +86,6 @@ def test_handle_request_health_and_pool_names():
         service = _Service(ps, FakeListener([]))
         health = service._handle_request(_request(op="health"))
         assert health["ok"] is True
-        assert health["result"]["protocol"] == 1
         names = service._handle_request(_request(op="pool_names"))
         assert names["result"] == {"pools": []}
 

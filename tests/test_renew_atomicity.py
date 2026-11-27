@@ -20,7 +20,7 @@ def _lease(rid: str = "r1", token: str = "t1", *, expires_in: float = 60.0) -> L
     return Lease(
         token=token,
         pool="p",
-        resource_id=rid,
+        rid=rid,
         consumer="c",
         started_at=now,
         expires_at=now + expires_in,

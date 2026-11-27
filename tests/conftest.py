@@ -30,7 +30,7 @@ class FakeChecker(ResourceAdapter):
     """Deterministic checker: alive unless programmed to fail."""
 
     kind = "fakecheck"
-    default_concurrency = 1
+    default_slots = 1
 
     def __init__(
         self,

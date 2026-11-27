@@ -81,8 +81,8 @@
 from purser import Purser, UsageOutcome
 
 ps = Purser()
-pool = ps.create_pool("proxies", "proxy", lease_ttl=120)
-await pool.import_resources([{"host": "1.2.3.4", "port": 8080}])
+pool = ps.create_pool(name="proxies", kind="proxy", lease_ttl=120)
+await pool.import_resources(records=[{"host": "1.2.3.4", "port": 8080}])
 
 async with pool.lease(consumer="w1") as lease:
     ...

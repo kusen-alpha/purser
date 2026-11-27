@@ -28,7 +28,7 @@ from purser.adapters.base import (
     ResourceAdapter,
 )
 from purser.authority import make_authority
-from purser.backends.base import Coordination, ResourcePatch, StorageBackend
+from purser.backends.base import Coordination, StorageBackend
 from purser.binding import make_binding
 from purser.config import (
     IMMUTABLE_POOL_FIELDS,
@@ -37,13 +37,12 @@ from purser.config import (
     PoolConfig,
 )
 from purser.core.allocator import Allocator, make_allocator
-from purser.core.health import HealthReport, ValidationGate
+from purser.core.health import ValidationGate
 from purser.core.lease import LeaseManager
 from purser.core.resource import (
     AcquireRequest,
     Lease,
     Resource,
-    SiteFailure,
     UsageOutcome,
 )
 from purser.core.scheduler import PeriodicScheduler
@@ -150,7 +149,6 @@ class ResourcePool:
         self._scheduler = PeriodicScheduler()
         self._task_registry = TaskRegistry()
         self._validation_jobs = ValidationJobs()
-        self._validate_job_queues: dict[str, asyncio.Queue[str]] = {}
         self._start_task: asyncio.Task[None] | None = None
         self._started = False
         self._ctx = PoolContext(
@@ -177,7 +175,7 @@ class ResourcePool:
                 background_interval=cfg.background_interval,
                 sample=cfg.background_validate_sample,
             ),
-            semaphore=asyncio.Semaphore(cfg.validate_concurrency),
+            semaphore=asyncio.Semaphore(cfg.validate_workers),
             jobs=self._validation_jobs,
             spawn=self._spawn,
         )
@@ -324,13 +322,13 @@ class ResourcePool:
                 if not lease.expired(now)
             ]
             target = sum(lease.slots for lease in live)
-            if target == resource.concurrency.used_slots and (
+            if target == resource.slots.used_slots and (
                 resource.state is not ResourceState.DRAINING or target > 0
             ):
                 continue
-            # The memory backend mutates the shared Concurrency in place, so
+            # The memory backend mutates the shared Slots in place, so
             # read the pre-reset count before reconciliation runs.
-            used_before = resource.concurrency.used_slots
+            used_before = resource.slots.used_slots
             if await self.storage.reset_usage(self.name, resource.id, slots=target):
                 dropped = used_before - target
                 if dropped > 0 and self.cfg.coordination == "memory":
@@ -387,9 +385,6 @@ class ResourcePool:
         self._register_scheduler()
         return cfg
 
-    def _next_seq(self) -> int:
-        return self._wait_queue.next_seq()
-
     # -- maintenance loops -------------------------------------------------
 
     def _start_validate_job(
@@ -414,18 +409,18 @@ class ResourcePool:
 
     # -- reads -------------------------------------------------------------
 
-    async def get(self, resource_id: str) -> Resource | None:
+    async def get(self, rid: str) -> Resource | None:
         """Return one resource snapshot, or ``None`` when it does not exist."""
 
-        resource = await self.storage.get(self.name, resource_id)
+        resource = await self.storage.get(self.name, rid)
         return None if resource is None else self.adapter.hydrate(resource)
 
-    async def require(self, resource_id: str) -> Resource:
+    async def require(self, rid: str) -> Resource:
         """Return one resource snapshot or raise :class:`ResourceNotFound`."""
 
-        resource = await self.storage.get(self.name, resource_id)
+        resource = await self.storage.get(self.name, rid)
         if resource is None:
-            raise ResourceNotFound(f"{self.name}:{resource_id}")
+            raise ResourceNotFound(f"{self.name}:{rid}")
         return self.adapter.hydrate(resource)
 
     async def query(
@@ -478,21 +473,6 @@ class ResourcePool:
             states=states, tags=tags, search=search
         )
 
-    async def _search_resources(
-        self,
-        *,
-        states: set[ResourceState] | None = None,
-        tags: frozenset[str] | None = None,
-        search: str | None = None,
-    ) -> list[Resource]:
-        return await self._catalog._search_resources(
-            states=states, tags=tags, search=search
-        )
-
-    @staticmethod
-    def _matches(resource: Resource, needle: str) -> bool:
-        return CatalogService._matches(resource, needle)
-
     async def batches(self) -> list[dict[str, Any]]:
         """Import batches recorded by this pool."""
 
@@ -521,10 +501,10 @@ class ResourcePool:
 
         return self._catalog.describe(resource, secret=secret)
 
-    async def leases(self, resource_id: str | None = None) -> list[Lease]:
+    async def leases(self, rid: str | None = None) -> list[Lease]:
         """Live leases, optionally restricted to one resource."""
 
-        return await self._catalog.leases(resource_id)
+        return await self._catalog.leases(rid)
 
     async def lease_by_token(self, token: str) -> Lease | None:
         """Local live lease first, then the coordination plane.
@@ -582,9 +562,6 @@ class ResourcePool:
             records, conflict=conflict, operator=operator
         )
 
-    def _restore_resource(self, entry: Any) -> tuple[Resource, bool]:
-        return self._catalog._restore_resource(entry)
-
     async def acquire(self, req: AcquireRequest | None = None, **kwargs: Any) -> Lease:
         """Acquire one lease; ``req`` is never mutated.
 
@@ -612,14 +589,6 @@ class ResourcePool:
         """Serve this instance's waiter heap in priority order."""
 
         return await self._lease.serve_waiters(limit)
-
-    async def _serve_waiters(self, limit: int = 64) -> int:
-        return await self._notify_waiters(limit)
-
-    async def _affinity_scores(
-        self, consumer: str | None, candidates: list[Resource]
-    ) -> dict[str, float]:
-        return await self._lease._affinity_scores(consumer, candidates)
 
     async def _renew(self, lease: Lease, used: int | None = None) -> bool:
         return await self._lease.renew(lease, used)
@@ -671,23 +640,7 @@ class ResourcePool:
             consumer, outcome=outcome, operator=operator
         )
 
-    async def _apply_usage_outcome(
-        self, resource_id: str, outcome: UsageOutcome, used: int | None, lease: Lease
-    ) -> None:
-        await self._usage.apply_outcome(resource_id, outcome, used, lease)
-
-    def _record_site_failure(
-        self, site_failures: dict[str, SiteFailure], site: str, now: float
-    ) -> None:
-        self._state.record_site_failure(site_failures, site, now)
-
     # -- hooks / callbacks ------------------------------------------------
-
-    async def _on_lease_expired(self, lease: Lease) -> None:
-        await self._lease.on_expired(lease)
-
-    async def _on_lease_lost(self, lease: Lease) -> None:
-        await self._lease.on_lost(lease)
 
     def _guard_error(self, context: str, error: Exception) -> None:
         logger.warning("%s hook failed for pool %s: %s", context, self.name, error)
@@ -700,57 +653,7 @@ class ResourcePool:
 
     # -- validation --------------------------------------------------------
 
-    async def _on_validation_ok(self, resource_id: str, report: HealthReport) -> None:
-        await self._validation.on_ok(resource_id, report)
-
-    async def _on_validation_fail(
-        self,
-        resource_id: str,
-        reason: str,
-        *,
-        operator: str = "system",
-        from_states: set[ResourceState] | None = None,
-        site_failures: dict[str, SiteFailure] | None = None,
-    ) -> None:
-        await self._validation.on_failure(
-            resource_id,
-            reason,
-            operator=operator,
-            from_states=from_states,
-            site_failures=site_failures,
-        )
-
     # -- operations --------------------------------------------------------
-
-    async def _apply_state(
-        self,
-        resource_id: str,
-        patch: ResourcePatch,
-        *,
-        expect_state: ResourceState | None = None,
-        attempts: int = 3,
-        reason: str = "op",
-    ) -> bool:
-        return await self._state.apply_state(
-            resource_id, patch, expect_state=expect_state, attempts=attempts, reason=reason
-        )
-
-    async def _notify_state_changed(
-        self, resource_id: str, old: ResourceState, new: ResourceState, reason: str
-    ) -> None:
-        await self._state.notify_state_changed(resource_id, old, new, reason)
-
-    async def _cas(
-        self,
-        resource_id: str,
-        patch: ResourcePatch,
-        *,
-        expect_state: ResourceState | None = None,
-        attempts: int = 3,
-    ) -> bool:
-        return await self._state.cas(
-            resource_id, patch, expect_state=expect_state, attempts=attempts
-        )
 
     # -- misc --------------------------------------------------------------
 

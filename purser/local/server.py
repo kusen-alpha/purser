@@ -372,7 +372,6 @@ class _Service:
 
         return {
             "version": __version__,
-            "protocol": 1,
             "pid": os.getpid(),
             "started_at": self._started_at,
             "uptime_s": round(time.time() - self._started_at, 1),
@@ -672,7 +671,7 @@ def _lease_payload(lease: SyncLease) -> dict[str, Any]:
     return {
         "token": lease.token,
         "pool": lease.pool,
-        "resource_id": lease.resource_id,
+        "rid": lease.rid,
         "consumer": lease.consumer,
         "slots": lease.slots,
         "started_at": lease.started_at,

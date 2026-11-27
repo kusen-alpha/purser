@@ -63,11 +63,11 @@ async def test_acquire_rolls_back_slot_on_coordination_failure(make_pool):
     deadline = time.monotonic() + 2.0
     res = await pool.get(rid)
     while (
-        res is None or res.concurrency.used_slots != 0 or res.state is not ResourceState.IDLE
+        res is None or res.slots.used_slots != 0 or res.state is not ResourceState.IDLE
     ) and time.monotonic() < deadline:
         await asyncio.sleep(0.01)
         res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     assert res.state is ResourceState.IDLE
     assert await pool._coordination.active(pool.name) == []
 
@@ -81,13 +81,13 @@ async def test_release_after_coordination_loss_waits_for_reconcile(make_pool):
     # may already belong to someone else in another instance.
     assert await pool.release(lease) is True
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 1
+    assert res is not None and res.slots.used_slots == 1
     # A repeated release is idempotent rather than an exception.
     assert await pool.release(lease) is True
     # The restart path reconciles the orphaned slot.
     await pool._reconcile_leases()
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     assert res.state is ResourceState.IDLE
 
 
@@ -97,13 +97,13 @@ async def test_concurrent_acquire_release_no_conflicts(make_pool):
 
     async def worker(i: int) -> bool:
         async with pool.lease(AcquireRequest(consumer=f"c{i}")) as lease:
-            assert lease.resource_id == rid
+            assert lease.rid == rid
             return True
 
     results = await asyncio.gather(*(worker(i) for i in range(15)))
     assert all(results)
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     assert res.state is ResourceState.IDLE
     assert await pool._coordination.active(pool.name) == []
 
@@ -129,7 +129,7 @@ async def test_force_revoke_races_release(make_pool):
 
     await asyncio.gather(revoke(), release())
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     assert await pool._coordination.active(pool.name) == []
 
 
@@ -139,7 +139,7 @@ async def test_acquire_many_atomic_rollback_no_leak(make_pool):
     with pytest.raises(PoolExhausted):
         await pool.acquire_many(3, mode="atomic", timeout=0.1)
     resources = await pool.query()
-    assert all(r.concurrency.used_slots == 0 for r in resources)
+    assert all(r.slots.used_slots == 0 for r in resources)
     assert await pool._coordination.active(pool.name) == []
 
 
@@ -162,7 +162,7 @@ async def test_waiters_never_double_issue(make_pool):
     await asyncio.sleep(0.2)
     assert len(held) == 1
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 1
+    assert res is not None and res.slots.used_slots == 1
 
     # Each release wakes exactly one waiter; slots never exceed the capacity.
     for expected in (2, 3):
@@ -170,7 +170,7 @@ async def test_waiters_never_double_issue(make_pool):
         await asyncio.sleep(0.2)
         assert len(held) == expected
         res = await pool.get(rid)
-        assert res is not None and res.concurrency.used_slots == 1
+        assert res is not None and res.slots.used_slots == 1
     await pool.release(held[-1])
     await asyncio.gather(*tasks)
 
@@ -181,7 +181,7 @@ async def test_acquire_zero_slots_rejected(make_pool):
     with pytest.raises(ConfigError):
         await pool.acquire(AcquireRequest(slots=0))
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
 
 
 async def test_import_fail_fast_stops_cleanly(make_pool):
@@ -210,7 +210,7 @@ async def test_restart_held_lease_reconciled(tmp_path, storage_kind, coordinatio
     await ps1.start()
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    assert lease.resource_id == rid
+    assert lease.rid == rid
     await ps1.close()
 
     ps2 = _make_sqlite_purser(path, coordination_kind)
@@ -219,10 +219,10 @@ async def test_restart_held_lease_reconciled(tmp_path, storage_kind, coordinatio
         await pool2.start()  # reconciliation
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.IDLE
-        assert res.concurrency.used_slots == 0
+        assert res.slots.used_slots == 0
         assert res.payload == {"host": "127.0.0.1", "port": 8000}
         again = await pool2.acquire(AcquireRequest(consumer="c"))
-        assert again.resource_id == rid
+        assert again.rid == rid
         await pool2.release(again)
     finally:
         await ps2.close()
@@ -296,7 +296,7 @@ async def test_restart_draining_lost_lease_archives(tmp_path, storage_kind, coor
         await pool2.start()  # reconciliation must archive the orphaned drain
         res = await pool2.get(rid)
         assert res is not None and res.state is ResourceState.ARCHIVED
-        assert res.concurrency.used_slots == 0
+        assert res.slots.used_slots == 0
     finally:
         await ps2.close()
 
@@ -326,7 +326,7 @@ async def test_restart_quarantine_preserved(tmp_path, storage_kind, coordination
     ps1 = _make_sqlite_purser(path, coordination_kind)
     pool = ps1.create_pool("px", "fakecheck")
     [rid] = await seed(pool, n=1)
-    await pool._on_validation_fail(rid, "flaky", operator="system")
+    await pool._validation.on_failure(rid, "flaky", operator="system")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.QUARANTINED
     until = res.meta["quarantine_until"]

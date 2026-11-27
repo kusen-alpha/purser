@@ -124,7 +124,7 @@ def test_bundle_fairness_validation(kwargs, message):
 
 
 def test_bundle_lease_member_and_ids():
-    lease = SimpleNamespace(token="t-1", resource_id="r-1")
+    lease = SimpleNamespace(token="t-1", rid="r-1")
     bundle = BundleLease(bundle_id="b-1", consumer=None, members={"pool": lease})
     assert bundle.member("pool") is lease
     assert bundle.ids() == {"pool": "r-1"}
@@ -144,8 +144,8 @@ def test_bundle_lease_member_and_ids():
             "requires from_field",
         ),
         (
-            {"slots": [{"pool": "a", "resource_id": 5}]},
-            "resource_id must be a string",
+            {"slots": [{"pool": "a", "rid": 5}]},
+            "rid must be a string",
         ),
         ({"slots": [{"pool": "a"}], "mode": "greedy"}, "mode must be"),
         ({"slots": [{"pool": "a"}], "order": "random"}, "order must be"),
@@ -164,7 +164,7 @@ def test_bundle_request_from_dict_builds_full_request():
             "slots": [
                 {
                     "pool": "accounts",
-                    "resource_id": "a1",
+                    "rid": "a1",
                     "req": {"tags": ["eu"], "slots": 2},
                 },
                 {
@@ -194,7 +194,7 @@ def test_bundle_request_from_dict_builds_full_request():
     )
     assert req.timeout == 2.0 and req.strict is None
     first, second = req.slots
-    assert first.resource_id == "a1"
+    assert first.rid == "a1"
     assert first.req is not None and first.req.slots == 2
     assert second.match == MatchRule(
         anchor_pool="accounts", from_field="region", to_tag="region"
@@ -247,13 +247,13 @@ async def test_each_slot_honours_its_own_request():
             BundleRequest(
                 slots=(
                     BundleSlot(pool="accounts", req=AcquireRequest()),
-                    BundleSlot(pool="proxies", resource_id="p2"),
+                    BundleSlot(pool="proxies", rid="p2"),
                 ),
                 consumer="w1",
                 order="declared",
             )
         )
-        assert bundle.members["proxies"].resource_id == "p2"
+        assert bundle.members["proxies"].rid == "p2"
         await ps.release_bundle(bundle)
         assert (await proxies.get("p2")).state is ResourceState.IDLE
     finally:
@@ -268,7 +268,7 @@ async def test_two_phase_explicit_bundle_id_keeps_marker():
     try:
         bundle = await ps.acquire_bundle(_pair(bundle_id="two-phase-1"))
         assert bundle.bundle_id == "two-phase-1"
-        store = await ps._store()
+        store = await ps._bundle_service.ensure_store()
         marker = await store.get("two-phase-1")
         assert marker is not None and marker.status == "committed"
         await ps.release_bundle(bundle)
@@ -339,8 +339,8 @@ async def test_scarce_first_order_emits_match_anchor_first():
         )
         assert list(bundle.members) == ["accounts", "proxies"]
         anchor = bundle.members["accounts"]
-        proxy = await proxies.get(bundle.members["proxies"].resource_id)
-        region = (await accounts.get(anchor.resource_id)).payload["region"]
+        proxy = await proxies.get(bundle.members["proxies"].rid)
+        region = (await accounts.get(anchor.rid)).payload["region"]
         assert proxy is not None and f"region:{region}" in proxy.tags
         await ps.release_bundle(bundle)
     finally:
@@ -395,7 +395,7 @@ async def test_match_missing_field_fails_and_rolls_back():
             )
         await asyncio.sleep(0)
         for rid in ("a1", "a2"):
-            assert (await accounts.get(rid)).concurrency.used_slots == 0
+            assert (await accounts.get(rid)).slots.used_slots == 0
     finally:
         await ps.close()
 
@@ -407,7 +407,7 @@ async def test_match_reads_payload_fields():
         bundle = await ps.acquire_bundle(
             BundleRequest(
                 slots=(
-                    BundleSlot(pool="accounts", resource_id="a1"),
+                    BundleSlot(pool="accounts", rid="a1"),
                     BundleSlot(
                         pool="proxies",
                         match=MatchRule(
@@ -421,7 +421,7 @@ async def test_match_reads_payload_fields():
                 order="declared",
             )
         )
-        assert bundle.members["proxies"].resource_id == "p1"
+        assert bundle.members["proxies"].rid == "p1"
         await ps.release_bundle(bundle)
     finally:
         await ps.close()
@@ -439,7 +439,7 @@ async def test_match_reads_typed_attributes():
         bundle = await ps.acquire_bundle(
             BundleRequest(
                 slots=(
-                    BundleSlot(pool="accounts", resource_id="a1"),
+                    BundleSlot(pool="accounts", rid="a1"),
                     BundleSlot(
                         pool="proxies",
                         match=MatchRule(
@@ -451,7 +451,7 @@ async def test_match_reads_typed_attributes():
                 order="declared",
             )
         )
-        assert bundle.members["proxies"].resource_id == "a1"
+        assert bundle.members["proxies"].rid == "a1"
         await ps.release_bundle(bundle)
     finally:
         await ps.close()
@@ -479,7 +479,7 @@ async def test_cancel_during_acquire_releases_earlier_members():
             await task
         assert ps._bundles == {}
         for rid in ("a1", "a2"):
-            assert (await accounts.get(rid)).concurrency.used_slots == 0
+            assert (await accounts.get(rid)).slots.used_slots == 0
     finally:
         for lease in held:
             await proxies.release(lease)
@@ -610,7 +610,7 @@ async def test_bundle_gc_without_store_is_a_noop():
 
 async def test_bundle_gc_skips_unknown_pools_and_logs_revoke_failures(caplog):
     ps, _accounts, _proxies = await _harness(bundle_mode="two_phase")
-    store = await ps._store()
+    store = await ps._bundle_service.ensure_store()
     bid = "bundle-broken"
     await store.admit(bid, "w1", ("accounts",), 60.0)
     await store.begin_members(bid, 60.0)
@@ -635,7 +635,7 @@ async def test_bundle_gc_skips_unknown_pools_and_logs_revoke_failures(caplog):
 
 async def test_bundle_gc_prunes_committed_marker_with_dead_member():
     ps, accounts, _proxies = await _harness(bundle_mode="two_phase")
-    store = await ps._store()
+    store = await ps._bundle_service.ensure_store()
     bid = "bundle-orphan"
     await store.admit(bid, "w1", ("ghost",), 60.0)
     await store.begin_members(bid, 60.0)
@@ -651,7 +651,7 @@ async def test_bundle_gc_prunes_committed_marker_with_dead_member():
         assert report["pruned"] == 1 and report["revived"] == 0
         assert await store.get(bid) is None
         # The live pool is untouched.
-        assert (await accounts.get("a1")).concurrency.used_slots == 0
+        assert (await accounts.get("a1")).slots.used_slots == 0
     finally:
         await ps.close()
 

@@ -1,6 +1,6 @@
 # 安全模型
 
-Purser 的安全边界由三部分组成：**谁能调用**（服务认证）、**数据落盘时怎么保护**（字段加密）、**出了问题怎么证明**（审计）。它不提供用户体系、租户隔离或内置 TLS；这些要么由部署层承担，要么由调用方按本页的约束自行补齐。
+Purser 的安全边界由三部分组成：**谁能调用**（服务认证）、**数据落盘时如何保护**（字段加密）、**出了问题如何证明**（审计）。它不提供用户体系、租户隔离或内置 TLS；这些要么由部署层承担，要么由调用方按本页的约束自行补齐。
 
 ## 信任边界
 
@@ -63,8 +63,8 @@ curl -H "Authorization: Bearer $PURSER_READONLY_KEY" \
 
 ```python
 pool = ps.create_pool(
-    "accounts",
-    "account",
+    name="accounts",
+    kind="account",
     secret_fields=("password", "cookie"),
 )
 ```
@@ -117,7 +117,7 @@ ps = Purser(
 ## 后端与 IPC
 
 - MySQL / Redis 的连接串通常包含口令：用环境变量或密钥管理服务注入，不要提交到版本库，也不要在命令行历史里留下明文。
-- 协调 Redis 必须按持久化组件部署（AOF）。丢失在途租约不仅是可用性问题，还会让同一资源被重复并发使用；语义见[数据平面](../design/data-planes.md#redis-persistence)。
+- 协调 Redis 必须按持久化组件部署（AOF）。丢失在途租约不仅是可用性问题，还会让同一资源被重复并发使用。
 - 同进程内的两个 `Purser` 不能共享存储、协调或适配器实例；库会在装配时抛 `IsolationConflict`。`PURSER_ALLOW_SHARED_BACKENDS=1` 只用于模拟多主机的测试脚手架，不是安全开关。
 - `LocalScheduler` 的 IPC 使用随机 `authkey`；Windows 走命名管道，POSIX 走临时目录下的 Unix socket。能读到 `PURSER_LOCAL_SCHEDULER` 环境变量的同用户进程可以连接它，因此不要把它注入到不可信子进程。
 

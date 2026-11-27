@@ -20,11 +20,11 @@ async def test_lease_lost_unregisters_from_manager(make_pool):
     [rid] = await seed(pool, n=1)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
     assert pool._leases.active_count() == 1
-    await pool._on_lease_lost(lease)
+    await pool._lease.on_lost(lease)
     assert pool._leases.active_count() == 0  # no lingering tracked lease
     await pool.release(lease)
     again = await pool.acquire(AcquireRequest(consumer="c"))
-    assert again.resource_id == rid
+    assert again.rid == rid
     await pool.release(again)
 
 
@@ -36,7 +36,7 @@ async def test_force_revoke_draining_archives(make_pool):
     await pool.admin.force_revoke(rid, operator="ops", reason="kick-drain")
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.ARCHIVED
-    assert res.concurrency.used_slots == 0
+    assert res.slots.used_slots == 0
 
 
 async def test_query_empty_tags_equals_all(make_pool):
@@ -127,6 +127,6 @@ async def test_same_purser_restart_cycle():
     await ps.close()
     await ps.start()
     again = await pool.acquire(AcquireRequest(consumer="c"))
-    assert again.resource_id == rid
+    assert again.rid == rid
     await pool.release(again)
     await ps.close()

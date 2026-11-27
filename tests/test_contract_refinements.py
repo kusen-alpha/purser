@@ -170,7 +170,7 @@ def test_remote_error_types_survive_ipc():
                     client.acquire(
                         "p",
                         consumer="c2",
-                        resource_id="r1",
+                        rid="r1",
                         timeout=0.1,
                     )
                 assert info.value.retryable is True

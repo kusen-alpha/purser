@@ -77,7 +77,7 @@ class ReleaseService:
             expires_at = min(expires_at, lease.started_at + self.ctx.cfg.max_lease_duration)
         try:
             ok = await self.ctx.coordination.renew_lease(
-                self.ctx.name, lease.resource_id, lease.token, expires_at
+                self.ctx.name, lease.rid, lease.token, expires_at
             )
         except BackendUnavailable as exc:
             if not self._degraded("renew_lease", exc):
@@ -112,7 +112,7 @@ class ReleaseService:
             return await self._release_stateless(
                 lease, outcome, used, latency_ms=latency_ms
             )
-        before = await self.ctx.storage.get(self.ctx.name, lease.resource_id)
+        before = await self.ctx.storage.get(self.ctx.name, lease.rid)
         before_state = before.state if before is not None else None
         if before is not None:
             try:
@@ -141,14 +141,14 @@ class ReleaseService:
             self.ctx.leases.unregister(lease.token)
             if lease.consumer:
                 self.consumer_holds.get(lease.consumer, set()).discard(
-                    lease.resource_id
+                    lease.rid
                 )
             self.ctx.purser.metrics.inc(f"pool.{self.ctx.name}.release_total")
             await self.serve_waiters()
             return True
         try:
             result = await self.ctx.storage.transition_release(
-                self.ctx.name, lease.resource_id, lease.slots
+                self.ctx.name, lease.rid, lease.slots
             )
         except BaseException:
             # The token is already gone from coordination.  Put it back when
@@ -169,21 +169,21 @@ class ReleaseService:
             # in ``active()`` that the storage plane no longer backs.
             await self._restore_release_claim(lease, removed)
             raise LeaseConflict(
-                f"token {lease.token} could not return {lease.resource_id} slots"
+                f"token {lease.token} could not return {lease.rid} slots"
             )
         self.ctx.leases.unregister(lease.token)
         if lease.consumer:
-            self.consumer_holds.get(lease.consumer, set()).discard(lease.resource_id)
+            self.consumer_holds.get(lease.consumer, set()).discard(lease.rid)
         if before_state is not None and result.state is not None and before_state != result.state:
             await self.state.notify_state_changed(
-                lease.resource_id, before_state, result.state, "release"
+                lease.rid, before_state, result.state, "release"
             )
         outcome = outcome or lease.outcome or UsageOutcome.OK
         lease.outcome = outcome
         self.ctx.purser.bus.publish(
             "lease_released",
             self.ctx.name,
-            rid=lease.resource_id,
+            rid=lease.rid,
             data={
                 "outcome": outcome.value,
                 "consumer": lease.consumer,
@@ -191,13 +191,13 @@ class ReleaseService:
             trace_id=lease.trace_id,
         )
         await self.usage.apply_outcome(
-            lease.resource_id, outcome, used, lease, latency_ms=latency_ms
+            lease.rid, outcome, used, lease, latency_ms=latency_ms
         )
         self.ctx.purser.usage.record(
             ts=_now(),
             pool=self.ctx.name,
             kind=self.ctx.cfg.kind,
-            rid=lease.resource_id,
+            rid=lease.rid,
             consumer=lease.consumer,
             target=lease.target,
             outcome=outcome.value,
@@ -219,7 +219,7 @@ class ReleaseService:
         """Finish a stateless borrow: feedback only, no slot to return."""
 
         self._stateless_leases.pop(lease.token, None)
-        resource = await self.ctx.storage.get(self.ctx.name, lease.resource_id)
+        resource = await self.ctx.storage.get(self.ctx.name, lease.rid)
         if resource is not None:
             try:
                 await self.ctx.adapter.before_release(resource, lease)
@@ -230,7 +230,7 @@ class ReleaseService:
         self.ctx.purser.bus.publish(
             "lease_released",
             self.ctx.name,
-            rid=lease.resource_id,
+            rid=lease.rid,
             data={
                 "outcome": outcome.value,
                 "consumer": lease.consumer,
@@ -239,13 +239,13 @@ class ReleaseService:
             trace_id=lease.trace_id,
         )
         await self.usage.apply_outcome(
-            lease.resource_id, outcome, used, lease, latency_ms=latency_ms
+            lease.rid, outcome, used, lease, latency_ms=latency_ms
         )
         self.ctx.purser.usage.record(
             ts=_now(),
             pool=self.ctx.name,
             kind=self.ctx.cfg.kind,
-            rid=lease.resource_id,
+            rid=lease.rid,
             consumer=lease.consumer,
             target=lease.target,
             outcome=outcome.value,
@@ -260,19 +260,19 @@ class ReleaseService:
         """Put a failed release's token back without resurrecting a freed slot."""
 
         try:
-            current = await self.ctx.storage.get(self.ctx.name, lease.resource_id)
+            current = await self.ctx.storage.get(self.ctx.name, lease.rid)
         except Exception:
             # Storage state is unknown: keep the coordination claim rather than
             # letting another instance treat a possibly-live slot as free.
             logger.exception(
                 "could not verify %s after failed release; restoring token",
-                lease.resource_id,
+                lease.rid,
             )
             await self.ctx.coordination.register_lease(self.ctx.name, removed)
             return
         if (
             current is not None
-            and current.concurrency.used_slots >= lease.slots
+            and current.slots.used_slots >= lease.slots
         ):
             await self.ctx.coordination.register_lease(self.ctx.name, removed)
 
@@ -320,7 +320,7 @@ class ReleaseService:
             )
         self.ctx.leases.unregister(lease.token)
         if lease.consumer:
-            self.consumer_holds.get(lease.consumer, set()).discard(lease.resource_id)
+            self.consumer_holds.get(lease.consumer, set()).discard(lease.rid)
         if removed is None:
             # The token was already gone (revoked elsewhere or Redis TTL fired).
             # Its slots may now belong to a fresh holder, so never decrement
@@ -328,7 +328,7 @@ class ReleaseService:
             self.ctx.purser.bus.publish(
                 "lease_lost",
                 self.ctx.name,
-                rid=lease.resource_id,
+                rid=lease.rid,
                 data={"reason": "token already gone"},
                 trace_id=lease.trace_id,
             )
@@ -336,13 +336,13 @@ class ReleaseService:
             await self.serve_waiters()
             return
         result = await self.ctx.storage.transition_release(
-            self.ctx.name, lease.resource_id, lease.slots
+            self.ctx.name, lease.rid, lease.slots
         )
         if result.ok:
             self.ctx.purser.bus.publish(
                 "lease_expired",
                 self.ctx.name,
-                rid=lease.resource_id,
+                rid=lease.rid,
                 data={"consumer": lease.consumer},
                 trace_id=lease.trace_id,
             )
@@ -350,7 +350,7 @@ class ReleaseService:
             self.ctx.purser.bus.publish(
                 "lease_lost",
                 self.ctx.name,
-                rid=lease.resource_id,
+                rid=lease.rid,
                 data={},
                 trace_id=lease.trace_id,
             )
@@ -371,21 +371,21 @@ class ReleaseService:
             )
         self.ctx.leases.unregister(lease.token)
         if lease.consumer:
-            self.consumer_holds.get(lease.consumer, set()).discard(lease.resource_id)
+            self.consumer_holds.get(lease.consumer, set()).discard(lease.rid)
         if removed is not None:
             await self.ctx.storage.transition_release(
-                self.ctx.name, lease.resource_id, lease.slots
+                self.ctx.name, lease.rid, lease.slots
             )
         self.ctx.purser.bus.publish(
             "lease_lost",
             self.ctx.name,
-            rid=lease.resource_id,
+            rid=lease.rid,
             data={"reason": "heartbeat rejected"},
             trace_id=lease.trace_id,
         )
         self.ctx.purser.metrics.inc(f"pool.{self.ctx.name}.lease_lost_total")
         try:
-            resource = await self.ctx.storage.get(self.ctx.name, lease.resource_id)
+            resource = await self.ctx.storage.get(self.ctx.name, lease.rid)
             if resource is not None:
                 await self.ctx.adapter.on_lease_lost(resource, lease)
         except Exception as exc:

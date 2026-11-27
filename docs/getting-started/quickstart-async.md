@@ -1,6 +1,6 @@
 # 嵌入式快速开始
 
-嵌入式模式适合单进程采集任务：`Purser` 直接管理池、租约与后台维护任务，不启动 HTTP 服务。
+嵌入式模式适合单进程应用：`Purser` 直接管理池、租约与后台维护任务，不启动 HTTP 服务。
 
 ## 1. 定义资源适配器
 
@@ -12,7 +12,7 @@ from purser import HealthReport, Purser, Resource, ResourceAdapter
 
 class LocalAdapter(ResourceAdapter):
     kind = "local"
-    default_concurrency = 2
+    default_slots = 2
 
     async def generate(self, spec):
         return Resource(
@@ -30,14 +30,14 @@ class LocalAdapter(ResourceAdapter):
 
 ```python
 ps = Purser(maintenance_enabled=False)
-ps.register_adapter(LocalAdapter())
-pool = ps.create_pool("demo", "local")
+ps.register_adapter(adapter=LocalAdapter())
+pool = ps.create_pool(name="demo", kind="local")
 
 await pool.import_resources(
-    [
+    records=[
         {"id": "r1", "tags": ["US"]},
         {"id": "r2", "tags": ["EU"]},
-    ],
+    ]
 )
 ```
 
@@ -52,8 +52,8 @@ await pool.import_resources(
 ```python
 from purser import AcquireRequest, UsageOutcome
 
-async with pool.lease(AcquireRequest(consumer="crawler", tags=["US"])) as lease:
-    print(lease.resource_id, lease.payload)
+async with pool.lease(req=AcquireRequest(consumer="crawler", tags=["US"])) as lease:
+    print(lease.rid, lease.payload)
     lease.outcome = UsageOutcome.OK
 
 await ps.close()
@@ -62,7 +62,7 @@ await ps.close()
 `pool.lease()` 退出时自动按 `lease.outcome` 归还。需要显式控制时使用手动路径：
 
 ```python
-lease = await pool.acquire(AcquireRequest(consumer="crawler-b"))
+lease = await pool.acquire(req=AcquireRequest(consumer="crawler-b"))
 try:
     ...
 finally:

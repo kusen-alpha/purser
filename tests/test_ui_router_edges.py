@@ -37,7 +37,7 @@ def _setup(make_client, pools=("p",), *, records=None, **cfg):
 
 def _acquire(client, rid, *, pool="p", **body):
     resp = client.post(
-        f"/pools/{pool}/leases", json={"resource_id": rid, **body}, headers=ADMIN
+        f"/pools/{pool}/leases", json={"rid": rid, **body}, headers=ADMIN
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["leases"][0]
@@ -401,12 +401,12 @@ def test_bundle_lease_validation_and_replay(make_client):
     assert unsatisfiable.status_code == 409
 
     head = {**ADMIN, "Idempotency-Key": "bundle-1"}
-    body = {"bundle": {"slots": [{"pool": "p", "resource_id": "r-0"}], "consumer": "w1"}}
+    body = {"bundle": {"slots": [{"pool": "p", "rid": "r-0"}], "consumer": "w1"}}
     ok = client.post(url, json=body, headers=head)
     assert ok.status_code == 200, ok.text
     bundle = ok.json()
     assert bundle["consumer"] == "w1"
-    assert bundle["members"]["p"]["resource_id"] == "r-0"
+    assert bundle["members"]["p"]["rid"] == "r-0"
 
     replayed = client.post(url, json=body, headers=head)
     assert replayed.json()["replayed"] is True
@@ -418,12 +418,12 @@ def test_lease_idempotency_and_conflict(make_client):
     url = "/pools/p/leases"
     head = {**ADMIN, "Idempotency-Key": "lease-1"}
 
-    first = client.post(url, json={"resource_id": "r-0"}, headers=head)
+    first = client.post(url, json={"rid": "r-0"}, headers=head)
     assert first.status_code == 200, first.text
-    replayed = client.post(url, json={"resource_id": "r-0"}, headers=head)
+    replayed = client.post(url, json={"rid": "r-0"}, headers=head)
     assert replayed.json()["replayed"] is True
 
-    occupied = client.post(url, json={"resource_id": "r-0"}, headers=ADMIN)
+    occupied = client.post(url, json={"rid": "r-0"}, headers=ADMIN)
     assert occupied.status_code == 409
 
 

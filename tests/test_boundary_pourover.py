@@ -47,7 +47,7 @@ async def test_ignore_cooldown_bypasses_consumer_only(make_pool):
     bypassed = await pool.acquire(
         AcquireRequest(consumer="c", ignore_cooldown=True, timeout=2.0)
     )
-    assert bypassed.resource_id == rid
+    assert bypassed.rid == rid
     await pool.release(bypassed)
 
 

@@ -26,10 +26,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from purser.core.resource import (
     AcquireRequest,
-    Concurrency,
     Lease,
     Quota,
     Resource,
+    Slots,
     UsageOutcome,
 )
 from purser.core.state import (
@@ -38,7 +38,6 @@ from purser.core.state import (
 from purser.errors import (
     ConfigError,
 )
-from purser.results import ImportReport as ImportReport
 
 if TYPE_CHECKING:
     from purser.pool.pool import ResourcePool
@@ -52,7 +51,7 @@ _T = TypeVar("_T")
 WAITER_POLL_INTERVAL = 0.1
 
 BACKUP_FORMAT = "purser-backup"
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
 
 # Operational states cannot survive a restore: leases are not migrated, so
 # anything that implies occupancy comes back as IDLE and reconciles normally.
@@ -154,7 +153,7 @@ def _apply_import_fields(resource: Resource, data: dict[str, Any]) -> None:
         value = data["max_slots"]
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ConfigError("max_slots must be an integer > 0")
-        resource.concurrency = Concurrency(max_slots=value)
+        resource.slots = Slots(max_slots=value)
     if "usage_quota" in data:
         resource.usage_quota = _optional_int(data["usage_quota"], "usage_quota")
     if "quota_limit" in data:

@@ -26,8 +26,8 @@ stateDiagram-v2
     FULL --> IDLE : force_revoke / 租约超时回收(全部归还)
     ACTIVE --> LOST : 保留事件(无自动触发)
     FULL --> LOST : 保留事件(无自动触发)
-    ACTIVE --> BANNED : 使用中被风控
-    FULL --> BANNED : 使用中被风控
+    ACTIVE --> BANNED : 使用中触发封禁
+    FULL --> BANNED : 使用中触发封禁
 
     SUSPENDED --> IDLE : resume(直接放行)
     SUSPENDED --> VALIDATING : resume(先重验)

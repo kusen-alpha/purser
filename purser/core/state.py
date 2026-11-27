@@ -240,10 +240,6 @@ class StateMachine:
     """Declarative executor over :data:`TRANSITIONS`."""
 
     @classmethod
-    def allowed_events(cls, state: ResourceState) -> tuple[Event, ...]:
-        return tuple(TRANSITIONS.get(state, {}))
-
-    @classmethod
     def can_trigger(cls, state: ResourceState, event: Event) -> bool:
         return event in TRANSITIONS.get(state, {})
 

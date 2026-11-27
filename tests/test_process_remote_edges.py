@@ -12,8 +12,9 @@ from facade_adapters import FacadeAdapter, NeedsArgsAdapter
 from purser import AdapterSpec, ConfigError, ProcessPurser, ResourceState
 from purser.errors import PoolNotFound, ResourceNotFound
 from purser.local import LocalScheduler, SchedulerProtocolError
+from purser.local.client import resolve_address
 from purser.local.protocol import default_address
-from purser.process import _as_spec, _require_zero_arg, _resolve_address
+from purser.process import _as_spec, _require_zero_arg
 from purser.remote import RemotePool, connect
 
 # -- adapter-spec coercion -------------------------------------------------
@@ -79,22 +80,22 @@ def test_require_zero_arg_checks_keyword_only_parameters():
     assert _require_zero_arg(FacadeAdapter()) is FacadeAdapter
 
 
-def test_process_resolve_address_forms_and_misuse(monkeypatch):
+def test_shared_resolve_address_forms_and_misuse(monkeypatch):
     from purser.local.protocol import ENV_VAR
 
     address = default_address()
-    assert _resolve_address(address) is address
-    assert _resolve_address(address.to_dict()) == address
-    assert _resolve_address(address.to_env()) == address
+    assert resolve_address(address) is address
+    assert resolve_address(address.to_dict()) == address
+    assert resolve_address(address.to_env()) == address
 
     monkeypatch.setenv(ENV_VAR, address.to_env())
-    assert _resolve_address(None) == address
+    assert resolve_address(None) == address
 
     monkeypatch.delenv(ENV_VAR)
     with pytest.raises(ConfigError, match="no scheduler address"):
-        _resolve_address(None)
+        resolve_address(None)
     with pytest.raises(TypeError):
-        _resolve_address(42)
+        resolve_address(42)
 
 
 # -- ProcessPurser attach validation --------------------------------------
@@ -256,7 +257,7 @@ async def test_connect_with_a_shared_client_keeps_it_open():
         assert pool.address == sched.address
         assert await pool.stats() is not None
         await pool.aclose()
-        assert client.health()["protocol"] == 1
+        assert client.health()["pools"] == ["p"]
 
         # Address mappings and env strings build their own client.
         async with connect("p", sched.address.to_dict()) as from_dict:

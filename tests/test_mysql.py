@@ -21,9 +21,9 @@ from purser.backends.mysql import MySqlStorage
 from purser.config import PoolConfig
 from purser.core.resource import (
     AcquireRequest,
-    Concurrency,
     HealthStats,
     Resource,
+    Slots,
 )
 from purser.core.state import ResourceState
 
@@ -41,7 +41,7 @@ def make_resource(rid: str, *, tags=(), max_slots: int = 1, payload=None) -> Res
         payload=payload if payload is not None else {"host": "127.0.0.1", "port": 8080},
         state=ResourceState.IDLE,
         tags=frozenset(tags),
-        concurrency=Concurrency(max_slots=max_slots),
+        slots=Slots(max_slots=max_slots),
         health=HealthStats(score=0.9, samples=3),
         meta={"created_at": 1234.0},
     )
@@ -79,7 +79,7 @@ async def test_contract_suite():
         # Slot transitions with no oversell.
         assert (await store.transition_acquire(pool, "a", 1)).ok
         res = await store.get(pool, "a")
-        assert res.state is ResourceState.FULL and res.concurrency.used_slots == 1
+        assert res.state is ResourceState.FULL and res.slots.used_slots == 1
         assert not (await store.transition_acquire(pool, "a", 1)).ok
         result = await store.transition_release(pool, "a", 1)
         assert result.ok and result.state is ResourceState.IDLE
@@ -102,7 +102,7 @@ async def test_contract_suite():
         )
         assert await store.reset_usage(pool, "shared") is True
         res = await store.get(pool, "shared")
-        assert res.state is ResourceState.IDLE and res.concurrency.used_slots == 0
+        assert res.state is ResourceState.IDLE and res.slots.used_slots == 0
 
         # Query paging + AND tags.
         for i in range(4):
@@ -148,7 +148,7 @@ async def test_persists_across_restart():
     try:
         res = await s2.get(pool, "a")
         assert res is not None and res.state is ResourceState.FULL
-        assert res.version == 2 and res.concurrency.used_slots == 1
+        assert res.version == 2 and res.slots.used_slots == 1
         result = await s2.transition_release(pool, "a", 1)
         assert result.ok and result.state is ResourceState.IDLE
         assert {r.id for r in await s2.query(pool, tags=frozenset({"us"}))} == {"a"}
@@ -174,7 +174,7 @@ async def test_purser_end_to_end_restart_reconcile(tmp_path):
         [{"id": "r1", "host": "10.0.0.1", "port": 8080}], import_validate="on_import"
     )
     lease = await p1.acquire(AcquireRequest(consumer="c"))
-    assert lease.resource_id == "r1"
+    assert lease.rid == "r1"
     await ps1.close()
 
     ps2 = Purser(
@@ -190,10 +190,10 @@ async def test_purser_end_to_end_restart_reconcile(tmp_path):
         await p2.start()  # reconciliation returns orphaned slots to IDLE
         res = await p2.get("r1")
         assert res is not None and res.state is ResourceState.IDLE
-        assert res.concurrency.used_slots == 0
+        assert res.slots.used_slots == 0
         assert res.payload["host"] == "10.0.0.1"
         again = await p2.acquire(AcquireRequest(consumer="c"))
-        assert again.resource_id == "r1"
+        assert again.rid == "r1"
         await p2.release(again)
         assert len(ps2.audit) >= 3
         assert ps2.audit.verify()

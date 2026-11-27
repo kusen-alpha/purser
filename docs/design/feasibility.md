@@ -35,7 +35,7 @@
 - 单 loop 表示 Python 回调在一个线程执行，**不表示整次 API 调用串行**。协程会在 `await` 处交错。
 - 共享后端多进程仍没有任何组合达到完整全局语义（0/6）；但 SQLite/MySQL + Redis 的核心租约语义（全局容量、可见性、撤销、陈旧归还、启动对账、TTL 回收、双进程竞争、通用/定向等待唤醒）已通过真进程验收，剩余缺口集中在推送通知（当前为轮询）、去重、维护接管与报表/事件作用域。
 - 中心调度服务（`purser serve`）单副本时，六种存储/协调组合从客户端视角均可共享，已用真实 uvicorn × 六组合验收（6/6）；共享边界移至服务进程。该结论不覆盖多副本、HA/leader election 或生产级运维，详见 §1.5.1。
-- 同机多进程/进程池另提供本地 IPC 调度（`purser.local`）：一个调度进程持有唯一 `SyncPurser`，worker 通过 `multiprocessing.connection`（Windows 命名管道 / POSIX UDS）以 JSON 协议接入，不经过 HTTP；数据面不按存储/协调后端分支，已用 `spawn` Process、`Pool`、`ProcessPoolExecutor`、worker 硬退出回收验收，并实测 memory/memory、SQLite + Redis、MySQL + Redis 三种组合，另三种组合未单独跑（§1.5.2）。该形态同样是单副本，多副本语义仍需共享后端。
+- 同机多进程/进程池另提供本地 IPC 调度（`purser.local`）：一个调度进程持有唯一 `SyncPurser`，worker 通过 `multiprocessing.connection`（Windows 命名管道 / POSIX UDS）以 JSON 协议接入，不经过 HTTP；数据面不按存储/协调后端分支，已用 `spawn` Process、`Pool`、`ProcessPoolExecutor`、worker 硬退出回收验收，并实测 memory/memory、SQLite + Redis、MySQL + Redis 三种组合，另三种组合未单独验证（§1.5.2）。该形态同样是单副本，多副本语义仍需共享后端。
 - 各进程独立创建 `Purser` 时，只有 SQLite/MySQL + Redis 能同时共享存储与协调；memory + Redis、SQLite/MySQL + memory 的同名池现由运行时守卫在第二个进程 `start()` 时抛 `IsolationConflict`，memory + memory 则本就是互不相交的独立集合（§1.5.3）。同一 durable 存储上的协调端身份另由存储内的 `pool_bindings` 持久固定，换协调类型或命名空间会在 `start()` 被拒绝；反方向（同一 Redis 命名空间被不同存储复用，含 memory 与 durable 的混合对）由 Redis 内的实时标记在重叠运行期间拒绝（§1.5.4）。
 - 独立后端六种组合均可设计，但只消除跨实例共享造成的部分问题。取消回滚、Redis 租约协议、同实例并发去重、生命周期等缺陷仍可能适用。
 - 推荐方向仍是**异步内核 + 显式同步门面**。先建立可信测试和基础租约协议，再验收同步完整适配及共享后端扩展。
@@ -156,7 +156,7 @@
 | 服务端组合 | 单副本可用 | 重启/切换后果 |
 | --- | --- | --- |
 | memory / memory | 是 | 重启即空；无持久化，不能做主备切换 |
-| memory / Redis | 是 | 主数据仍在服务内存；备副本接管拿不到资源，租约共享也补不回来 |
+| memory / Redis | 是 | 主数据仍在服务内存；备副本接管无法获取资源，租约共享也补不回来 |
 | SQLite / memory | 是 | 资源持久化；但备副本内存协调看不到在租租约，接管会按 V02 误清占用 |
 | SQLite / Redis | 是 | 可做共享后端的 active-passive；在飞等待者、本地去重与维护状态随活动进程丢失 |
 | MySQL / memory | 是 | 同 SQLite / memory |
@@ -166,7 +166,7 @@
 
 - **只验证了单副本。** 一旦运行第二个服务进程，就回到 §1.5 的共享后端语义：memory 组合不成立，SQLite/MySQL + Redis 仅核心租约语义成立；memory + Redis 与 SQLite/MySQL + memory 的第二个实例会在 `start()` 时被 §1.5.3 拒绝。HA/leader election、跨副本等待与去重不在本结论内。
 - **“API 可用”不等于生产就绪。** 服务级 TLS、限流、鉴权轮换、客户端断线重试与对账、故障切换演练仍未实现或未验收；当前幂等存储随 `redis_url` 落在 Redis，纯 memory/sqlite 组合下随进程丢失。
-- **客户端拿到的是网络租约。** 客户端崩溃后由服务端 TTL 回收，不依赖客户端心跳；但响应丢失后的重试必须带 `Idempotency-Key`，否则可能重复获取。
+- **客户端获取的是网络租约。** 客户端崩溃后由服务端 TTL 回收，不依赖客户端心跳；但响应丢失后的重试必须带 `Idempotency-Key`，否则可能重复获取。
 
 ### 1.5.2 本地 IPC 调度：同机多进程与进程池
 
@@ -181,7 +181,7 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 
 数据面语义与同步门面一致，并针对 IPC 做了闭合：
 
-- 获取、容量、等待、续租、释放全部在调度进程内完成；数据面不按后端分支，已实测 memory/memory、SQLite + Redis、MySQL + Redis 三种组合，另三种组合未单独跑。
+- 获取、容量、等待、续租、释放全部在调度进程内完成；数据面不按后端分支，已实测 memory/memory、SQLite + Redis、MySQL + Redis 三种组合，另三种组合未单独验证。
 - 幂等获取：同一 `idempotency_key` 返回同一 token 并置 `replayed=True`；进行中的同 key 请求合流，不重复占槽。
 - 幂等释放：token 墓碑（600 s）+ 服务端“token 已不存在即成功”的语义，与进程内 `release` 契约一致；`renew` 对失效 token 抛 `LeaseLostError`。
 - 断连回收：租约按连接登记所有权；worker 进程崩溃或连接关闭后，调度进程立即归还其租约，不等待 TTL，也不会被调度进程心跳永久续租。
@@ -217,7 +217,7 @@ HTTP 只用于 UI/远程管理，不应成为同机 worker 的数据面。同机
 - 同一进程内若先前 `close()` 未能删掉 Redis 标记，且标记的主机/PID 与当前进程一致，视为陈旧标记并接管；正常的同进程半共享仍由 §1.4.1 的守卫拒绝。
 - `PURSER_ALLOW_SHARED_BACKENDS=1` 跳过本守卫（夹具模拟多主机用），不会放宽 §1.4.1 的 PID/pickle 检查。
 - SQLite 旁路锁文件在释放后保留，避免“解锁后删除文件”与另一进程打开同名文件的竞态。
-- 旁路文件按 `(st_dev, st_ino)` 命名并放在数据库所在目录：同目录下的硬链接别名落到同一个锁文件，不能靠换路径各拿一把锁绕过守卫。跨目录硬链接因旁路文件本就在各自目录，仍不共用锁；跨主机网络文件系统的 `st_dev/st_ino` 也不保证一致——这两种情况仍是已知缺口。反向标记的存储身份同样取 inode，跨目录硬链接别名在 §1.5.4 会被拒绝；§1.4.1 的同进程身份仍按规范化路径比较，跨目录硬链接别名不在其覆盖内。
+- 旁路文件按 `(st_dev, st_ino)` 命名并放在数据库所在目录：同目录下的硬链接别名落到同一个锁文件，不能通过更换路径分别获取锁来绕过守卫。跨目录硬链接因旁路文件本就在各自目录，仍不共用锁；跨主机网络文件系统的 `st_dev/st_ino` 也不保证一致——这两种情况仍是已知缺口。反向标记的存储身份同样取 inode，跨目录硬链接别名在 §1.5.4 会被拒绝；§1.4.1 的同进程身份仍按规范化路径比较，跨目录硬链接别名不在其覆盖内。
 - 专项 [tests/test_cross_process_memory_guard.py](../../tests/test_cross_process_memory_guard.py) 共 9 项：真实 Redis 下同名池第二进程拒绝、关闭后允许、不同池名允许；SQLite 同名池拒绝/关闭后允许/不同池名允许/硬崩溃自动释放/豁免开关/同目录硬链接别名拒绝与关闭后允许；memory + memory 同名池互不影响；真实 MySQL 同名池拒绝与关闭后允许。无真实服务时后 3 项跳过。全量（含本专项）为 1042 passed / 40 skipped / 1 xfailed。
 
 ### 1.5.4 存储端与调度端的双向绑定
@@ -487,7 +487,7 @@ copy_used=1, core_used=0
 
 沿用原 P0-1～P0-5 编号便于追踪，但修正其根因及范围，并补入遗漏的基础问题。这里 P0 表示测试门禁失真或足以破坏租约核心保证的阻断项，不代表每一种部署都会触发全部问题。
 
-#### P0-1：现有测试会空跑，采样器还可能完全失效
+#### P0-1：现有测试可能空执行，采样器还可能完全失效
 
 - [多进程压力测试 worker](../../tests/test_multiprocess_stress.py#L33) 没有 `start()`；`NotStarted` 被 `PurserError` 分支吞掉。实测三个 worker 的成功次数为 `[0, 0, 0]`，测试仍通过。
 - 同文件在主线程创建 SQLite 连接、子线程采样使用，并吞掉采样异常：[采样器](../../tests/test_multiprocess_stress.py#L98)。实测有效采样 0 次，`ProgrammingError` 被吞 96 次。
@@ -503,7 +503,7 @@ copy_used=1, core_used=0
 
 当前对账**已经读取协调层**，把代码再改成“先读协调层全量租约”不能解决 memory 的不可见性。直接跳过对账又会损失单实例崩溃后的占用恢复。
 
-建议把“同一资源集合 + memory 协调”明确限定为单实例，并在需要强保证时使用完整实例存活期的独占机制或改用共享租约协议。仅拿到一把短暂启动锁，不代表其他工作实例不存在；其他实例不参与的锁也不能保护它们的获取与归还。若引入 owner、存活检测及数据库协调，则属于新的共享协调设计，不能称为现有 memory 模式已支持多实例。
+建议把“同一资源集合 + memory 协调”明确限定为单实例，并在需要强保证时使用完整实例存活期的独占机制或改用共享租约协议。仅获取到一把短暂启动锁，不代表其他工作实例不存在；其他实例不参与的锁也不能保护它们的获取与归还。若引入 owner、存活检测及数据库协调，则属于新的共享协调设计，不能称为现有 memory 模式已支持多实例。
 
 #### P0-3：通用等待不会被其他实例释放唤醒
 
@@ -559,7 +559,7 @@ used=2, live=3, max_slots=2
 
 | 问题 | 故障 / 交错方式 | 已观察结果 |
 | --- | --- | --- |
-| 部分注册 | 两次 HSET 后、SADD 前失败 | 存储补偿为 0，但租约 hash 残留且 `PTTL=-1`；可被定向查询拿到 |
+| 部分注册 | 两次 HSET 后、SADD 前失败 | 存储补偿为 0，但租约 hash 残留且 `PTTL=-1`；可被定向查询获取到 |
 | 删除非原子 | 先读取 raw，再分别删除记录和索引 | 不具备原子 pop 的唯一删除确认；需与重复归还及并发注册一起验证 |
 | 续租与删除竞争 | 续租读旧值，删除完成后再 HSET | `renewed=true`，资源 hash 又出现租约，但 token 索引与 active 集合已无记录 |
 | 短租约缩短整组 TTL | 先注册 600 秒长租约，再注册 1 秒短租约 | hash TTL 从约 604000ms 降为 5000ms；长租约未到期记录却消失 |
@@ -727,7 +727,7 @@ sum(消耗同一共享上游额度的容量分配) <= 该共享额度
 | V29 | 跨实例并发归还：两个实例各自释放同一资源的有效租约（MySQL） | **已修复**：MySQL `transition_release` 版本 CAS 失败原直接返回 `ok=False`，合法归还会被误报 `LeaseConflict`；现带抖动重试 10 次。SQLite 同步对齐为 10 次带抖动（V32）。双实例 × 6 线程 × 15 轮重复通过，修复前可稳定复现 |
 | V30 | 同步门面跨实例验收：容量/可见性/撤销/陈旧归还/启动对账/定向等待/通用等待轮询/硬崩溃 TTL 回收/双进程 12 轮竞争 | SQLite+Redis 与 MySQL+Redis 各 7 项全通过、无 xfail；V03 由 100 ms 轮询修复；Redis DB 15 测试前后为空，专项池通过 `delete_pool(force=True)` 清理 |
 | V31 | 同步门面静态分片验收：五形态 × 双 OS 进程，每进程独立分片、同一资源 id 并发持锁 | 五形态均通过分片内单槽容量、跨分片资源/租约不可见、释放归零；SQLite/MySQL 重启保留资源且占用 0，memory 重启为空；同一 SQLite 分片重叠实例重复占槽 xfail（V02/P0-2）；私有分片共用 Redis 池名会被启动对账污染（反例断言）；MySQL `static-*` 行与 Redis DB 15 清理后为空 |
-| V32 | 全量套件下 SQLite 跨实例并发归还 | 原 3 次、无抖动重试在 6 线程 × 15 轮满负载下偶发 `LeaseConflict`；对齐 MySQL 为 10 次带抖动后，专项 5/5 与全量 983 passed 复跑通过 |
+| V32 | 全量套件下 SQLite 跨实例并发归还 | 原 3 次、无抖动重试在 6 线程 × 15 轮满负载下偶发 `LeaseConflict`；对齐 MySQL 为 10 次带抖动后，专项 5/5 与全量 983 passed 复测通过 |
 | V33 | 中心调度服务六组合验收：真实 uvicorn 子进程分别以 memory/memory、memory/redis、sqlite/memory、sqlite/redis、mysql/memory、mysql/redis 启动，客户端只发 HTTP | 六组合各 1 项全部通过（6 passed，11.84 s）：`/service` 报告所选组合，建池/导入、`Idempotency-Key` 获取与重放同 token、容量满返回 409、第二客户端等待被释放唤醒、事件历史可查、释放后占用归零。结论仅限单副本；多副本回到 §1.5 的共享语义，且 API 可用不等于生产就绪 |
 
 ### 7.3 两个自包含的确定性复现
@@ -876,7 +876,7 @@ redis reconcile: used=2, live=3, max=2
 
 ### 7.4 同步门面性能基准
 
-运行方式（真实服务地址通过环境变量传入；未设置时只跑本地组合）：
+运行方式（真实服务地址通过环境变量传入；未设置时只验证本地组合）：
 
 ```bash
 PURSER_TEST_MYSQL_URL=mysql://root:@HOST:3306/purser_sync_acceptance \

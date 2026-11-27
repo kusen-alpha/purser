@@ -127,18 +127,18 @@ def test_coordination_write_failure_rolls_back_and_recovers(tmp_path):
         deadline = time.monotonic() + 2.0
         res = pool.get(rid)
         while (
-            res is None or res.concurrency.used_slots != 0
+            res is None or res.slots.used_slots != 0
         ) and time.monotonic() < deadline:
             time.sleep(0.01)
             res = pool.get(rid)
-        assert res is not None and res.concurrency.used_slots == 0
+        assert res is not None and res.slots.used_slots == 0
         assert pool.leases() == []
 
         client.fail_writes = False
         lease = pool.acquire(AcquireRequest(consumer="c", timeout=1.0))
-        assert pool.get(rid).concurrency.used_slots == 1
+        assert pool.get(rid).slots.used_slots == 1
         assert pool.release(lease) is True
-        assert pool.get(rid).concurrency.used_slots == 0
+        assert pool.get(rid).slots.used_slots == 0
     finally:
         _close(ps)
 
@@ -156,14 +156,14 @@ def test_coordination_removal_failure_keeps_lease_releasable(tmp_path):
             pool.release(lease)
         # Nothing was removed: the lease is still live and the slot still used.
         res = pool.get(rid)
-        assert res is not None and res.concurrency.used_slots == 1
+        assert res is not None and res.slots.used_slots == 1
         assert [live.token for live in pool.leases()] == [lease.token]
         assert not lease.released
 
         client.fail_eval = False
         assert pool.release(lease) is True
         assert lease.released
-        assert pool.get(rid).concurrency.used_slots == 0
+        assert pool.get(rid).slots.used_slots == 0
         assert pool.leases() == []
     finally:
         _close(ps)
@@ -187,13 +187,13 @@ def test_storage_release_failure_keeps_token_for_retry(tmp_path):
             pool.release(lease)
         # The compensation path returns the token because the slot was not
         # actually freed; a retry must be able to release it cleanly.
-        assert pool.get(rid).concurrency.used_slots == 1
+        assert pool.get(rid).slots.used_slots == 1
         assert [live.token for live in pool.leases()] == [lease.token]
         assert not lease.released
 
         proxy.fail_release = False
         assert pool.release(lease) is True
-        assert pool.get(rid).concurrency.used_slots == 0
+        assert pool.get(rid).slots.used_slots == 0
         assert pool.leases() == []
     finally:
         _close(ps)
@@ -245,7 +245,7 @@ def test_force_revoke_release_races_leave_no_ghost(tmp_path):
 
             assert "ok" in outcomes.values(), outcomes
             res = pool.get(rid)
-            assert res is not None and res.concurrency.used_slots == 0, outcomes
+            assert res is not None and res.slots.used_slots == 0, outcomes
             assert pool.leases() == [], outcomes
     finally:
         _close(ps)
@@ -293,7 +293,7 @@ def test_multithread_stress_no_oversell_and_no_leak(tmp_path):
         assert pool.leases() == []
         assert pool.counts(by_name=True).get("idle") == 3
         for resource in pool.query():
-            assert resource.concurrency.used_slots == 0
+            assert resource.slots.used_slots == 0
     finally:
         _close(ps)
 
@@ -316,9 +316,9 @@ def test_heartbeat_keeps_sync_lease_alive_across_threads(tmp_path):
         assert lease.expires_at >= first_expiry
         assert lease.heartbeat_at is not None
         res = pool.get(rid)
-        assert res is not None and res.concurrency.used_slots == 1
+        assert res is not None and res.slots.used_slots == 1
         assert [live.token for live in pool.leases()] == [lease.token]
         assert pool.release(lease) is True
-        assert pool.get(rid).concurrency.used_slots == 0
+        assert pool.get(rid).slots.used_slots == 0
     finally:
         _close(ps)

@@ -16,7 +16,7 @@
 | `allocator` | 排序依据 | 适用 |
 | --- | --- | --- |
 | `health_weighted`（默认） | 健康分、空闲时长、负载、偏好、亲和与抖动 | 通用 |
-| `least_loaded` | 已用槽位少优先，健康分只做极小权重 | 共享账号池 |
+| `least_loaded` | 已用槽位少优先，健康分只做极小权重 | 共享资源池（如账号池） |
 | `round_robin` | 游标轮转，均匀使用 | 需要严格轮换 |
 | `static_priority` | 声明的 `priority`（或 `group` 优先级）高者优先，不跨层 | 分级资源 |
 | `random` | 完全随机，忽略分数 | 压测、无偏好场景 |
@@ -36,7 +36,7 @@ score = health * health.score
 
 ### `least_loaded`
 
-按 `-used_slots + health.score * 0.01` 排序：先看负载，健康分只在同负载时打破平局。适合 `max_slots > 1` 的账号池。
+按 `-used_slots + health.score * 0.01` 排序：先看负载，健康分只在同负载时打破平局。适合 `max_slots > 1` 的共享资源池（如账号池）。
 
 ### `round_robin`
 
@@ -70,7 +70,7 @@ class LatencyFirst(Allocator):
 然后在建池时使用：
 
 ```python
-pool = ps.create_pool("proxies", "proxy", allocator="latency_first")
+pool = ps.create_pool(name="proxies", kind="proxy", allocator="latency_first")
 ```
 
 契约：

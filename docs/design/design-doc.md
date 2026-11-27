@@ -18,7 +18,7 @@
 设计三原则：
 - **通用内核 + 适配器插件**：内核只关心状态机、调度、租约与后端一致性；代理/账号等差异全部收敛到 `ResourceAdapter` 插件。
 - **异步优先**：全链路 `asyncio`，与采集任务天然配套，单事件循环内零锁竞争。
-- **后端可插拔**：默认内存后端开箱即用，Redis 后端提供多实例共享与跨进程原子性，业务代码无感切换。
+- **后端可插拔**：默认内存后端无需额外配置即可使用，Redis 后端提供多实例共享与跨进程原子性，业务代码无感切换。
 
 ---
 
@@ -75,7 +75,7 @@
 
 **可行，且风险可控。** 建议按 M0→M3 分四阶段落地：
 
-- M0：纯内存内核 + 生命周期 + 单测，先跑通“模型正确”；
+- M0：纯内存内核 + 生命周期 + 单测，先验证“模型正确”；
 - M1：验活插件（代理/账号）+ 封禁退避 + 事件；
 - M2：Redis 后端 + Lua 原子性 + 多实例；
 - M3：Web UI / CLI / 指标。
@@ -91,7 +91,7 @@
 | `Resource` | 一条资源：代理、账号或自定义对象，携带状态与元数据 |
 | `ResourceAdapter` | 资源适配器插件：定义如何生成、验活、序列化、默认并发度 |
 | `Pool` | 一个类型 + 一组选参（tags/region 等）对应的资源集合 |
-| `Lease` | 一次租约：拿到了才能用，带 token、TTL、槽位数 |
+| `Lease` | 一次租约：获取到了才能用，带 token、TTL、槽位数 |
 | `LeaseMode` | `EXCLUSIVE`（独占 1 槽）/ `SHARED(n)`（并发 n 槽） |
 | `HealthReport` | 一次验活结果：存活、延迟、错误码、建议动作 |
 | `Backend` | 存储适配层：内存 / Redis，向上暴露统一接口 |
@@ -209,7 +209,7 @@ stateDiagram-v2
 | IDLE | `quota_exhausted` | QUOTA_EXHAUSTED | 配额用尽 |
 | ACTIVE / FULL | `release` | IDLE / ACTIVE | token 匹配，按剩余槽回退 |
 | ACTIVE / FULL | `lease_expired` | IDLE / ACTIVE | 看门狗 reaper |
-| ACTIVE / FULL | `force_revoke` | IDLE / ACTIVE | 管理员强踢（带原因+审计） |
+| ACTIVE / FULL | `force_revoke` | IDLE / ACTIVE | 管理员强制撤销（带原因+审计） |
 | ACTIVE / FULL | `lost` | LOST | - |
 | ACTIVE / FULL | `banned` | BANNED | - |
 | QUARANTINED | `quarantine_expired` | IDLE | 冷静期到 |
@@ -299,7 +299,7 @@ purser/
     resource.py          # Resource / Concurrency / HealthStats 域模型
     allocator.py         # Allocator 协议 + 内置策略
     lease.py             # Lease / LeaseManager / 看门狗
-    health.py            # HealthChecker 协议 + 自适应验活调度
+    health.py            # 健康统计、探针保护 + 自适应验活调度
     quarantine.py        # 退避策略（指数退避 + 抖动）
     scheduler.py         # PeriodicScheduler：quota_reset / periodic_unban / lost_gc
     bundle.py            # 组合租约 BundleLease（原子回滚）
@@ -403,7 +403,7 @@ finally:
 | 租约级观察 | `on_acquire` / `on_renew` / `before_release` / `on_revoke` / `on_lease_lost` | 均无操作 | 分别挂在租约签发、续租、归还前、强制撤销、失联回收 |
 | 切换/轮换 | `switch` | 无操作（`None`） | 返回改过的旧对象原地更新，或返回新对象替换并归档旧行 |
 | 状态事件钩子 | `on_state_changed` | 无操作 | 迁移完成后通知，只读 |
-| 异常兜底 | `on_error` | 记录日志 | 钩子内异常不炸穿内核 |
+| 异常处置 | `on_error` | 记录日志 | 钩子内异常不影响内核 |
 
 ```python
 class CheckVerdict(Enum):
@@ -459,7 +459,7 @@ class ResourceAdapter(ABC):
 
 ## 5. 算法设计
 
-### 5.1 分配算法（选谁出去干活）
+### 5.1 分配算法（资源选择）
 
 **目标**：公平、健康优先、避免热点抖动、复杂度可控。
 
@@ -469,7 +469,7 @@ class ResourceAdapter(ABC):
 2. **打分**：`score(r) = w1 * health.score - w2 * recency(r) - w3 * used_slots(r) + w4 * preference(r) + jitter`
    - `health.score`：EWMA 健康分（0~1）；
    - `recency`：多久没被用（LRU 倾向），`-w2*recency` 让老资源优先轮换；
-   - `used_slots`：标记正在被占用的并发槽，避免集中轰炸一个资源；
+   - `used_slots`：标记正在被占用的并发槽，避免并发集中占用同一资源；
    - `jitter`：带种子的随机抖动，防止多个消费者同时选中同一个热点；
 3. **选择**：取 Top-K（默认 8），按 softmax/加权随机挑 1 个 —— 既偏向优者，又保留随机性，天然抗惊群。
 
@@ -503,14 +503,14 @@ Lease {
 机制：
 
 - **自动续约**：租约内启动一个 `asyncio` 心跳任务（默认间隔 = TTL/3），续约失败（如资源被强制回收）立即通知持有者，业务收到 `LeaseLostError`；
-- **看门狗 reaper**：周期性扫描 `expires_at < now` 的租约，强制归还 —— 进程崩溃、忘记 finally、心跳丢失都兜底；
+- **看门狗 reaper**：周期性扫描 `expires_at < now` 的租约，强制归还 —— 进程崩溃、忘记 finally、心跳丢失都由 reaper 保底；
 - **硬上限**：单租约最长持有时间（`max_lease_duration`）可配置，防“借了不还”；
 - **租约级限额（X4）**：`use_limit`（次数）+ `max_duration`（时长）双上限，达上限正常到期轮换并通知 `LeaseLimitReached`；
 - **续约/回收原子 CAS（F3）**：续约前校验 token 匹配，回收只在 token 一致且确实过期时执行；过期判定用统一时钟（Redis `TIME` / 单调时钟 + 偏移校准），杜绝多实例时钟漂移误回收；
 - **内存实现**：心跳 = 更新字典时间戳，`O(1)`；
 - **Redis 实现**：`lease:token` 键 `PEXPIRE` 续期，reaper 用 `SCAN + Lua` 原子回收。
 
-### 5.3 验活与健康评分（怎么判断“活的”）
+### 5.3 验活与健康评分（如何判断资源存活）
 
 验活器接口只做一个判断：
 
@@ -536,7 +536,7 @@ alpha ≈ 0.3（最近结果权重高，旧历史自动衰减）
 
 - **首次验活**：`NEW → VALIDATING`，强制；
 - **按需保鲜**：`IDLE` 资源超过 `stale_after`（如代理 30s）被分配时，先入 `VALIDATING` 快速探测（超时短、资源占用小）；
-- **后台兜底**：空闲时低频巡检（`background_interval`），只查“长期未验”资源；支持**抽样（Y2）**`background_validate_sample`（默认 100%，大数据池可设 10%~30%），按需保鲜仍走全量；
+- **后台保底**：空闲时低频巡检（`background_interval`），只查“长期未验”资源；支持**抽样（Y2）**`background_validate_sample`（默认 100%，大数据池可设 10%~30%），按需保鲜仍走全量；
 - **失败加速**：某资源失败后，验活频率按退避曲线下降，避免对同一个坏资源反复探测；
 - **并发上限**：同一时刻在验资源数设限（信号量），防止验活风暴打垮网络。
 - **探针自检（X1）**：探针组记录各自成功率，连续失败 N 次自动摘除；全部探针不可达时暂停批量判死（只记待定，不自动 `BANNED`）并发告警。
@@ -565,13 +565,13 @@ quarantine_duration(n) = min(cap, base * 2^(n-1)) + random(0, jitter)
 - `SHARED(n)`（`max_slots = n`）：`IDLE / ACTIVE / FULL` 三态，`acquire` 扣 `used_slots += slots`，`release` 归还，按剩余槽回退；
 - 槽位不足时**阻塞等待**而非轮询空转：内存后端用 `asyncio.Condition` 唤醒；Redis 后端用“CAS 失败后带退避重试 + 全局可用信号通道”；
 - 防止超卖：内存后端单线程天然安全；Redis 后端用 Lua 在“检查 state + slots + 写 lease”之间做原子校验；
-- 强踢/超时回收（`force_revoke` / `lease_expired`）只归还对应槽，资源按剩余租约回退到 `ACTIVE` 或 `IDLE`。
+- 强制撤销/超时回收（`force_revoke` / `lease_expired`）只归还对应槽，资源按剩余租约回退到 `ACTIVE` 或 `IDLE`。
 
 ### 5.6 饥饿与公平性
 
 - 等待队列按 **FIFO + 优先级** 组织（`heapq`），高优先级消费者插队但有 `max_wait` 保护，防止饿死低优先级；
 - 每消费者**令牌桶配额**（可选）：`rate = QPS / minute`，超配额排队而非拒绝，慢开始；
-- **消费者注册（Y1）**：`ConsumerRegistry.register(name, default_priority, quota, notify_email)`，未注册自动注册；UI 提供消费者维度视图，配额/冷却/被踢次数集中管理；
+- **消费者注册（Y1）**：`ConsumerRegistry.register(name, default_priority, quota, notify_email)`，未注册自动注册；UI 提供消费者维度视图，配额/冷却/被撤销次数集中管理；
 - 资源彻底耗尽时：`acquire(timeout)` 超时抛 `PoolExhausted`，同时发出 `PoolLowWater` 事件触发补货（对接生成器）；
 - **预测性补货（V1）**：按近 N 分钟消费速率趋势预测缺口，分级触发 `backfill`（受每日上限与节奏控制），避免高峰期长期缺货。
 
@@ -604,7 +604,7 @@ return redis.call('HGET', rk, 'version')
 
 - **版本号 CAS**：每次状态迁移校验 `version`，失败重试或报 `LeaseConflict`；
 - **key 设计**：`purser:<pool>:res:<id>`（hash）+ `purser:<pool>:by_state:<state>`（有序集，供按状态查询与 reaper 扫描）+ `purser:<pool>:lease:<id>`（TTL 键）；
-- **看门狗**：各实例都跑 reaper，但用 `SET NX PX` 抢“回收令牌”，避免重复回收（幂等释放，重复执行天然无害则无需抢锁）。
+- **看门狗**：各实例都运行 reaper，但用 `SET NX PX` 竞争“回收令牌”，避免重复回收（幂等释放，重复执行天然无害则无需抢锁）。
 
 ### 5.8 请求级校验与站点失败索引（申请时“按目标站验真”）
 
@@ -647,7 +647,7 @@ return redis.call('HGET', rk, 'version')
 - `acquire(id=..., timeout=...)`：按 ID 锁定指定资源；可分配则直接占用，被占用（`ACTIVE/FULL`）时按 `timeout` 等待归还或 `force_revoke`，超时抛 `ResourceBusy`；支持 `lease()` 与 bundle 内使用；
 - `acquire_many(kind, n, ...)`：
   - `atomic`：n 条全部到位才返回，任一条不足则整体回滚并等待/失败；
-  - `best_effort`：尽量凑数，返回实际拿到数量，低于 `n_min` 抛 `PoolExhausted`；
+  - `best_effort`：尽量凑数，返回实际获取到数量，低于 `n_min` 抛 `PoolExhausted`；
 - 内部复用统一分配器与公平队列，只是多资源编排；返回 `BatchLease`（可整体或逐条归还）。
 
 ### 5.12 亲和性分配（O14）
@@ -670,7 +670,7 @@ return redis.call('HGET', rk, 'version')
 - 开启后：租约带 `priority`，抢占条件为“请求方优先级 − 持有者优先级 ≥ `preempt_threshold`”且持有租约可被抢占；
 - 每消费者/周期被抢占次数上限（防雪崩重试）；被抢占方收到 `LeasePreempted` 事件；
 - 无可抢占候选时回落到普通等待队列，不直接失败；
-- **被踢后冷却（F5）**：被抢占或被 `force_revoke` 的消费者对该资源写入同消费者冷却（`next_available_at`，默认 10s 可配）并指数退避（默认 3 次后放弃本次申请），杜绝“踢了又拿”抖动；`UsageOutcome=PREEMPTED` 计入审计。
+- **被撤销后冷却（F5）**：被抢占或被 `force_revoke` 的消费者对该资源写入同消费者冷却（`next_available_at`，默认 10s 可配）并指数退避（默认 3 次后放弃本次申请），杜绝“撤销后又被获取”抖动；`UsageOutcome=PREEMPTED` 计入审计。
 
 ### 5.15 使用后冷却与租约级限额（S20 / X4）
 
@@ -688,7 +688,7 @@ class UsageOutcome(Enum):
     TIMEOUT = "timeout"              # 超时 -> 保鲜重验
     NETWORK_ERROR = "network_error"  # 网络错 -> 记站点失败索引（5.8）
     QUOTA_EXHAUSTED = "quota_exhausted"  # 配额 -> 配额路径（5.13）
-    PREEMPTED = "preempted"          # 被抢占/被强踢 -> F5 冷却（5.14）
+    PREEMPTED = "preempted"          # 被抢占/被强制撤销 -> F5 冷却（5.14）
 ```
 
 - `on_release(r, outcome)` 按分类自动映射处理路径并驱动健康分/站点失败索引/计量；
@@ -698,7 +698,7 @@ class UsageOutcome(Enum):
 
 - **互斥约束（E2）**：资源声明 `mutex_group`；同一消费者持有组内任意一条时，组内其余资源对其加锁（等待或失败，按 `acquire` 参数）；bundle 组合时先验互斥、冲突整体回滚；
 - **可用时段（S21）**：`schedule_window` 窗口外分配器直接排除，不新增状态；进出窗口发事件并可联动告警；
-- **防重复持有（S22）**：按 `consumer + resource` 去重，重复申请返回已有租约引用或拒绝（`allow_duplicate` 可配），与 D1 幂等键双保险。
+- **防重复持有（S22）**：按 `consumer + resource` 去重，重复获取返回已有租约引用或拒绝（`allow_duplicate` 可配），与 D1 幂等键双保险。
 
 ---
 
@@ -715,7 +715,7 @@ class UsageOutcome(Enum):
 
 - 结构：hash 存资源本体 + version；zset 按状态索引；TTL 键管租约；
 - 迁移/查询全走 Lua，返回统一结果对象；
-- 支持 Redis 6+ 开箱；高可用用哨兵/集群 + AOF；
+- 支持 Redis 6+ 可直接使用；高可用用哨兵/集群 + AOF；
 - 可选**本地缓存 + 写穿透**（`local_cache=True`）降低热点查询延迟，缓存失效用状态事件通知。
 - **集群兼容（R2）**：key 统一用 hash tag `purser:{pool}:...`，保证多 key Lua 脚本在集群模式下落在同一 slot（单机同样合法）；
 - **敏感字段加密（C1）**：`secret_fields` 声明的字段 AES-GCM 加密后落库，密钥由 env/KMS 注入，内存中才解密；
@@ -745,7 +745,7 @@ class UsageOutcome(Enum):
 ### 6.5 迁移与灰度（W1）
 
 - blue-green 双池迁移：新池并行构建并通过 O5 协议持续同步 → 按比例切流量（10% → 50% → 100%）→ 观察指标无异常再停旧池；
-- 任一步异常可一键回切旧池；适合换 Redis、换配置体系、整池搬迁等大动作。
+- 任一步异常可快速回切旧池；适合换 Redis、换配置体系、整池搬迁等大动作。
 
 ### 6.6 边界与防御（X8）
 
@@ -799,7 +799,7 @@ class SmsPoolAdapter(ResourceAdapter):
   - **资源列表**：筛选（类型/状态/tags/关键字）、排序（健康分/最近使用）、批量操作；
   - **详情**：payload 脱敏展示、健康历史、租约信息、封禁原因；
   - **报表**：用量/瓶颈/成本趋势（按消费者/资源类型/目标站聚合，R1）；
-  - **操作**：生成/导入（含导入报告）、手动验活、获取/归还/强踢（调试用）、封禁/解封/暂停/恢复/充值/迁移、一键清隔离；批量操作带二次确认；
+  - **操作**：生成/导入（含导入报告）、手动验活、获取/归还/强制撤销（调试用）、封禁/解封/暂停/恢复/充值/迁移、批量清除隔离；批量操作带二次确认；
 - 所有写操作走与 SDK 相同的 REST API，UI 只是壳。
 
 ### 8.2 REST API 草案
@@ -830,7 +830,7 @@ GET    /pools/{pool}/leases                     # 活跃租约列表
 GET    /pools/{pool}/leases/{token}             # 单租约详情
 DELETE /pools/{pool}/leases/{token}             # 归还
 DELETE /pools/{pool}/leases?consumer=           # 按 consumer 批量归还
-POST   /pools/{pool}/leases/{token}/revoke      # 强踢租约（O1）
+POST   /pools/{pool}/leases/{token}/revoke      # 强制撤销租约（O1）
 POST   /pools/{pool}/drain                      # 整池排空（O10）
 GET    /backup  /  POST /restore                # 备份与恢复（O5/F2：租约不迁移，占用态归一 IDLE）
 GET    /pools/{pool}/events?after_seq=N         # SSE 实时事件流（游标续传/重放，E3）
@@ -841,7 +841,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 
 > 所有写操作要求 `X-Operator` 头并写入审计日志（O9）；`force_revoke` / `admin-state` 额外要求 `reason` 字段。
 > 服务模式启用 API Key/JWT 鉴权与 `admin`/`readonly` 角色（C2）；写操作支持 `Idempotency-Key`（D1），请求透传 `X-Trace-Id`（X5）。
-> 服务停机走优雅流程：停新分配 → 等待在途租约归还（可配 `drain_timeout`）→ 超时 `force_revoke` 兜底（O17）。
+> 服务停机走优雅流程：停新分配 → 等待在途租约归还（可配 `drain_timeout`）→ 超时由 `force_revoke` 保底（O17）。
 
 ### 8.3 CLI
 
@@ -878,7 +878,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | S15 | `SUSPENDED` 暂停/维护 | A：计划内暂停，人工恢复 |
 | S16 | `QUOTA_EXHAUSTED` 配额耗尽 | A：配 `top_up` + 周期重置 |
 | S17 | `ARCHIVED` 归档终态 | A：软删除，可 `restore`，可配保留期 |
-| O1 | `force_revoke` 强踢租约 | A：带 `LeaseRevokedError` + 审计 |
+| O1 | `force_revoke` 强制撤销租约 | A：带 `LeaseRevokedError` + 审计 |
 | O2 | `update_resource` | A：占用中（ACTIVE/FULL）禁止或先回收，版本号 + 审计 |
 | O3 | `move_resource` 跨池迁移 | A：占用中（ACTIVE/FULL）拒绝或等待归还 |
 | O4 | 导入去重 `dedup_key` | A：存在即更新，保留历史 |
@@ -896,7 +896,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | --- | --- | --- |
 | F2 | 备份恢复与租约一致性 | A：restore 时归一，占用态回 `IDLE`，租约不回放 |
 | O12 | 定向获取 `acquire(id)` | A：锁定指定资源，被占用按 timeout 等待，超时抛 `ResourceBusy` |
-| O13 | 批量获取 `acquire_many` | A：`atomic` / `best_effort` 两种模式 + `n_min` 兜底 |
+| O13 | 批量获取 `acquire_many` | A：`atomic` / `best_effort` 两种模式 + `n_min` 保底 |
 | O14 | 亲和性分配 affinity | A：按 consumer 历史使用打分，`affinity_weight` 可配（默认 0） |
 | S18 | 绝对过期 `expires_at` | A：到期自动转 `SUSPENDED`/`QUOTA_EXHAUSTED`，到期前发 `ExpiringSoon` |
 | S19 | 按次配额 `usage_quota` | A：metering 计量，`on_release` 上报用量，与时间型配额并存，周期重置 |
@@ -933,7 +933,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | --- | --- | --- |
 | E1 | 事件总线背压与有界队列 | A：异步分发 + 有界队列（10k 默认），慢订阅者丢弃 + 背压告警，内核永不阻塞；审计与常规事件分通道 |
 | E2 | 资源互斥约束 `mutex_group` | A：同消费者组内互斥，bundle 组合先验互斥、冲突整体回滚 |
-| S22 | 同消费者防重复持有 | A：按 `consumer+resource` 去重，重复申请返回已有租约或拒绝（`allow_duplicate` 可配） |
+| S22 | 同消费者防重复持有 | A：按 `consumer+resource` 去重，重复获取返回已有租约或拒绝（`allow_duplicate` 可配） |
 | S21 | 可用时段 `schedule_window` | A：窗口外分配器排除（不新增状态），进出窗口事件 + 可联动告警 |
 | A1 | payload 访问分级 | A：默认脱敏视图，仅 admin + `include_secrets=true` 明文，明文读取记审计 |
 | E3 | 事件订阅游标/重放 | A：事件带单调 `seq`，`after_seq` 续传，超上限走快照对账 |
@@ -941,7 +941,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | D2 | 审计链防篡改 | A：append-only + 哈希链，定期完整性校验，篡改即告警 |
 | K1 | 密钥轮换 | A：密钥版本化 + 后台重加密，旧版本兼容回退 |
 | V1 | 容量趋势补货 | A：按消费速率预测缺口，分级 `backfill`，受每日上限与节奏控制 |
-| W1 | 池级灰度迁移 | A：blue-green 双池并行构建、按比例切流量、异常一键回切 |
+| W1 | 池级灰度迁移 | A：blue-green 双池并行构建、按比例切流量、异常时快速回切 |
 | X7 | 插件热注册 | A：运行时动态注册 `ResourceAdapter`，schema 型 API 提交即建池 |
 | R1 | 使用统计报表 | A：`/reports/usage` 按消费者/类型/目标站聚合，复用 metering 与审计 |
 
@@ -949,7 +949,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 
 | # | 项 | 确认 |
 | --- | --- | --- |
-| F5 | 被抢占/被强踢后的重试冷却 | A：同消费者冷却 + 指数退避（默认 3 次放弃），`UsageOutcome=PREEMPTED`，计入审计 |
+| F5 | 被抢占/被强制撤销后的重试冷却 | A：同消费者冷却 + 指数退避（默认 3 次放弃），`UsageOutcome=PREEMPTED`，计入审计 |
 | F6 | 分配约束优先级规则 | A：硬约束直接排除，软偏好只在候选内打分；可分配时间取 `max(冷却, 隔离到期, 过期)` |
 | B1 | 批召回 `recall_batch` | A：按 `batch_id` 批量 重验/隔离/弃用，返回批报告，与导入/导出打通 |
 | R2 | Redis 集群 hash tag | A：key 统一 `purser:{pool}:...` 保证同 slot，集群兼容 |
@@ -983,13 +983,13 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 
 **S6**：`unban_mode = manual_only | auto_after_ttl | mixed`，按资源/池配置；解封一律先回 `VALIDATING` 重验。
 
-**S7**：自适应混合（按需保鲜 + 后台兜底 + 失败退避 + 验活并发信号量）。
+**S7**：自适应混合（按需保鲜 + 后台保底 + 失败退避 + 验活并发信号量）。
 
 **S8**：`backend = memory | redis` 切换，接口与行为一致；Redis 默认开 AOF。
 
 **S9**：Web（FastAPI + 无构建链单页 + SSE）+ rich CLI 双形态。
 
-**S10**：跨实例原子性在 Redis 后端用 Lua CAS；内存后端单进程内天然原子，语义对齐，同一套行为测试双跑。
+**S10**：跨实例原子性在 Redis 后端用 Lua CAS；内存后端单进程内天然原子，语义对齐，同一套行为测试在两端执行。
 
 **S11**：`source = manual | upstream | builtin`，均由 `generate(spec)` 统一收敛。
 
@@ -1006,7 +1006,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | 阶段 | 交付物 | 验收标准 |
 | --- | --- | --- |
 | M0 内核（P0） | 完整 API 契约（A2）+ 域模型 + 状态机（P0 九态：NEW/VALIDATING/IDLE/ACTIVE/FULL/QUARANTINED/BANNED/LOST/DRAINING）+ Memory 后端 + 租约/看门狗 + 租约 token + `lease()`/`acquire/release` + 定向/批量获取（O12/O13）+ 硬约束过滤 + FIFO 公平队列 + 受控钩子 + 边界防御（X8）+ 状态机穷举测试 | 单测覆盖转移表 100%；手动/上下文/定向/批量路径均可用；空池/非法配置边界全绿 |
-| M1 插件与验活（P0+P1） | Proxy/Account 插件 + 多探针验活（http/socks）+ 按需/后台自适应验活 + 站点失败索引 + 请求级按目标站校验（5.8）+ 隔离退避 + 封禁/解封重验 + 试用期保护 + `QUOTA_EXHAUSTED` + `quota_reset` + 使用后冷却（S20）+ 导入去重/报告（O4/O15）+ 导入验活策略（I1）+ payload 加密（C1）+ 幂等键（D1）+ trace_id（X5）+ 事件背压（E1）+ `validating_gc/quarantine_gc/lost_gc` + metering 基础（S19） | 代理/账号全生命周期跑通；按目标站失败只降权不误封；重复导入无副本；事件订阅不阻塞内核 |
+| M1 插件与验活（P0+P1） | Proxy/Account 插件 + 多探针验活（http/socks）+ 按需/后台自适应验活 + 站点失败索引 + 请求级按目标站校验（5.8）+ 隔离退避 + 封禁/解封重验 + 试用期保护 + `QUOTA_EXHAUSTED` + `quota_reset` + 使用后冷却（S20）+ 导入去重/报告（O4/O15）+ 导入验活策略（I1）+ payload 加密（C1）+ 幂等键（D1）+ trace_id（X5）+ 事件背压（E1）+ `validating_gc/quarantine_gc/lost_gc` + metering 基础（S19） | 代理/账号全生命周期可用；按目标站失败只降权不误封；重复导入无副本；事件订阅不阻塞内核 |
 | M2 分布式（P0+P1） | Redis 后端 + Lua CAS（续约/回收 token + 统一时钟，F3）+ hash tag（R2）+ fail-closed（F4）+ 多实例 reaper + 配置热更新（O16）+ `update`/`move`（O2/O3）+ 审计 operator（O9）+ 幂等键（D1）+ REST API + SSE 事件流 | 双实例无重复分配、无泄漏；时钟/续约竞态/故障降级有测试；Memory/Redis 同一套行为测试通过；集群模式 Lua 无 CROSSSLOT |
 | M3 操作台（P0+P1） | FastAPI + Web UI（概览/资源列表/操作/导入报告）+ REST 鉴权（C2）+ 结构化指标 + `/healthz` + purser-client（O20） | 可在 UI/客户端完成全部人工操作；嵌入式与服务双形态文档与示例齐 |
 
@@ -1016,8 +1016,8 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 
 - **状态机穷举**：从转移表自动生成用例，验证非法迁移全部拒绝；
 - **分配器属性测试**：hypothesis 随机生成资源/请求，断言“永不重复分配、永不超卖、等待不饿死”；
-- **后端一致性**：同一套行为测试同时跑 Memory 与 Redis（fakeredis 快速、testcontainers 真实），保证无感切换；
-- **故障注入**：模拟验活超时、进程崩溃（泄漏租约）、Redis 抖动，验证 reaper 兜底；
+- **后端一致性**：同一套行为测试同时运行 Memory 与 Redis（fakeredis 快速、testcontainers 真实），保证无感切换；
+- **故障注入**：模拟验活超时、进程崩溃（泄漏租约）、Redis 抖动，验证 保证 reaper 回收；
 - **基准**：万级资源池下 acquire 吞吐/时延基准，指导索引与 Lua 优化。
 
 ## 12. 风险清单
@@ -1035,7 +1035,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 - **状态全集（12 个）**：`NEW / VALIDATING / IDLE / ACTIVE / FULL / QUARANTINED / SUSPENDED / QUOTA_EXHAUSTED / BANNED / LOST / DRAINING / ARCHIVED`；
 - **操作全集**：生命周期（generate / import / validate / release）+ 人工管理（ban / unban / suspend / resume / top_up / drain / update / move / force_revoke / admin_set_state / restore / recall_batch）+ 调度（acquire / acquire_id / acquire_many / lease / bundle / preempt / revoke / export / import / backup / reconcile / blue-green 迁移）+ 周期（quota_reset / periodic_unban / lost_gc / validating_gc / quarantine_gc / archive_gc）+ 平台（update_pool_config / healthz / readyz / graceful shutdown / purser-client / idempotency / trace_id / 热注册 / 报表 / validate-job 进度）；
 - **属性维度**：`expires_at`（S18）、`usage_quota`/`used_count`（S19）、`next_available_at`（S20）、`use_limit`（X4）、`mutex_group`（E2）、`schedule_window`（S21）、`target_quota`（X2）、`affinity_weight`（O14）、`preemptible`（O18）、`secret_fields`（C1）、`fail_open`（F4）、`import_validate`（I1）、`overdraft`（Y5）、`schema_version`（Y4）、`background_validate_sample`（Y2）、消费者注册（Y1），均按资源/池配置；配置来源为 文件 → env → Redis 三级（X6）；
-- **分配与约束规则**：硬约束（状态/冷却/互斥/窗口/配额/站点失败）直接排除、软偏好只在候选内打分（F6）；被踢后同消费者冷却防抖动（F5）；可分配时间取 `max()` 合并生效；
+- **分配与约束规则**：硬约束（状态/冷却/互斥/窗口/配额/站点失败）直接排除、软偏好只在候选内打分（F6）；被撤销后同消费者冷却防抖动（F5）；可分配时间取 `max()` 合并生效；
 - **安全与一致性**：payload 加密/访问分级/密钥轮换（C1/A1/K1）、API 鉴权 + 角色（C2）、审计哈希链（D2）、续约/回收 token CAS + 统一时钟（F3）、fail-closed/fail-open（F4）、写操作幂等（D1）、`trace_id` 全链路（X5）、探针自检（X1）、事件背压/游标（E1/E3）、防重复持有（S22）、集群 hash tag（R2）、池时区（T1）、边界防御（X8）；
 - 状态迁移、分配、租约、验活、封禁、请求级校验、周期任务、组合租约、配额、过期、冷却、互斥/时段约束、备份恢复、迁移灰度、客户端与平台服务均已落表，详见 3.3 与 5.x；
 - 后续出现新场景（如资源依赖 DAG、多租户 RBAC、跨池游标复用），按同一流程补充进 9.x 再确认。
@@ -1050,7 +1050,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | --- | --- |
 | 生命周期 | 状态机（NEW/VALIDATING/IDLE/ACTIVE/FULL/QUARANTINED/BANNED/LOST/DRAINING）、`acquire/release`、`lease()`、租约心跳+看门狗、租约 token |
 | 获取 | 定向获取（O12）、批量获取（O13） |
-| 验活 | 多探针验活 http/socks（S2）、EWMA 健康分、按需保鲜+后台兜底（S7） |
+| 验活 | 多探针验活 http/socks（S2）、EWMA 健康分、按需保鲜+后台保底（S7） |
 | 封禁 | 隔离+指数退避、BANNED+解封重验、试用期保护 |
 | 分配 | 硬约束过滤+健康加权（F6）、FIFO 公平队列、`PoolExhausted`/空池 |
 | 周期 | `validating_gc` / `quarantine_gc` / `lost_gc` |
@@ -1069,12 +1069,12 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 | `QUOTA_EXHAUSTED`+`quota_reset`（S16） | 账号每日限额是常态 |
 | 使用后冷却（S20） | IP 轮换/账号静默，防风控 |
 | payload 加密（C1） | 账号密码/cookie 不可明文 |
-| 幂等键（D1） | 超时重试不重复拿资源 |
+| 幂等键（D1） | 超时重试不会重复占用资源 |
 | 导入报告（O15）+ 导入验活策略（I1） | 批量导入不瞎、不触发验活风暴 |
 | metering 基础（S19） | 用量统计/按次轮换地基 |
 | trace_id 轻量版（X5） | 一次申请到归还可排查 |
 | 配置热更新（O16） | 调 max_slots/探针不重启 |
-| SSE 事件+UI 轮询兜底 | UI 实时性 |
+| SSE 事件+UI 轮询保底 | UI 实时性 |
 
 ### 14.3 P2 可选（首版不做，按需开启）
 
@@ -1082,7 +1082,7 @@ GET    /metrics  /  GET /metrics/snapshot       # Prometheus 文本 / JSON 快�
 
 ### 14.4 P3 可省（当前建议不做，接口预留）
 
-`bundle` 组合租约（O8）、自动抢占+被踢冷却（O18/F5）、配额透支（Y5）、消费注册（Y1）、批召回（B1）、事件游标（E3）、审计哈希链（D2）、blue-green 迁移（W1）、报表（R1）、插件热注册（X7）、预测补货（V1）、配置 `schema_version` 迁移（Y4）、RBAC 多租户（未来项）。
+`bundle` 组合租约（O8）、自动抢占+被撤销冷却（O18/F5）、配额透支（Y5）、消费注册（Y1）、批召回（B1）、事件游标（E3）、审计哈希链（D2）、blue-green 迁移（W1）、报表（R1）、插件热注册（X7）、预测补货（V1）、配置 `schema_version` 迁移（Y4）、RBAC 多租户（未来项）。
 
 ### 14.5 首版路线
 
@@ -1130,7 +1130,7 @@ M0 内核（P0）→ M1 插件/验活/封禁（P0+P1）→ M2 分布式（P0 收
   存储按同一契约落地（`MySqlStorage` + aiomysql，可选依赖，懒连接，集成测试由
   `PURSER_TEST_MYSQL_URL` 门控）。
 
-行为测试按 存储 × 协调 笛卡尔积跑：`storage {memory, sqlite}` ×
+行为测试按 存储 × 协调 笛卡尔积执行：`storage {memory, sqlite}` ×
 `coordination {memory, redis}`，`pytest tests -q` 全量通过。
 
 故障回测（`tests/test_fault_tolerance.py`）覆盖：协调层故障注入下 acquire 回滚槽位、
@@ -1173,7 +1173,7 @@ M0 内核（P0）→ M1 插件/验活/封禁（P0+P1）→ M2 分布式（P0 收
 非 `id` 字段去重。修复：`admin_set_state` 原先用 `NEW` 行触发预检，而转移表
 `NEW` 行没有该事件，导致其从未对 `NEW` 资源生效（改为直接校验 `ADMIN_ALLOWED`）；
 事件分发不再对裸协程用 `asyncio.wait_for`（Windows Proactor 下可冻结事件循环），
-改用 `ensure_future + asyncio.wait(超时)` 并给 `stop()` 加 shield+超时兜底。
+改用 `ensure_future + asyncio.wait(超时)` 并给 `stop()` 加 shield 与超时保护。
 
 流式与容量边界（`tests/test_boundary_streaming_edges.py`）：`acquire_many` 不再
 把请求的 `slots` 强制改 1（按槽位批量、原子回滚不泄漏）、混合槽位等待者不会因
@@ -1182,7 +1182,7 @@ M0 内核（P0）→ M1 插件/验活/封禁（P0+P1）→ M2 分布式（P0 收
 保留配额/用量状态并更新 payload、`lease_ttl=NaN/Inf` 与负 `heartbeat_interval`
 配置被拒绝、`release(outcome=字符串)` 前置拒绝且不触碰槽位、归还后续约返回 False。
 修复：`EventBus.history()` 原先读分发队列（事件一经分发即被 popleft，SSE 游标
-续传拿不到已分发事件），现改为独立的有界环形历史缓冲，回放不随分发消失；
+续传无法获取已分发事件），现改为独立的有界环形历史缓冲，回放不随分发消失；
 `acquire_many` 移除 `basis.slots = 1`；`config` 对时间参数做有限/非负校验。
 
 生命周期边界（`tests/test_boundary_lifecycle_edges.py`）：`ResourcePool.close()`
@@ -1200,7 +1200,7 @@ reaper 继续回收其它过期租约、并发重复执行 `quarantine_gc` 幂�
 `on_error` 承接且不破坏主流程；新增适配器注册表、`Metrics` 快照/渲染、
 `IdempotencyStore` TTL、`SecretCodec` 环境密钥/key 文件复用、`PeriodicScheduler`
 run/stop/remove/失败隔离等直接单测。流式补充：并发导入同批去重后仅剩一行、
-`force_revoke` 清消费者持有且被踢者进入 `F5` 冷却、迁移后可从目标池直接获取。
+`force_revoke` 清消费者持有且被撤销者进入 `F5` 冷却、迁移后可从目标池直接获取。
 
 配置生效与杂项（`tests/test_boundary_misc_edges.py`）：`max_lease_duration`
 此前定义在配置里但 `_renew` 从未使用（续约可无限延长），现改为续约到期时间
@@ -1233,7 +1233,7 @@ sqlite+redis 并发乱序获取/归还不超卖，结束时全部归还。这些
 写路径新增锁冲突短重试（最多 3 次、退避间隔递增）。REST 模糊风暴用固定种子
 产生 250 步脏请求（null/类型错/越界/unicode），断言永不 500 且运行后槽位与
 状态不变量成立；据此修复 6 处真实 500：重复建池 `PoolExists`、动作端点
-`BadState`、强制踢/删除/释放/整池退役的 `PurserError` 未捕获，以及
+`BadState`、强制撤销/删除/释放/整池退役的 `PurserError` 未捕获，以及
 `slots:null`、`tags` 非列表、`records` 非列表、建池 `config` 脏类型的类型错误
 （统一映射为 409/422）。
 
@@ -1301,10 +1301,10 @@ R1 / V2 从“路由草案”补齐为实现与测试：
 - **批量验活任务（V2）**：`import_validate="batch"` 不再每条 `_spawn` 一个
   后台任务，而是把资源放入共享 `asyncio.Queue`，由
   `min(validate_concurrency, 批大小)` 个 worker 消费；任务 id 复用导入
-  `batch_id`，同一任务在跑时再次导入会并入队列并累加 `total`。
+  `batch_id`，同一任务运行时再次导入会并入队列并累加 `total`。
 - **进度与取消（V2）**：任务视图含 `total/done/pending/alive/failed/skipped/
   errors/operator/created_at/updated_at`；取消是协作式的——队列中未开始的
-  条目直接计 `skipped`，在途探测跑完才收尾，`running → cancelling →
+  条目直接计 `skipped`，在途探测完成后才收尾，`running → cancelling →
   cancelled`，正常结束 `running → completed`；对终态任务取消是幂等空操作。
   终态任务最多保留 100 个，`errors` 最多 100 条。SSE 发布
   `validate_job_started/finished`，取消写 `cancel_validate_job` 审计。

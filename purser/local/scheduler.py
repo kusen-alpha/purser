@@ -11,13 +11,11 @@ import contextlib
 import multiprocessing
 import os
 import queue
-import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from multiprocessing.process import BaseProcess
 from typing import Any, cast
 
-from purser.errors import PurserError
 from purser.local.client import LocalSchedulerClient
 from purser.local.errors import SchedulerUnavailable
 from purser.local.protocol import (
@@ -253,13 +251,3 @@ class LocalScheduler:
 
     def lease(self, pool: str, req: Any = None, **kwargs: Any) -> Any:
         return self.client.lease(pool, req, **kwargs)
-
-    def wait_until_ready(self, timeout: float = 10.0) -> dict[str, Any]:
-        deadline = time.monotonic() + timeout
-        while True:
-            try:
-                return self.health()
-            except (PurserError, OSError):
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.05)

@@ -26,7 +26,6 @@ from purser.local.errors import (
 )
 
 ENV_VAR = "PURSER_LOCAL_SCHEDULER"
-PROTOCOL_VERSION = 1
 MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 
@@ -37,14 +36,12 @@ class SchedulerAddress:
     family: str
     address: str
     authkey: bytes
-    protocol: int = PROTOCOL_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "family": self.family,
             "address": self.address,
             "authkey": base64.b64encode(self.authkey).decode("ascii"),
-            "protocol": self.protocol,
         }
 
     @classmethod
@@ -54,7 +51,6 @@ class SchedulerAddress:
                 family=str(data["family"]),
                 address=str(data["address"]),
                 authkey=base64.b64decode(str(data["authkey"]), validate=True),
-                protocol=int(data.get("protocol", PROTOCOL_VERSION)),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SchedulerProtocolError(
@@ -77,11 +73,6 @@ class SchedulerAddress:
         if not isinstance(data, dict):
             raise SchedulerProtocolError(f"{ENV_VAR} must contain a JSON object")
         address = cls.from_dict(data)
-        if address.protocol != PROTOCOL_VERSION:
-            raise SchedulerProtocolError(
-                f"unsupported scheduler protocol {address.protocol}; "
-                f"this client speaks {PROTOCOL_VERSION}"
-            )
         return address
 
 

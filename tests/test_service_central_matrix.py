@@ -167,7 +167,7 @@ def test_service_owns_one_shared_resource_set(shape, tmp_path):
 
                 acquire_body = {
                     "consumer": "a",
-                    "resource_id": "r0",
+                    "rid": "r0",
                     "slots": 1,
                     "timeout": 1.0,
                 }
@@ -196,7 +196,7 @@ def test_service_owns_one_shared_resource_set(shape, tmp_path):
                     f"{pool_url}/leases",
                     json={
                         "consumer": "b",
-                        "resource_id": "r0",
+                        "rid": "r0",
                         "slots": 1,
                         "timeout": 0.3,
                     },
@@ -218,7 +218,7 @@ def test_service_owns_one_shared_resource_set(shape, tmp_path):
                             f"{pool_url}/leases",
                             json={
                                 "consumer": "c",
-                                "resource_id": "r0",
+                                "rid": "r0",
                                 "slots": 1,
                                 "timeout": 5.0,
                             },

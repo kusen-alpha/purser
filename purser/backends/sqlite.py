@@ -538,21 +538,21 @@ class SqliteStorage(StorageBackend):
             resource = self._deserialize(row)
             if (
                 resource.state not in ALLOCATABLE_STATES
-                or not resource.concurrency.can_acquire(slots)
+                or not resource.slots.can_acquire(slots)
             ):
                 return TransitionResult(ok=False)
             expected = resource.version
-            used_before = resource.concurrency.used_slots
+            used_before = resource.slots.used_slots
             target = StateMachine.trigger(
                 resource.state,
                 Event.ACQUIRE,
                 ctx=StateContext(
                     used_slots=used_before,
                     slots=slots,
-                    max_slots=resource.concurrency.max_slots,
+                    max_slots=resource.slots.max_slots,
                 ),
             )
-            resource.concurrency.acquire(slots)
+            resource.slots.acquire(slots)
             now = _now()
             resource.meta["last_used_at"] = now
             resource.meta["updated_at"] = now
@@ -585,16 +585,16 @@ class SqliteStorage(StorageBackend):
                 if row is None:
                     return TransitionResult(ok=False)
                 resource = self._deserialize(row)
-                if resource.concurrency.used_slots <= 0:
+                if resource.slots.used_slots <= 0:
                     return TransitionResult(ok=False)
                 expected = resource.version
-                return_slots = min(slots, resource.concurrency.used_slots)
-                resource.concurrency.release(return_slots)
+                return_slots = min(slots, resource.slots.used_slots)
+                resource.slots.release(return_slots)
                 resource.meta["updated_at"] = _now()
                 if resource.state is ResourceState.DRAINING:
                     new_state = (
                         ResourceState.ARCHIVED
-                        if resource.concurrency.used_slots <= 0
+                        if resource.slots.used_slots <= 0
                         else ResourceState.DRAINING
                     )
                 else:
@@ -602,9 +602,9 @@ class SqliteStorage(StorageBackend):
                         resource.state,
                         Event.RELEASE,
                         ctx=StateContext(
-                            used_slots=resource.concurrency.used_slots + return_slots,
+                            used_slots=resource.slots.used_slots + return_slots,
                             slots=return_slots,
-                            max_slots=resource.concurrency.max_slots,
+                            max_slots=resource.slots.max_slots,
                         ),
                     )
                 resource.state = new_state
@@ -633,7 +633,7 @@ class SqliteStorage(StorageBackend):
             resource = self._deserialize(row)
             if slots < 0:
                 return False
-            slots = min(slots, resource.concurrency.max_slots)
+            slots = min(slots, resource.slots.max_slots)
             if resource.state is ResourceState.DRAINING:
                 if slots <= 0:
                     new_state = ResourceState.ARCHIVED
@@ -645,21 +645,21 @@ class SqliteStorage(StorageBackend):
                 resource.state in set(ALLOCATABLE_STATES) | {ResourceState.FULL}
             ):
                 if slots == 0:
-                    if resource.concurrency.used_slots == 0:
+                    if resource.slots.used_slots == 0:
                         return False
                     new_state = ResourceState.IDLE
-                elif resource.concurrency.used_slots == slots:
+                elif resource.slots.used_slots == slots:
                     return False
                 else:
                     new_state = (
                         ResourceState.FULL
-                        if slots >= resource.concurrency.max_slots
+                        if slots >= resource.slots.max_slots
                         else ResourceState.ACTIVE
                     )
             else:
                 return False
             expected = resource.version
-            resource.concurrency.used_slots = slots
+            resource.slots.used_slots = slots
             resource.state = new_state
             resource.meta["updated_at"] = _now()
             return self._update_row(pool, rid, resource, expected=expected)

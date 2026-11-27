@@ -146,7 +146,7 @@ class Backend:
             for lease in list(pool.leases()):
                 with contextlib.suppress(PurserError):
                     pool.admin.force_revoke(
-                        lease.resource_id,
+                        lease.rid,
                         operator="cleanup",
                         reason="cross-instance cleanup",
                         token=lease.token,
@@ -190,7 +190,7 @@ def test_cross_instance_visibility_capacity_and_startup_reconcile(backend):
     _, pool_a = backend.make(name, max_slots=1)
     seed(pool_a)
     lease_a = pool_a.acquire(
-        AcquireRequest(resource_id="r0", consumer="a", slots=1, timeout=2.0)
+        AcquireRequest(rid="r0", consumer="a", slots=1, timeout=2.0)
     )
 
     # B's start() reconciles against shared storage while A holds the slot.
@@ -198,7 +198,7 @@ def test_cross_instance_visibility_capacity_and_startup_reconcile(backend):
     assert ps_b.started
 
     resource = pool_b.get("r0")
-    assert resource is not None and resource.concurrency.used_slots == 1, (
+    assert resource is not None and resource.slots.used_slots == 1, (
         "startup reconcile wiped another instance's live slot"
     )
     assert [lease.token for lease in pool_b.leases("r0")] == [lease_a.token]
@@ -206,19 +206,19 @@ def test_cross_instance_visibility_capacity_and_startup_reconcile(backend):
 
     with pytest.raises(BUSY):
         pool_b.acquire(
-            AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=0.6)
+            AcquireRequest(rid="r0", consumer="b", slots=1, timeout=0.6)
         )
     # The failed attempt must not corrupt the authoritative lease.
     assert [lease.token for lease in pool_b.leases("r0")] == [lease_a.token]
-    assert pool_b.get("r0").concurrency.used_slots == 1
+    assert pool_b.get("r0").slots.used_slots == 1
 
     assert pool_a.release(lease_a) is True
     assert pool_b.leases("r0") == []
     lease_b = pool_b.acquire(
-        AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=2.0)
+        AcquireRequest(rid="r0", consumer="b", slots=1, timeout=2.0)
     )
     assert pool_b.release(lease_b) is True
-    assert pool_b.get("r0").concurrency.used_slots == 0
+    assert pool_b.get("r0").slots.used_slots == 0
 
 
 def test_cross_instance_force_revoke_and_stale_release(backend):
@@ -228,25 +228,25 @@ def test_cross_instance_force_revoke_and_stale_release(backend):
     seed(pool_a)
 
     lease_a = pool_a.acquire(
-        AcquireRequest(resource_id="r0", consumer="a", slots=1, timeout=2.0)
+        AcquireRequest(rid="r0", consumer="a", slots=1, timeout=2.0)
     )
     revoked = pool_b.admin.force_revoke(
         "r0", operator="test", reason="cross-instance", token=lease_a.token
     )
     assert revoked.token == lease_a.token
     assert pool_b.leases("r0") == []
-    assert pool_b.get("r0").concurrency.used_slots == 0
+    assert pool_b.get("r0").slots.used_slots == 0
 
     lease_b = pool_b.acquire(
-        AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=2.0)
+        AcquireRequest(rid="r0", consumer="b", slots=1, timeout=2.0)
     )
     # A never saw the revoke; its late release must be a storage-plane no-op.
     assert pool_a.release(lease_a) is True
-    assert pool_b.get("r0").concurrency.used_slots == 1, "stale release stole a slot"
+    assert pool_b.get("r0").slots.used_slots == 1, "stale release stole a slot"
     assert [lease.token for lease in pool_b.leases("r0")] == [lease_b.token]
 
     assert pool_b.release(lease_b) is True
-    assert pool_b.get("r0").concurrency.used_slots == 0
+    assert pool_b.get("r0").slots.used_slots == 0
     assert pool_b.leases("r0") == []
 
 
@@ -257,7 +257,7 @@ def test_cross_instance_directed_acquire_wakes_by_polling(backend):
     seed(pool_a)
 
     lease_a = pool_a.acquire(
-        AcquireRequest(resource_id="r0", consumer="a", slots=1, timeout=2.0)
+        AcquireRequest(rid="r0", consumer="a", slots=1, timeout=2.0)
     )
     result: dict = {}
     entered = threading.Event()
@@ -267,7 +267,7 @@ def test_cross_instance_directed_acquire_wakes_by_polling(backend):
         entered.set()
         try:
             result["lease"] = pool_b.acquire(
-                AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=3.0)
+                AcquireRequest(rid="r0", consumer="b", slots=1, timeout=3.0)
             )
         except BaseException as exc:  # pragma: no cover - diagnostic path
             result["error"] = exc
@@ -293,7 +293,7 @@ def test_cross_instance_undirected_waiter_wakes_by_polling(backend):
     seed(pool_a)
 
     lease_a = pool_a.acquire(
-        AcquireRequest(resource_id="r0", consumer="a", slots=1, timeout=2.0)
+        AcquireRequest(rid="r0", consumer="a", slots=1, timeout=2.0)
     )
     result: dict = {}
     entered = threading.Event()
@@ -340,7 +340,7 @@ def test_cross_instance_threads_never_oversell(backend):
             try:
                 lease = pool.acquire(
                     AcquireRequest(
-                        resource_id="r0",
+                        rid="r0",
                         consumer=f"{tag}-{i}",
                         slots=1,
                         timeout=0.5,
@@ -353,7 +353,7 @@ def test_cross_instance_threads_never_oversell(backend):
                 if resource is not None:
                     with lock:
                         observed["used"] = max(
-                            observed["used"], resource.concurrency.used_slots
+                            observed["used"], resource.slots.used_slots
                         )
                 with lock:
                     successes["n"] += 1
@@ -378,7 +378,7 @@ def test_cross_instance_threads_never_oversell(backend):
     assert successes["n"] > 0, "no acquisition succeeded"
 
     assert wait_until(
-        lambda: pool_a.get("r0").concurrency.used_slots == 0
+        lambda: pool_a.get("r0").slots.used_slots == 0
         and pool_a.leases("r0") == [],
         10.0,
     ), "slots leaked after concurrent load"
@@ -407,7 +407,7 @@ def _crash_worker(
     pool = ps.create_pool(name, "fakecheck", max_slots=1, lease_ttl=lease_ttl)
     ps.start()
     lease = pool.acquire(
-        AcquireRequest(resource_id="r0", consumer="dead", slots=1, timeout=5.0)
+        AcquireRequest(rid="r0", consumer="dead", slots=1, timeout=5.0)
     )
     with open(marker, "w", encoding="utf-8") as fh:
         fh.write(lease.token)
@@ -450,11 +450,11 @@ def test_cross_instance_hard_crash_reclaims_after_ttl(backend, tmp_path):
 
     ps_b, pool_b = backend.make(name, max_slots=1, lease_ttl=lease_ttl)
     resource = pool_b.get("r0")
-    assert resource is not None and resource.concurrency.used_slots == 1
+    assert resource is not None and resource.slots.used_slots == 1
     assert len(pool_b.leases("r0")) == 1
     with pytest.raises(BUSY):
         pool_b.acquire(
-            AcquireRequest(resource_id="r0", consumer="b", slots=1, timeout=0.6)
+            AcquireRequest(rid="r0", consumer="b", slots=1, timeout=0.6)
         )
 
     # Wait for the coordination key to expire (ttl + 5 s heartbeat grace).
@@ -465,12 +465,12 @@ def test_cross_instance_hard_crash_reclaims_after_ttl(backend, tmp_path):
     # A restart reconciles the orphaned slot back to zero.
     _, pool_b2 = backend.make(name, max_slots=1, lease_ttl=lease_ttl)
     resource = pool_b2.get("r0")
-    assert resource is not None and resource.concurrency.used_slots == 0
+    assert resource is not None and resource.slots.used_slots == 0
     lease = pool_b2.acquire(
-        AcquireRequest(resource_id="r0", consumer="b2", slots=1, timeout=2.0)
+        AcquireRequest(rid="r0", consumer="b2", slots=1, timeout=2.0)
     )
     assert pool_b2.release(lease) is True
-    assert pool_b2.get("r0").concurrency.used_slots == 0
+    assert pool_b2.get("r0").slots.used_slots == 0
     assert pool_b2.leases("r0") == []
 
 
@@ -503,7 +503,7 @@ def _contend_worker(
             try:
                 lease = pool.acquire(
                     AcquireRequest(
-                        resource_id="r0",
+                        rid="r0",
                         consumer=f"p{os.getpid()}-{i}",
                         slots=1,
                         timeout=0.5,
@@ -516,9 +516,9 @@ def _contend_worker(
                 resource = pool.get("r0")
                 if resource is not None:
                     result["max_used"] = max(
-                        result["max_used"], resource.concurrency.used_slots
+                        result["max_used"], resource.slots.used_slots
                     )
-                    if resource.concurrency.used_slots > max_slots:
+                    if resource.slots.used_slots > max_slots:
                         result["oversell"] += 1
                 time.sleep(0.005)
                 result["ok"] += 1
@@ -581,7 +581,7 @@ def test_cross_process_contention_never_oversells(backend, tmp_path):
 
     _, pool = backend.make(name, max_slots=max_slots)
     assert wait_until(
-        lambda: pool.get("r0").concurrency.used_slots == 0
+        lambda: pool.get("r0").slots.used_slots == 0
         and pool.leases("r0") == [],
         10.0,
     ), f"shared state not quiesced: {pool.stats()}"

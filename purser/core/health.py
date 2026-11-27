@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from purser.core.resource import HealthStats as HealthStats, Resource
 
@@ -52,12 +52,6 @@ class HealthReport:
         latency_ms: float | None = None,
     ) -> HealthReport:
         return cls(alive=False, latency_ms=latency_ms, error=error, action=action)
-
-
-class HealthChecker(Protocol):
-    """Anything that can answer 'is this resource alive?'."""
-
-    async def validate(self, resource: Resource) -> HealthReport: ...
 
 
 class ProbeGuard:

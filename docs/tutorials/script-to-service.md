@@ -10,7 +10,7 @@
 | 同机多进程 | 一台机器多个 worker、需要共享槽位与租约 | 独立调度进程 | `connect()` / IPC | 取决于存储层 |
 | REST 服务 | 跨机器、多语言、需要控制台 | `purser serve` | HTTP | 取决于存储层 |
 
-三种形态的池配置、适配器与调度行为一致；变化的是“谁持有 `Purser`”和“调用怎么到达它”。
+三种形态的池配置、适配器与调度行为一致；变化的是“谁持有 `Purser`”和“调用如何到达它”。
 
 ## 0. 起点：嵌入式脚本
 
@@ -22,9 +22,9 @@ from purser import AcquireRequest, Purser, UsageOutcome
 
 async def main() -> None:
     ps = Purser(storage="sqlite", sqlite_path="purser.db")
-    pool = ps.ensure_pool("proxies", "proxy", lease_ttl=120)
+    pool = ps.ensure_pool(name="proxies", kind="proxy", lease_ttl=120)
 
-    async with pool.lease(AcquireRequest(consumer="worker-1")) as lease:
+    async with pool.lease(req=AcquireRequest(consumer="worker-1")) as lease:
         try:
             await do_work(lease)
             lease.outcome = UsageOutcome.OK
@@ -39,7 +39,7 @@ async def do_work(lease) -> None:
     ...
 ```
 
-先用这个形态把业务逻辑跑通：资源获取、异常归类、归还结果都在这一段里。后面的迁移只替换“怎么拿到 `pool`”，不改 `do_work()`。
+先用这个形态验证业务逻辑：资源获取、异常归类、归还结果都在这一段里。后面的迁移只替换“如何获取 `pool`”，不改 `do_work()`。
 
 ## 1. 同机多进程：LocalScheduler
 
@@ -54,8 +54,8 @@ sched = LocalScheduler(
     adapters=[ProxyAdapter(probe_targets=["https://example.com"])],
 ).start()
 
-sched.create_pool("proxies", "proxy", lease_ttl=120)
-sched.import_resources("proxies", [
+sched.create_pool(name="proxies", kind="proxy", lease_ttl=120)
+sched.import_resources(pool="proxies", records=[
     {"host": "1.2.3.4", "port": 8080, "tags": ["http"]},
 ])
 print(sched.address)  # worker 通过它或 PURSER_LOCAL_SCHEDULER 找到调度进程
@@ -70,9 +70,9 @@ from purser import AcquireRequest, UsageOutcome, connect
 
 
 async def main(address) -> None:
-    pool = connect("proxies", address)
+    pool = connect(pool="proxies", address=address)
     try:
-        async with pool.lease(AcquireRequest(consumer="worker-1")) as lease:
+        async with pool.lease(req=AcquireRequest(consumer="worker-1")) as lease:
             try:
                 await do_work(lease)
                 lease.outcome = UsageOutcome.OK
@@ -86,7 +86,7 @@ async def main(address) -> None:
 要点：
 
 - `connect()` 返回 `RemotePool`，数据面方法与本地池同名；`lease.resource` 默认是通用 `Resource`，传 `resource_types={"proxy": ProxyResource}` 可恢复类型化对象。
-- IPC 调用跑在线程池里，不阻塞事件循环；但每次调用有超时，调度进程挂掉会抛 `SchedulerUnavailable` / `SchedulerTimeout`。
+- IPC 调用在线程池中执行，不阻塞事件循环；但每次调用有超时，调度进程挂掉会抛 `SchedulerUnavailable` / `SchedulerTimeout`。
 - `LocalScheduler` 默认 `start_method="spawn"`，Windows 与 macOS 行为一致；worker 侧不要创建新的 `Purser`。
 - 调度进程退出后，worker 的租约按 TTL 回收；重启后调度进程会对账协调层，见[重启对账](../guides/multi-instance.md#restart-reconcile)。
 
@@ -152,7 +152,7 @@ async def release(token: str, outcome: str = "ok", used: int = 1) -> None:
 - **401/403**：密钥缺失或只读角色执行写操作。
 - **409**：资源忙、池耗尽、租约冲突；先读状态再重试，不要盲重试。
 - **422**：请求字段非法；重试无意义。
-- **幂等**：获取租约支持 `Idempotency-Key`，网络重试时带上同一个键可避免拿到两份租约。
+- **幂等**：获取租约支持 `Idempotency-Key`，网络重试时带上同一个键可避免获取到两份租约。
 
 契约见 [REST API](../reference/rest-api/index.md) 与[错误处理](../reference/errors.md)。
 

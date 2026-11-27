@@ -104,7 +104,7 @@ def cmd_lease(args: argparse.Namespace, client: httpx.Client) -> None:
     if resp.status_code != 200:
         _fail(resp)
     lease = resp.json()["leases"][0]
-    console.print(f"[bold green]已获取[/] {lease['resource_id']}")
+    console.print(f"[bold green]已获取[/] {lease['rid']}")
     console.print(f"token: {lease['token']}")
     console.print(f"payload: {json.dumps(lease.get('payload'), ensure_ascii=False)}")
     console.print(f"expires_at: {lease['expires_at']:.1f}")
@@ -234,8 +234,7 @@ def _parser() -> argparse.ArgumentParser:
         p.add_argument("rid")
         p.add_argument("--reason")
         p.add_argument("--amount", type=int)
-        p.add_argument("--action", default=name)
-        p.set_defaults(fn=cmd_action)
+        p.set_defaults(fn=cmd_action, action=name)
 
     p = sub.add_parser("lease", help="获取租约")
     add_common(p)

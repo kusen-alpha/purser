@@ -59,7 +59,7 @@ class HookAdapter(ResourceAdapter):
         self.acquired.append(resource.id)
 
     async def on_renew(self, resource, lease) -> None:
-        self.renewed.append(lease.resource_id)
+        self.renewed.append(lease.rid)
 
     async def before_release(self, resource: Resource, lease) -> None:
         self.before_released.append(resource.id)
@@ -164,7 +164,7 @@ async def test_lease_lifecycle_hooks_fire(make_pool, purser):
     assert ("r1", "admin kick") in checker.revoked
 
     lease = await pool.acquire(AcquireRequest(consumer="c3"))
-    await pool._on_lease_lost(lease)
+    await pool._lease.on_lost(lease)
     assert checker.lost == ["r1"]
 
 
@@ -190,7 +190,7 @@ async def test_switch_mutates_old_resource_in_place(purser):
     assert (await pool.get("r1")).payload["host"] == "new"
 
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    assert lease.resource_id == "r1"
+    assert lease.rid == "r1"
     await pool.release(lease)
 
 
@@ -371,9 +371,6 @@ def test_idempotency_ttl(monkeypatch):
     assert store.get("k") == {"ok": True}
     now[0] = 1000 + 101
     assert store.get("k") is None
-    store.put("k2", {})
-    now[0] = 1000 + 202
-    assert store.sweep() >= 1
 
 
 def test_secret_codec_env_and_keyfile(monkeypatch, tmp_path):

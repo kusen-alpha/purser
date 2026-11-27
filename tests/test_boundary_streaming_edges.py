@@ -20,7 +20,7 @@ async def test_acquire_many_honors_requested_slots(make_pool):
     assert [lease.slots for lease in batch] == [2, 2]
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.FULL
-    assert res.concurrency.used_slots == 4
+    assert res.slots.used_slots == 4
     await batch.release_all(pool)
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
@@ -32,7 +32,7 @@ async def test_acquire_many_atomic_rollback_with_slots(make_pool):
     with pytest.raises(PoolExhausted):
         await pool.acquire_many(2, req=AcquireRequest(slots=2), timeout=0.1)
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     assert res.state is ResourceState.IDLE
 
 
@@ -42,7 +42,7 @@ async def test_acquire_slots_exceeding_capacity_times_out(make_pool):
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(slots=2, timeout=0.1))
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
 
 
 async def test_mixed_slot_waiters_no_starvation(make_pool):
@@ -74,7 +74,7 @@ async def test_mixed_slot_waiters_no_starvation(make_pool):
     await pool.release(leases[1])
     await asyncio.gather(big, small)
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
 
 
 async def test_query_limit_zero_and_counts_consistency(make_pool):
@@ -119,7 +119,7 @@ async def test_release_rejects_bad_outcome_type(make_pool):
     with pytest.raises(ConfigError):
         await pool.release(lease, outcome="bogus")
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 1  # untouched
+    assert res is not None and res.slots.used_slots == 1  # untouched
     assert await pool.release(lease, outcome=None) is True
 
 
@@ -154,7 +154,7 @@ async def test_force_revoke_clears_consumer_hold(make_pool):
     again = await pool.acquire(
         AcquireRequest(consumer="c", ignore_cooldown=True)
     )
-    assert again.resource_id == rid
+    assert again.rid == rid
     await pool.release(again)
 
 
@@ -165,5 +165,5 @@ async def test_move_then_acquire_from_target(make_pool, purser):
     moved = await pool.admin.move_resource(rid, target, operator="ops", reason="migrate")
     assert moved.id == rid
     lease = await target.acquire(AcquireRequest(consumer="c"))
-    assert lease.resource_id == rid
+    assert lease.rid == rid
     await target.release(lease)

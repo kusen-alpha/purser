@@ -198,7 +198,7 @@ def test_lifecycle_crud_and_events(sync_backend, pool_name):
         assert [resource.id for resource in iterator] == ids
 
     lease = pool.acquire(consumer="c")
-    assert lease.resource_id in ids
+    assert lease.rid in ids
     assert len(pool.leases()) == 1
     assert isinstance(pool.renew(lease), float)
     lease.used = 2
@@ -393,7 +393,7 @@ def test_admin_surface(sync_backend, pool_name):
     assert other.require("r1").id == "r1"
 
     lease = other.acquire(consumer="c")
-    revoked = other.admin.force_revoke(lease.resource_id, reason="kick")
+    revoked = other.admin.force_revoke(lease.rid, reason="kick")
     assert revoked.token == lease.token
     assert other.leases() == []
 

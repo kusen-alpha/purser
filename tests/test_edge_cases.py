@@ -23,7 +23,7 @@ async def test_waiter_timeout_leaves_no_stale_waiter(make_pool, monkeypatch):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
     holder = await pool.acquire(AcquireRequest(consumer="holder"))
-    assert holder.resource_id == rid
+    assert holder.rid == rid
     with pytest.raises(PoolExhausted):
         await pool.acquire(AcquireRequest(consumer="late", timeout=0.1))
     assert pool._waiters  # the cancelled handle is still queued
@@ -39,7 +39,7 @@ async def test_directed_acquire_bad_state(make_pool):
     [rid] = await seed(pool, n=1)
     await pool.admin.ban(rid, operator="ops", reason="edge")
     with pytest.raises(BadState):
-        await pool.acquire(AcquireRequest(resource_id=rid, timeout=0.2))
+        await pool.acquire(AcquireRequest(rid=rid, timeout=0.2))
 
 
 @pytest.mark.parametrize(
@@ -109,7 +109,7 @@ async def test_expired_lease_reconciled_by_clock(make_pool):
     await pool._reconcile_leases()
     res = await pool.get(rid)
     assert res is not None and res.state is ResourceState.IDLE
-    assert res.concurrency.used_slots == 0
+    assert res.slots.used_slots == 0
 
 
 async def test_two_instances_shared_sqlite_redis_no_oversell(
@@ -149,7 +149,7 @@ async def test_two_instances_shared_sqlite_redis_no_oversell(
         ok = [o for o in outcomes if not isinstance(o, Exception)]
         assert len(ok) == 1
         res = await p1.get("r1")
-        assert res is not None and res.concurrency.used_slots == 1
+        assert res is not None and res.slots.used_slots == 1
         await p1.release(ok[0])
     finally:
         await ps1.close()

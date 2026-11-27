@@ -22,11 +22,11 @@ from purser.backends.base import ResourcePatch
 from purser.core.resource import (
     AcquireRequest,
     CheckVerdict,
-    Concurrency,
     Lease,
     Quota,
     Resource,
     SiteFailure,
+    Slots,
 )
 from purser.core.state import ResourceState
 from purser.errors import (
@@ -54,7 +54,7 @@ def _seq(pool) -> int:
 async def _slots(pool, rid: str) -> int:
     resource = await pool.storage.get(pool.name, rid)
     assert resource is not None
-    return resource.concurrency.used_slots
+    return resource.slots.used_slots
 
 
 def _resource(**kwargs) -> Resource:
@@ -430,22 +430,22 @@ async def test_stateless_directed_borrow_with_failing_hook(make_pool, monkeypatc
         raise RuntimeError("before_release exploded")
 
     monkeypatch.setattr(pool.adapter, "before_release", boom)
-    lease = await pool.acquire(AcquireRequest(resource_id=rid, consumer="c"))
-    assert lease.resource_id == rid
+    lease = await pool.acquire(AcquireRequest(rid=rid, consumer="c"))
+    assert lease.rid == rid
     assert await pool.release(lease) is True
 
 
 async def test_stateless_commit_rejects_unfit_resources(make_pool):
     pool = make_pool(acquire_mode="stateless")
     [rid] = await seed(pool, n=1)
-    plain = AcquireRequest(resource_id=rid)
+    plain = AcquireRequest(rid=rid)
 
     assert await pool._lease._commit(plain, "missing") is None
     assert await pool._lease._commit(
-        AcquireRequest(resource_id=rid, tags=frozenset({"gold"})), rid
+        AcquireRequest(rid=rid, tags=frozenset({"gold"})), rid
     ) is None
     assert await pool._lease._commit(
-        AcquireRequest(resource_id=rid, required_tag="gold"), rid
+        AcquireRequest(rid=rid, required_tag="gold"), rid
     ) is None
     await pool.admin.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="test")
     assert await pool._lease._commit(plain, rid) is None
@@ -479,7 +479,7 @@ async def test_abandon_lease_paths(make_pool):
     await pool._lease._abandon_lease(tracked)
     assert await _slots(pool, synthetic_rid) == 0
     holds = pool._lease.consumer_holds.get("tracked", set())
-    assert tracked.resource_id not in holds
+    assert tracked.rid not in holds
 
 
 async def test_abandon_wait_handle_returns_delivered_lease(make_pool):
@@ -707,7 +707,7 @@ async def test_idempotent_acquire_shields_inflight_request(make_pool):
 
 async def test_idempotent_acquire_does_not_cache_failures(make_pool):
     pool = make_pool()
-    request = AcquireRequest(resource_id="missing", idempotency_key="k")
+    request = AcquireRequest(rid="missing", idempotency_key="k")
     for _ in range(2):
         with pytest.raises(ResourceNotFound):
             await pool.acquire(request)
@@ -742,13 +742,13 @@ async def test_rate_buckets_are_bounded(make_pool):
 async def test_directed_acquire_reports_missing_and_unvalidated(make_pool):
     pool = make_pool()
     with pytest.raises(ResourceNotFound):
-        await pool.acquire(AcquireRequest(resource_id="missing"))
+        await pool.acquire(AcquireRequest(rid="missing"))
 
     await pool.import_resources(
         [{"id": "new-1", "host": "127.0.0.1"}], import_validate="none"
     )
     with pytest.raises(PoolExhausted) as exc:
-        await pool.acquire(AcquireRequest(resource_id="new-1", timeout=0))
+        await pool.acquire(AcquireRequest(rid="new-1", timeout=0))
     assert "never validated" in str(exc.value)
 
 
@@ -767,7 +767,7 @@ async def test_directed_acquire_reports_validating_resource(make_pool):
         patch=ResourcePatch(state=ResourceState.VALIDATING),
     )
     with pytest.raises(PoolExhausted) as exc:
-        await pool.acquire(AcquireRequest(resource_id="v-1", timeout=0))
+        await pool.acquire(AcquireRequest(rid="v-1", timeout=0))
     assert "still validating" in str(exc.value)
 
 
@@ -777,15 +777,15 @@ async def test_directed_acquire_reports_suspended_state(make_pool):
     await pool.admin.admin_set_state(rid, target=ResourceState.SUSPENDED, reason="test")
 
     with pytest.raises(BadState):
-        await pool.acquire(AcquireRequest(resource_id=rid))
+        await pool.acquire(AcquireRequest(rid=rid))
 
 
 async def test_directed_acquire_returns_consumer_hold(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    first = await pool.acquire(AcquireRequest(consumer="c", resource_id=rid))
+    first = await pool.acquire(AcquireRequest(consumer="c", rid=rid))
 
-    second = await pool.acquire(AcquireRequest(consumer="c", resource_id=rid))
+    second = await pool.acquire(AcquireRequest(consumer="c", rid=rid))
     assert second.token == first.token
     assert second.payload is not None
     await pool.release(first)
@@ -794,11 +794,11 @@ async def test_directed_acquire_returns_consumer_hold(make_pool):
 async def test_directed_acquire_busy_times_out(make_pool):
     pool = make_pool()
     [rid] = await seed(pool, n=1)
-    holder = await pool.acquire(AcquireRequest(consumer="a", resource_id=rid))
+    holder = await pool.acquire(AcquireRequest(consumer="a", rid=rid))
 
     with pytest.raises(ResourceBusy):
         await pool.acquire(
-            AcquireRequest(consumer="b", resource_id=rid, timeout=0.05)
+            AcquireRequest(consumer="b", rid=rid, timeout=0.05)
         )
     await pool.release(holder)
 
@@ -960,7 +960,7 @@ async def test_commit_rejects_mutex_group_conflict(make_pool):
     for rid in rids:
         await pool.admin.update_resource(rid, mutex_group="g", reason="test")
     held = await pool.acquire(AcquireRequest(consumer="c"))
-    other = next(rid for rid in rids if rid != held.resource_id)
+    other = next(rid for rid in rids if rid != held.rid)
 
     assert await pool._lease._commit(AcquireRequest(consumer="c"), other) is None
     await pool.release(held)
@@ -1089,9 +1089,9 @@ async def test_skip_reasons_cover_every_blocker(make_pool):
     service = pool._lease
     plain = AcquireRequest()
 
-    busy = Concurrency(max_slots=1, used_slots=1)
+    busy = Slots(max_slots=1, used_slots=1)
     assert await service._skip_reason(
-        _resource(concurrency=busy), AcquireRequest(slots=2), now
+        _resource(slots=busy), AcquireRequest(slots=2), now
     ) == "slots"
     assert await service._skip_reason(
         _resource(tags=frozenset()), AcquireRequest(tags=frozenset({"gold"})), now
@@ -1130,16 +1130,16 @@ async def test_skip_reasons_cover_every_blocker(make_pool):
     for rid in rids:
         await pool.admin.update_resource(rid, mutex_group="g", reason="test")
     held = await pool.acquire(AcquireRequest(consumer="c"))
-    other = next(rid for rid in rids if rid != held.resource_id)
+    other = next(rid for rid in rids if rid != held.rid)
     stored = await pool.storage.get(pool.name, other)
     assert stored is not None
     assert await service._skip_reason(
         stored, AcquireRequest(consumer="c"), now
     ) == "mutex_group"
-    assert await service._holds_group("c", "g", held.resource_id) is False
+    assert await service._holds_group("c", "g", held.rid) is False
 
-    service.consumer_holds["c"].add(held.resource_id)
-    same_id = _resource(id=held.resource_id, tags=frozenset({"gold"}))
+    service.consumer_holds["c"].add(held.rid)
+    same_id = _resource(id=held.rid, tags=frozenset({"gold"}))
     assert await service._skip_reason(
         same_id, AcquireRequest(consumer="c"), now
     ) == "consumer_hold"

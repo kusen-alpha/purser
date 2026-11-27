@@ -131,12 +131,13 @@ async def test_import_retries_after_stale_snapshot(make_pool, monkeypatch):
     baseline = bumped.version
     real_get = pool.storage.get
     injected = {"done": False}
+    expected_rid = rid
 
-    async def stale_get(name: str, resource_id: str):
-        if name == pool.name and resource_id == rid and not injected["done"]:
+    async def stale_get(name: str, rid: str):
+        if name == pool.name and rid == expected_rid and not injected["done"]:
             injected["done"] = True
             return snapshot
-        return await real_get(name, resource_id)
+        return await real_get(name, rid)
 
     monkeypatch.setattr(pool.storage, "get", stale_get)
     report = await pool.import_resources(
@@ -260,7 +261,7 @@ async def test_concurrent_release_returns_slots_once(make_pool):
     )
     assert results == [True, True]
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
 
     again = await pool.acquire(AcquireRequest(consumer="c2", timeout=0.2))
     await pool.release(again)
@@ -272,13 +273,13 @@ async def test_lost_lease_returns_storage_slots(make_pool):
     lease = await pool.acquire(AcquireRequest(consumer="c", use_limit=1))
     lease.used = 1  # the heartbeat now refuses to renew
 
-    await pool._on_lease_lost(lease)
+    await pool._lease.on_lost(lease)
 
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     assert await pool._coordination.get_lease(pool.name, lease.token) is None
     again = await pool.acquire(AcquireRequest(consumer="c2", timeout=0.2))
-    assert again.resource_id == rid
+    assert again.rid == rid
     await pool.release(again)
 
 
@@ -289,11 +290,11 @@ async def test_release_restores_token_when_storage_rejects(make_pool, monkeypatc
     real = pool.storage.transition_release
     calls = {"n": 0}
 
-    async def failing(name: str, resource_id: str, slots: int):
+    async def failing(name: str, rid: str, slots: int):
         calls["n"] += 1
         if calls["n"] == 1:
             return TransitionResult(ok=False)
-        return await real(name, resource_id, slots)
+        return await real(name, rid, slots)
 
     monkeypatch.setattr(pool.storage, "transition_release", failing)
     with pytest.raises(LeaseConflict):
@@ -303,7 +304,7 @@ async def test_release_restores_token_when_storage_rejects(make_pool, monkeypatc
 
     assert await pool.release(lease) is True
     res = await pool.get(rid)
-    assert res is not None and res.concurrency.used_slots == 0
+    assert res is not None and res.slots.used_slots == 0
     again = await pool.acquire(AcquireRequest(consumer="c2", timeout=0.2))
     await pool.release(again)
 
@@ -341,7 +342,7 @@ async def test_admin_archive_from_idle(make_pool):
 # -- API input validation --------------------------------------------------
 
 
-def test_api_rejects_unhashable_tags_and_bad_resource_id(make_client):
+def test_api_rejects_unhashable_tags_and_bad_rid(make_client):
     client, _ = make_client()
     client.post("/pools", json={"name": "px", "kind": "fakecheck"}, headers=HEAD)
     client.post(
@@ -354,7 +355,7 @@ def test_api_rejects_unhashable_tags_and_bad_resource_id(make_client):
     )
     assert bad_tags.status_code == 422
     bad_rid = client.post(
-        "/pools/px/leases", json={"resource_id": {}}, headers=HEAD
+        "/pools/px/leases", json={"rid": {}}, headers=HEAD
     )
     assert bad_rid.status_code == 422
 
@@ -514,7 +515,7 @@ async def test_scheduler_tasks_run_independently():
     "overrides",
     [
         {"heartbeat_interval": 0},
-        {"validate_concurrency": 0},
+        {"validate_workers": 0},
         {"usage_quota": -1},
         {"max_lease_duration": float("nan")},
         {"expires_in": -5},

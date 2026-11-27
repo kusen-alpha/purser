@@ -591,7 +591,7 @@ async def test_minimal_type_without_hooks_works_end_to_end():
         assert report.imported == 1
         await ps.start()
         async with pool.lease(consumer="c") as lease:
-            assert lease.resource_id == "b1"
+            assert lease.rid == "b1"
         counts = await pool.counts()
         assert counts[ResourceState.IDLE] == 1
     finally:

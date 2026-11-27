@@ -21,5 +21,5 @@
 ## 完成之后
 
 - 想理解调度行为：[资源可用性判定](../guides/availability.md)、[公平性与健康度](../guides/fairness-and-health.md)。
-- 想接真实代理/账号：[内置资源适配器](../reference/resource-adapters.md)。
-- 想上线多实例：[数据平面与丢失语义](../design/data-planes.md)、[多实例部署](../guides/multi-instance.md)。
+- 想接真实资源：[内置资源适配器](../reference/resource-adapters.md)。
+- 想上线多实例：[多实例部署](../guides/multi-instance.md)。

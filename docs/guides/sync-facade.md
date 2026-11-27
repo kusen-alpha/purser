@@ -21,12 +21,12 @@
 from purser import AcquireRequest, SyncPurser, UsageOutcome
 
 with SyncPurser() as ps:
-    ps.register_adapter(MyAdapter())
-    pool = ps.create_pool("demo", "my-kind")
-    pool.import_resources([{"id": "r1"}], import_validate="on_import")
+    ps.register_adapter(adapter=MyAdapter())
+    pool = ps.create_pool(name="demo", kind="my-kind")
+    pool.import_resources(records=[{"id": "r1"}], import_validate="on_import")
 
-    with pool.lease(AcquireRequest(consumer="worker")) as lease:
-        print(lease.resource_id, lease.payload)
+    with pool.lease(req=AcquireRequest(consumer="worker")) as lease:
+        print(lease.rid, lease.payload)
         lease.outcome = UsageOutcome.OK
 
     print(pool.counts(by_name=True))
@@ -43,24 +43,24 @@ from purser import AcquireRequest, SyncPurser, UsageOutcome
 
 
 def crawl(task_id: int) -> str:
-    with pool.lease(AcquireRequest(consumer=f"crawler-{task_id}", tags=("http",))) as lease:
+    with pool.lease(req=AcquireRequest(consumer=f"crawler-{task_id}", tags=("http",))) as lease:
         proxy = lease.payload
         # ... 这里做真实请求 ...
         lease.outcome = UsageOutcome.OK
-    return lease.resource_id
+    return lease.rid
 
 
 with SyncPurser(callback_workers=8) as ps:
-    pool = ps.create_pool("proxies", "proxy")
-    pool.import_resources([...], import_validate="on_import")
+    pool = ps.create_pool(name="proxies", kind="proxy")
+    pool.import_resources(records=[...], import_validate="on_import")
 
     with ThreadPoolExecutor(max_workers=8) as ex:
         ids = list(ex.map(crawl, range(80)))
 ```
 
 - `with SyncPurser() as ps:` 已完成 `start()`，退出时自动 `close()`。
-- 多个线程可以同时持有同一条并发资源（按 `max_slots` 计数）；独占资源拿不到时进入公平等待队列，超时抛异常。
-- `SyncLease` / `SyncResourceIterator` / `SyncSubscription` 在拿到它的线程内使用和关闭，不要跨线程传递。
+- 多个线程可以同时持有同一条并发资源（按 `max_slots` 计数）；独占资源无法获取时进入公平等待队列，超时抛异常。
+- `SyncLease` / `SyncResourceIterator` / `SyncSubscription` 在获取到它的线程内使用和关闭，不要跨线程传递。
 
 ## 线程安全边界
 

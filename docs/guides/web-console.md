@@ -75,7 +75,7 @@ purser serve --host 0.0.0.0 --port 8000
 
 高级参数包括 `priority`、`use_limit`、`probe`、`trace_id`、目标站点、`Idempotency-Key`、`allow_duplicate` 与 `ignore_cooldown`。字段含义与冲突规则见 [租约生命周期](lease-lifecycle.md)。
 
-“活跃租约”可按 `consumer` 或资源 ID 过滤，单条归还时选择结果（正常、验证码、限流、被封、超时等）并填写 `used`；“按 consumer 归还”会一次释放该调用方的全部租约。归还结果直接影响健康度、隔离与配额，见 [公平性与健康度](fairness-and-health.md)。
+“活跃租约”可按 `consumer` 或资源 ID 过滤，单条归还时选择结果（正常、验证码、限流、封禁、超时等）并填写 `used`；“按 consumer 归还”会一次释放该调用方的全部租约。归还结果直接影响健康度、隔离与配额，见 [公平性与健康度](fairness-and-health.md)。
 
 ## 观察、审计与报表
 

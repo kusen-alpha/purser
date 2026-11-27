@@ -47,13 +47,14 @@ def test_backup_restore_roundtrip(make_client):
     )
     src.post(
         "/pools/p1/leases",
-        json={"consumer": "c", "resource_id": "r2", "timeout": 5},
+        json={"consumer": "c", "rid": "r2", "timeout": 5},
         headers=head,
     )
     src.post("/pools/p1/resources/r1/ban", json={"reason": "risk"}, headers=head)
 
     backup = src.get("/backup", headers=head).json()
-    assert backup["format"] == "purser-backup" and backup["version"] == 1
+    assert backup["format"] == "purser-backup"
+    assert backup["version"] == 2 and backup["schema_version"] == 2
     assert [pool["name"] for pool in backup["pools"]] == ["p1"]
     entry = backup["pools"][0]
     exported = {item["id"]: item for item in entry["resources"]}
@@ -61,7 +62,7 @@ def test_backup_restore_roundtrip(make_client):
     assert exported["r2"]["state"] in {"active", "full"}
     assert exported["r2"]["payload"]["host"] == "10.0.0.2"
     assert entry["leases"]  # exported for reference, ignored on restore
-    assert entry["leases"][0]["resource_id"] == "r2"
+    assert entry["leases"][0]["rid"] == "r2"
     assert entry["config"]["weights"]["health"] == 1.5
 
     dst, dst_ps = make_client()
@@ -157,7 +158,7 @@ def test_pool_and_resource_flow(make_client):
         json={"consumer": "c", "target": "target.com", "timeout": 5},
         headers=head,
     ).json()["leases"][0]
-    assert lease["resource_id"] in {"p1", "p2"}
+    assert lease["rid"] in {"p1", "p2"}
     assert "host" in lease["payload"] and lease["payload"]["port"] == 8080
     token = lease["token"]
     assert client.get("/pools/px/leases", headers=auth("ro-key")).json()["leases"]
@@ -380,7 +381,7 @@ def test_resource_query_sort_health_recent_and_validation(make_client):
     # last_used_at is stamped on acquire; b was used before c, a never.
     for rid in ("b", "c"):
         leased = client.post(
-            "/pools/ps/leases", json={"resource_id": rid}, headers=head
+            "/pools/ps/leases", json={"rid": rid}, headers=head
         ).json()
         assert leased["count"] == 1
         client.delete(f"/pools/ps/leases/{leased['leases'][0]['token']}", headers=head)
@@ -743,14 +744,14 @@ def test_lease_single_get_idempotency_and_bulk_release(make_client):
     token = first["leases"][0]["token"]
     one = client.get(f"/pools/px/leases/{token}", headers=head)
     assert one.status_code == 200
-    assert one.json()["lease"]["resource_id"] == first["leases"][0]["resource_id"]
+    assert one.json()["lease"]["rid"] == first["leases"][0]["rid"]
     assert client.get("/pools/px/leases/missing", headers=head).status_code == 404
 
     second = client.post(
         "/pools/px/leases", json={"consumer": "bulk"}, headers=head
     ).json()
     assert second["count"] == 1
-    assert second["leases"][0]["resource_id"] != first["leases"][0]["resource_id"]
+    assert second["leases"][0]["rid"] != first["leases"][0]["rid"]
 
     assert (
         client.get(
@@ -766,7 +767,7 @@ def test_lease_single_get_idempotency_and_bulk_release(make_client):
     )
     only = client.get(
         "/pools/px/leases",
-        params={"resource_id": first["leases"][0]["resource_id"]},
+        params={"rid": first["leases"][0]["rid"]},
         headers=head,
     ).json()
     assert only["count"] == 1
@@ -809,7 +810,7 @@ def test_cancel_drain_returns_resource_to_service(make_client):
 
     lease = client.post(
         "/pools/px/leases",
-        json={"consumer": "c", "resource_id": "r1", "timeout": 5},
+        json={"consumer": "c", "rid": "r1", "timeout": 5},
         headers=head,
     ).json()["leases"][0]
     assert (
@@ -1037,7 +1038,7 @@ def test_usage_report_totals_groups_and_live_snapshot(make_client):
     )
 
     first = client.post(
-        "/pools/p1/leases", json={"consumer": "c1", "resource_id": "r1"}, headers=head
+        "/pools/p1/leases", json={"consumer": "c1", "rid": "r1"}, headers=head
     ).json()["leases"][0]
     assert (
         client.request(
@@ -1049,7 +1050,7 @@ def test_usage_report_totals_groups_and_live_snapshot(make_client):
         == 200
     )
     second = client.post(
-        "/pools/p1/leases", json={"consumer": "c2", "resource_id": "r2"}, headers=head
+        "/pools/p1/leases", json={"consumer": "c2", "rid": "r2"}, headers=head
     ).json()["leases"][0]
     client.request(
         "DELETE",
@@ -1058,7 +1059,7 @@ def test_usage_report_totals_groups_and_live_snapshot(make_client):
         headers=head,
     )
     held = client.post(
-        "/pools/p1/leases", json={"consumer": "c3", "resource_id": "r3"}, headers=head
+        "/pools/p1/leases", json={"consumer": "c3", "rid": "r3"}, headers=head
     ).json()["leases"][0]
 
     # Read-only keys can read reports.
@@ -1138,7 +1139,7 @@ def test_validate_jobs_progress_listing_and_cancel(make_client):
         json={
             "name": "pv",
             "kind": "fakecheck",
-            "config": {"validate_concurrency": 1},
+            "config": {"validate_workers": 1},
         },
         headers=head,
     )

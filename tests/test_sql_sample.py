@@ -7,7 +7,7 @@ import random
 import pytest
 
 from purser.backends.sqlite import SqliteStorage
-from purser.core.resource import AcquireRequest, Concurrency, HealthStats, Resource
+from purser.core.resource import AcquireRequest, HealthStats, Resource, Slots
 from purser.core.state import ALLOCATABLE_STATES, ResourceState
 
 POOL = "p"
@@ -31,7 +31,7 @@ def make(
         payload=payload,
         state=state,
         tags=frozenset(tags),
-        concurrency=Concurrency(max_slots=max_slots, used_slots=used),
+        slots=Slots(max_slots=max_slots, used_slots=used),
         health=HealthStats(score=0.75, samples=4),
         used_count=3,
         meta={"created_at": 10.0, "last_used_at": 20.0, "preference": 0.4},
@@ -200,5 +200,5 @@ async def test_sqlite_acquire_does_not_scan(purser, make_pool, storage_kind, mon
 
     monkeypatch.setattr(pool.storage, "scan", no_scan)
     lease = await pool.acquire(AcquireRequest(consumer="c"))
-    assert lease.resource_id in names
+    assert lease.rid in names
     await pool.release(lease)

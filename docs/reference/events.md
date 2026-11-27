@@ -87,7 +87,7 @@ async def wait_job(event):
         done.set()
 
 unsubscribe = ps.bus.subscribe(wait_job)
-await pool.import_resources(records, import_validate="batch")
+await pool.import_resources(records=records, import_validate="batch")
 await asyncio.wait_for(done.wait(), timeout=300)
 unsubscribe()
 ```

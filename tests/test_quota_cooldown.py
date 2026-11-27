@@ -72,7 +72,7 @@ async def test_quota_cooldown_can_be_acquired_again():
         await asyncio.sleep(1.3)
         await pool.admin.run_maintenance("quota_reset")
         lease = await pool.acquire()
-        assert lease.resource_id == "r1"
+        assert lease.rid == "r1"
         await pool.release(lease)
     finally:
         await ps.close()

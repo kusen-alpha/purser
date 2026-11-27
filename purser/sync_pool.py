@@ -166,15 +166,15 @@ class SyncPool:
         )
 
     # -- reads ------------------------------------------------------------
-    def get(self, resource_id: str) -> Resource | None:
+    def get(self, rid: str) -> Resource | None:
         """Return one resource snapshot, or ``None`` when it does not exist."""
 
-        return self._snapshot_call(lambda: self._pool.get(resource_id))
+        return self._snapshot_call(lambda: self._pool.get(rid))
 
-    def require(self, resource_id: str) -> Resource:
+    def require(self, rid: str) -> Resource:
         """Return one resource snapshot or raise :class:`ResourceNotFound`."""
 
-        return self._snapshot_call(lambda: self._pool.require(resource_id))
+        return self._snapshot_call(lambda: self._pool.require(rid))
 
     def query(self, **kwargs: Any) -> list[Resource]:
         """List resources matching ``states``/``tags``/``search`` filters."""
@@ -214,14 +214,14 @@ class SyncPool:
 
         return self._snapshot_call(self._pool.stats)
 
-    def leases(self, resource_id: str | None = None) -> list[SyncLease]:
+    def leases(self, rid: str | None = None) -> list[SyncLease]:
         """Live leases, optionally restricted to one resource."""
 
         owner = self._owner
         pool = self._pool
 
         async def run() -> list[SyncLease]:
-            leases = await pool.leases(resource_id)
+            leases = await pool.leases(rid)
             return [self._proxy_for(lease) for lease in leases]
 
         return owner._submit(run)
@@ -386,32 +386,32 @@ class SyncPoolAdminView:
             lambda: self._sp._pool.admin.apply_defaults(operator=operator, reason=reason)
         )
 
-    def validate_now(self, resource_id: str, *, operator: str = "system") -> Any:
+    def validate_now(self, rid: str, *, operator: str = "system") -> Any:
         """Validate one resource immediately and apply the verdict."""
 
         return self._sp._snapshot_call(
-            lambda: self._sp._pool.admin.validate_now(resource_id, operator=operator)
+            lambda: self._sp._pool.admin.validate_now(rid, operator=operator)
         )
 
-    def validate_check(self, resource_id: str, check: str) -> Any:
+    def validate_check(self, rid: str, check: str) -> Any:
         """Run one named check without changing the resource state."""
 
         return self._sp._snapshot_call(
-            lambda: self._sp._pool.admin.validate_check(resource_id, check)
+            lambda: self._sp._pool.admin.validate_check(rid, check)
         )
 
     # -- state / resource management --------------------------------------
 
-    def ban(self, resource_id: str, *, reason: str, operator: str = "system") -> None:
+    def ban(self, rid: str, *, reason: str, operator: str = "system") -> None:
         """Ban one resource after a hard failure or operator decision."""
 
         self._sp._owner._submit(
-            lambda: self._sp._pool.admin.ban(resource_id, reason=reason, operator=operator)
+            lambda: self._sp._pool.admin.ban(rid, reason=reason, operator=operator)
         )
 
     def unban(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str = "manual unban",
@@ -421,22 +421,22 @@ class SyncPoolAdminView:
 
         self._sp._owner._submit(
             lambda: self._sp._pool.admin.unban(
-                resource_id, operator=operator, reason=reason, revalidate=revalidate
+                rid, operator=operator, reason=reason, revalidate=revalidate
             )
         )
 
     def suspend(
-        self, resource_id: str, *, operator: str = "system", reason: str
+        self, rid: str, *, operator: str = "system", reason: str
     ) -> None:
         """Temporarily remove a resource from allocation without banning it."""
 
         self._sp._owner._submit(
-            lambda: self._sp._pool.admin.suspend(resource_id, operator=operator, reason=reason)
+            lambda: self._sp._pool.admin.suspend(rid, operator=operator, reason=reason)
         )
 
     def resume(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str = "manual resume",
@@ -446,13 +446,13 @@ class SyncPoolAdminView:
 
         self._sp._owner._submit(
             lambda: self._sp._pool.admin.resume(
-                resource_id, operator=operator, reason=reason, revalidate=revalidate
+                rid, operator=operator, reason=reason, revalidate=revalidate
             )
         )
 
     def top_up(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         amount: int | None = None,
@@ -462,20 +462,20 @@ class SyncPoolAdminView:
 
         self._sp._owner._submit(
             lambda: self._sp._pool.admin.top_up(
-                resource_id, operator=operator, amount=amount, reason=reason
+                rid, operator=operator, amount=amount, reason=reason
             )
         )
 
-    def drain(self, resource_id: str, *, operator: str = "system", reason: str) -> None:
+    def drain(self, rid: str, *, operator: str = "system", reason: str) -> None:
         """Stop new acquires; the resource archives once its leases drain."""
 
         self._sp._owner._submit(
-            lambda: self._sp._pool.admin.drain(resource_id, operator=operator, reason=reason)
+            lambda: self._sp._pool.admin.drain(rid, operator=operator, reason=reason)
         )
 
     def cancel_drain(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str = "cancel drain",
@@ -484,24 +484,24 @@ class SyncPoolAdminView:
 
         self._sp._owner._submit(
             lambda: self._sp._pool.admin.cancel_drain(
-                resource_id, operator=operator, reason=reason
+                rid, operator=operator, reason=reason
             )
         )
 
     def restore_resource(
-        self, resource_id: str, *, operator: str = "system", reason: str = "manual restore"
+        self, rid: str, *, operator: str = "system", reason: str = "manual restore"
     ) -> None:
         """Restore an archived resource through VALIDATING."""
 
         self._sp._owner._submit(
             lambda: self._sp._pool.admin.restore_resource(
-                resource_id, operator=operator, reason=reason
+                rid, operator=operator, reason=reason
             )
         )
 
     def admin_set_state(
         self,
-        resource_id: str,
+        rid: str,
         *,
         target: Any,
         operator: str = "system",
@@ -511,13 +511,13 @@ class SyncPoolAdminView:
 
         self._sp._owner._submit(
             lambda: self._sp._pool.admin.admin_set_state(
-                resource_id, target=target, operator=operator, reason=reason
+                rid, target=target, operator=operator, reason=reason
             )
         )
 
     def force_revoke(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str,
@@ -527,13 +527,13 @@ class SyncPoolAdminView:
 
         return self._sp._snapshot_call(
             lambda: self._sp._pool.admin.force_revoke(
-                resource_id, operator=operator, reason=reason, token=token
+                rid, operator=operator, reason=reason, token=token
             )
         )
 
     def update_resource(
         self,
-        resource_id: str,
+        rid: str,
         *,
         payload: dict[str, Any] | None = None,
         tags: Any = None,
@@ -553,12 +553,12 @@ class SyncPoolAdminView:
         }
         kwargs.update(copy.deepcopy(optional))
         return self._sp._snapshot_call(
-            lambda: self._sp._pool.admin.update_resource(resource_id, **kwargs)
+            lambda: self._sp._pool.admin.update_resource(rid, **kwargs)
         )
 
     def switch_resource(
         self,
-        resource_id: str,
+        rid: str,
         *,
         operator: str = "system",
         reason: str,
@@ -567,13 +567,13 @@ class SyncPoolAdminView:
 
         return self._sp._snapshot_call(
             lambda: self._sp._pool.admin.switch_resource(
-                resource_id, operator=operator, reason=reason
+                rid, operator=operator, reason=reason
             )
         )
 
     def move_resource(
         self,
-        resource_id: str,
+        rid: str,
         target_pool: SyncPool,
         *,
         operator: str = "system",
@@ -587,7 +587,7 @@ class SyncPoolAdminView:
             raise ValueError("target_pool belongs to a different SyncPurser")
         return self._sp._snapshot_call(
             lambda: self._sp._pool.admin.move_resource(
-                resource_id, target_pool._pool, operator=operator, reason=reason
+                rid, target_pool._pool, operator=operator, reason=reason
             )
         )
 

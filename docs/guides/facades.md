@@ -1,6 +1,6 @@
 # 门面族与运行时选择
 
-purser 只有一个内核，但内核可以跑在三种运行时里：当前事件循环、专属线程、专属进程。门面族把三种运行时包装成同一套调用约定，让你按部署形态换一个类，业务代码不用改。
+purser 只有一个内核，但内核可运行在三种运行时中：当前事件循环、专属线程、专属进程。门面族把三种运行时包装成同一套调用约定，让你按部署形态换一个类，业务代码不用改。
 
 日常只需要两个入口：单进程用 `Purser`，跨进程共享用 `LocalScheduler` + `connect()`；`SyncPurser` / `ThreadPurser` / `ProcessPurser` 是为同步代码、跨线程共享等特殊形态准备的备选项。
 
@@ -42,27 +42,27 @@ purser 只有一个内核，但内核可以跑在三种运行时里：当前事�
 from purser import AcquireRequest
 
 async with ProcessPurser() as ps:
-    ps.register_adapter(AdapterSpec.of(MyAdapter, region="cn"))
-    pool = ps.create_pool("accounts", "myadapter")
-    await pool.import_resources([{"id": "a1"}])
-    async with pool.lease(AcquireRequest(consumer="worker-1")) as lease:
+    ps.register_adapter(adapter=AdapterSpec.of(MyAdapter, region="cn"))
+    pool = ps.create_pool(name="accounts", kind="myadapter")
+    await pool.import_resources(records=[{"id": "a1"}])
+    async with pool.lease(req=AcquireRequest(consumer="worker-1")) as lease:
         ...
 ```
 
 ## ThreadPurser
 
-`ThreadPurser` 复用 `SyncPurser`：内核仍然在 `purser-sync-loop` 线程里，每个数据面调用通过 `asyncio.to_thread` 落到内核线程。适合“业务是 async，但内核要跨线程共享”的场景——例如一个事件循环在跑采集、另一个线程在做运维操作。
+`ThreadPurser` 复用 `SyncPurser`：内核仍然在 `purser-sync-loop` 线程里，每个数据面调用通过 `asyncio.to_thread` 落到内核线程。适合“业务是 async，但内核要跨线程共享”的场景——例如一个事件循环在运行业务负载、另一个线程在做运维操作。
 
 - 多个调用线程 / 事件循环可以安全共享同一个 `ThreadPurser`；
-- 拿到的是 `SyncLease`：在获取它的线程/协程里使用和归还，不要跨线程传递；
+- 获取的是 `SyncLease`：在获取它的线程/协程里使用和归还，不要跨线程传递；
 - 事件回调仍在线程池里执行，规则与 [同步 Purser](sync-facade.md) 相同；
 - `ThreadPurser` 与 `ThreadPool` 不可 pickle；`close()` 只会关闭自己创建的 `SyncPurser`，attach 模式（`ThreadPurser(sync=...)`）不会关闭外部内核。
 
 ```python
 async with ThreadPurser() as ps:
-    ps.register_adapter(MyAdapter())
-    pool = ps.create_pool("accounts", "myadapter")
-    await pool.import_resources(records)
+    ps.register_adapter(adapter=MyAdapter())
+    pool = ps.create_pool(name="accounts", kind="myadapter")
+    await pool.import_resources(records=records)
     async with pool.lease(consumer="worker") as lease:
         print(lease.payload)
 ```
@@ -77,14 +77,14 @@ async with ThreadPurser() as ps:
 ```python
 # 父进程：owned
 async with ProcessPurser(storage="sqlite", sqlite_path="purser.db") as ps:
-    ps.register_adapter(AdapterSpec.of(MyAdapter))
-    ps.create_pool("accounts", "myadapter")
+    ps.register_adapter(adapter=AdapterSpec.of(MyAdapter))
+    ps.create_pool(name="accounts", kind="myadapter")
     address = ps.address.to_env()      # 交给子进程
 
 # 子进程：attach（只含 address，可 pickle）
 ps = ProcessPurser(address=address)
 await ps.start()
-pool = ps.ensure_pool("accounts", "myadapter")   # 已存在则接上，未存在则创建
+pool = ps.ensure_pool(name="accounts", kind="myadapter")   # 已存在则接上，未存在则创建
 ```
 
 要点：
@@ -99,7 +99,7 @@ pool = ps.ensure_pool("accounts", "myadapter")   # 已存在则接上，未存�
 ```python
 from purser import AdapterSpec
 
-ps.register_adapter(AdapterSpec.of(MyAdapter, region="cn"))
+ps.register_adapter(adapter=AdapterSpec.of(MyAdapter, region="cn"))
 ```
 
 `AdapterSpec.of(Cls, **kwargs)` 要求：

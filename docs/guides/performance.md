@@ -17,7 +17,7 @@ Purser 的延迟主要来自后端与网络，而不是调度算法本身。先�
 | 分配打分 | CPU，候选数 × 打分 | 控制 `top_k`；池内资源多时优先 `health_weighted` 的采样路径 |
 | 请求级校验 | 目标站网络 RTT | 配 `check_cache_ttl`；不要在热路径做全量验活 |
 | 原子占用 | 存储 CAS + 协调 Lua | 多实例用 MySQL + Redis；SQLite 单写者 |
-| 等待 | 池满/资源忙 | 扩容、缩短占用、调 `wait_timeout`、按业务拆池 |
+| 等待 | 池满/资源忙 | 扩容、缩短占用、调 `wait_timeout`、按业务拆分资源池 |
 
 验活是网络密集型操作，通常比调度本身慢几个数量级。导入时的大批量验活应走后台任务。
 
@@ -44,7 +44,7 @@ Purser 的延迟主要来自后端与网络，而不是调度算法本身。先�
 | `heartbeat_interval` | `ttl/3` | 协调层写压力下降 | 租约更稳，但 Redis QPS 上升 |
 | `max_slots` | 适配器默认 | 单资源并发更高，隔离性下降 | 争用更多，但单资源更安全 |
 | `max_leases_per_consumer` | `None` | 允许单消费者占更多 | 防止单消费者打满池 |
-| `validate_concurrency` | `8` | 验活吞吐上升，目标站压力上升 | 更温和，但积压更久 |
+| `validate_workers` | `8` | 验活吞吐上升，目标站压力上升 | 更温和，但积压更久 |
 | `background_validate_sample` | `1.0` | 更多后台验活 | 更少探活，健康分更陈旧 |
 | `check_cache_ttl` | `2s` | 减少重复站点探测 | 结果更实时 |
 | `import_validate` | `auto` | 小批量同步、大批量后台 | 显式 `none` 可跳过首次验活 |
@@ -61,26 +61,15 @@ Purser 的延迟主要来自后端与网络，而不是调度算法本身。先�
 
 ### 等待队列
 
-等待者数量受 `wait_timeout` 和上游并发控制。`max_leases_per_consumer` 与 `max_slots` 决定单个消费者能占多少槽位；容量不足时优先按业务拆池，而不是无限加大 `wait_timeout`。
+等待者数量受 `wait_timeout` 和上游并发控制。`max_leases_per_consumer` 与 `max_slots` 决定单个消费者能占多少槽位；容量不足时优先按业务拆分资源池，而不是无限加大 `wait_timeout`。
 
 ### 内存
 
 粗算：`资源数 × 单条 payload 大小` + 事件环形缓冲 + 用量账本 + 审计（配置 `audit_path` 时全部历史在内存）+ Python 运行时。资源 payload 很大时，先降低 `event_queue_size` / `usage_ledger_size`，并评估审计归档。
 
-## 基准测试
+## 负载验证
 
-仓库自带两个脚本：
-
-```bash
-.venv/Scripts/python.exe benchmarks/import_time.py
-
-# 可选外部后端
-export PURSER_TEST_REDIS_URL=redis://127.0.0.1:6379/15
-export PURSER_TEST_MYSQL_URL=mysql://root:@127.0.0.1:3306/purser_bench
-.venv/Scripts/python.exe benchmarks/sync_facade_bench.py --threads 8 --ops 200
-```
-
-`sync_facade_bench.py` 会对可用的 storage × coordination 组合跑同一套获取/归还负载，输出吞吐与延迟分位。用自己的负载复测时至少记录：
+用自己的负载复测时至少记录：
 
 - 后端组合、池大小、`max_slots`、`top_k`；
 - 并发消费者数与目标 QPS；
@@ -96,9 +85,9 @@ export PURSER_TEST_MYSQL_URL=mysql://root:@127.0.0.1:3306/purser_bench
 | --- | --- | --- |
 | 接入层 CPU 高、p99 抖动 | 事件循环被同步代码阻塞 | 把阻塞调用移入线程；不要在心跳/监听器里做同步 IO |
 | SQLite `database is locked` | 多进程/多线程写同一文件 | 单写者，或换 MySQL |
-| 获取延迟随池规模线性上升 | 候选采样/打分成本 | 控制 `top_k`；按标签/地区拆池 |
+| 获取延迟随池规模线性上升 | 候选采样/打分成本 | 控制 `top_k`；按标签或地区拆分资源池 |
 | 租约频繁丢失 | 心跳间隔过大、事件循环卡顿、Redis 超时 | 调小 `heartbeat_interval`、排查阻塞、检查 Redis |
-| 验活拖慢导入 | `validate_concurrency` 过高或目标站限流 | 降低并发、改后台验活、加探活目标 |
+| 验活拖慢导入 | `validate_workers` 过高或目标站限流 | 降低并发、改后台验活、加探活目标 |
 | 等待超时多但池看似有空闲 | 标签/`required_tag`/目标校验过滤掉了候选 | 看 `NoSuitableResource` 与站点失败索引 |
 | 内存持续上涨 | 资源多、payload 大、审计无归档 | 调整环形缓冲、归档审计、精简 payload |
 

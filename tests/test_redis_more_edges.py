@@ -101,7 +101,7 @@ async def test_redis_use_limit_expiry_reclaim_on_restart(tmp_path):
         finally:
             await client.aclose()
         res = await pool.get("r0")
-        assert res is not None and res.concurrency.used_slots == 1  # not stolen
+        assert res is not None and res.slots.used_slots == 1  # not stolen
         await ps.close()
 
         ps2 = _purser(path)
@@ -109,15 +109,15 @@ async def test_redis_use_limit_expiry_reclaim_on_restart(tmp_path):
         try:
             await pool2.start()  # restart reconcile reclaims the orphaned slot
             res = await pool2.get("r0")
-            assert res is not None and res.concurrency.used_slots == 0
+            assert res is not None and res.slots.used_slots == 0
             assert res.payload == {"host": "10.1.1.1", "port": 7000}
             lease2 = await pool2.acquire(
-                AcquireRequest(resource_id="r0", consumer="c2", slots=1, timeout=1.0)
+                AcquireRequest(rid="r0", consumer="c2", slots=1, timeout=1.0)
             )
             assert lease2.slots == 1
             await pool2.release(lease2)
             res = await pool2.get("r0")
-            assert res is not None and res.concurrency.used_slots == 0
+            assert res is not None and res.slots.used_slots == 0
         finally:
             await ps2.close()
     finally:
@@ -146,7 +146,7 @@ async def test_redis_register_failure_rolls_back_slot(tmp_path):
                 AcquireRequest(consumer="c", slots=1, timeout=0.6)
             )
         res = await pool_bad.get("r0")
-        assert res is not None and res.concurrency.used_slots == 0, "rollback leaked a slot"
+        assert res is not None and res.slots.used_slots == 0, "rollback leaked a slot"
         assert res.state.value in ("idle", "active")
     finally:
         await ps_bad.close()
@@ -157,14 +157,14 @@ async def test_redis_register_failure_rolls_back_slot(tmp_path):
     await ps_good.start()
     try:
         lease = await pool_good.acquire(
-            AcquireRequest(resource_id="r0", consumer="c2", slots=1, timeout=1.0)
+            AcquireRequest(rid="r0", consumer="c2", slots=1, timeout=1.0)
         )
         assert lease.slots == 1
         res = await pool_good.get("r0")
-        assert res is not None and res.concurrency.used_slots == 1
+        assert res is not None and res.slots.used_slots == 1
         await pool_good.release(lease)
         res = await pool_good.get("r0")
-        assert res is not None and res.concurrency.used_slots == 0
+        assert res is not None and res.slots.used_slots == 0
     finally:
         await ps_good.close()
 
@@ -186,7 +186,7 @@ async def test_redis_partial_orphan_reconcile_real(tmp_path, shared_backend_harn
     lease_b = await pool_b.acquire(AcquireRequest(consumer="b", slots=1, timeout=1.0))
     try:
         res = await pool_a.get("r0")
-        assert res is not None and res.concurrency.used_slots == 2
+        assert res is not None and res.slots.used_slots == 2
         # A's lease vanishes (revoked/expired elsewhere) but its slot remains.
         await pool_b._coordination.unregister_lease("shared", lease_a.token)
         assert [lease.token for lease in await pool_b._coordination.active("shared")] == [
@@ -198,7 +198,7 @@ async def test_redis_partial_orphan_reconcile_real(tmp_path, shared_backend_harn
         try:
             await pool_c.start()  # restart reconcile aligns to the live lease
             res = await pool_c.get("r0")
-            assert res is not None and res.concurrency.used_slots == 1
+            assert res is not None and res.slots.used_slots == 1
             assert res.state is not None
             assert res.payload == {"host": "3.3.3.3", "port": 443}
         finally:
@@ -206,7 +206,7 @@ async def test_redis_partial_orphan_reconcile_real(tmp_path, shared_backend_harn
 
         assert await pool_b.release(lease_b) is True
         res = await pool_a.get("r0")
-        assert res is not None and res.concurrency.used_slots == 0
+        assert res is not None and res.slots.used_slots == 0
         assert await pool_b._coordination.active("shared") == []
     finally:
         await ps_a.close()

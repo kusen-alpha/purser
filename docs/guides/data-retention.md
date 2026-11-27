@@ -37,8 +37,8 @@ Purser 的“数据”分散在几个不同寿命的容器里。做合规、容�
 
 ```python
 pool = ps.create_pool(
-    "proxies",
-    "proxy",
+    name="proxies",
+    kind="proxy",
     archive_retention=7 * 86400,   # 归档 7 天后删除
     lost_retention=2 * 3600,
 )
@@ -49,10 +49,10 @@ pool = ps.create_pool(
 `expire_gc` 是**可选**的：只有显式设置 `expired_retention` 才会启用。它只处理带 `expired_at` 的 `SUSPENDED` 资源，不会碰人工暂停的资源；处理方式是转 `ARCHIVED`，再等 `archive_retention` 到期删除。
 
 ```python
-pool = ps.create_pool("accounts", "account", expired_retention=30 * 86400)
+pool = ps.create_pool(name="accounts", kind="account", expired_retention=30 * 86400)
 ```
 
-维护任务默认由后台周期执行，也可手动补跑：
+维护任务默认由后台周期执行，也可手动补执行：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/pools/proxies/maintenance/archive_gc

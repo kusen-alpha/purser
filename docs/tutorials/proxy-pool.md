@@ -1,4 +1,4 @@
-# 教程：代理池 + httpx / aiohttp
+# 教程：资源消费
 
 目标：把一个代理列表变成可并发获取、失败会反馈、坏代理会自愈的资源池，并完成一次真实抓取。
 
@@ -30,15 +30,15 @@ async def build_pool() -> Purser:
     ps = Purser()
     # 探针目标是适配器实例配置，不是池配置
     ps.register_adapter(
-        ProxyAdapter(probe_targets=["https://example.com"], timeout=8.0)
+        adapter=ProxyAdapter(probe_targets=["https://example.com"], timeout=8.0)
     )
     pool = ps.create_pool(
-        "proxies",
-        "proxy",
+        name="proxies",
+        kind="proxy",
         lease_ttl=120,   # 一次抓取通常不超过 2 分钟
         wait_timeout=15,
     )
-    await pool.import_resources(PROXIES, source="tutorial")
+    await pool.import_resources(records=PROXIES, source="tutorial")
     return ps
 ```
 
@@ -114,7 +114,7 @@ async def fetch(pool, url: str, consumer: str = "crawler-a") -> str:
 
 完整副作用见[AcquireRequest / Lease / BatchLease](../reference/python-api/acquisition.md#usageoutcome)。
 
-## 3. 并发跑
+## 3. 并发执行
 
 每个并发任务都应该用自己的 `consumer`，否则同消费者重复获取同一资源时默认返回已有租约：
 
@@ -124,10 +124,10 @@ import asyncio
 from purser import PoolExhausted
 
 
-async def crawl_all(urls: list[str], concurrency: int = 8) -> None:
+async def crawl_all(urls: list[str], workers: int = 8) -> None:
     ps = await build_pool()
-    pool = ps.get_pool("proxies")
-    sem = asyncio.Semaphore(concurrency)
+    pool = ps.get_pool(name="proxies")
+    sem = asyncio.Semaphore(workers)
 
     async def one(i: int, url: str) -> None:
         async with sem:
@@ -151,11 +151,11 @@ if __name__ == "__main__":
     asyncio.run(crawl_all(["https://example.com"] * 20))
 ```
 
-- 并发上限由 `concurrency` 和池内槽位共同决定。代理默认 `max_slots=1`（独占），账户默认 4（共享）；槽位不够时 `acquire()` 会在 `wait_timeout` 内等待，超时抛 `PoolExhausted`。
+- 并发上限由 `workers` 与池内槽位共同决定。代理默认 `max_slots=1`（独占），账户默认 4（共享）；槽位不够时 `acquire()` 会在 `wait_timeout` 内等待，超时抛 `PoolExhausted`。
 - 想限制单个消费者同时持有的租约数，建池时设置 `max_leases_per_consumer=4`，而不是把并发数写死在业务里。
-- 需要一次拿多个代理再统一归还时用 `acquire_many()`，见[批量获取](../reference/python-api/acquisition.md#batch-acquire)。
+- 需要一次获取多个代理再统一归还时用 `acquire_many()`，见[批量获取](../reference/python-api/acquisition.md#batch-acquire)。
 
-## 4. 失败了怎么自愈
+## 4. 失败后的自愈机制
 
 ```python
 from purser import UsageOutcome
@@ -174,8 +174,8 @@ await pool.release(lease, outcome=UsageOutcome.NETWORK_ERROR, used=1)
 需要人工处置时：
 
 ```python
-await pool.admin.ban("proxy://1.2.3.4:8080", reason="stolen credential")
-await pool.admin.unban("proxy://1.2.3.4:8080", revalidate=True)
+await pool.admin.ban(rid="proxy://1.2.3.4:8080", reason="stolen credential")
+await pool.admin.unban(rid="proxy://1.2.3.4:8080", revalidate=True)
 ```
 
 ## 5. 观察结果
@@ -210,6 +210,6 @@ aiohttp 的 SOCKS 支持需要 `aiohttp_socks`，把 `proxy=` 换成对应的连
 
 ## 下一步
 
-- 需要账号与代理必须成套：看[账号 + 代理组合租约](account-proxy-bundle.md)。
+- 需要多个资源必须成套获取：看[组合租约实战](account-proxy-bundle.md)。
 - 需要把脚本变成常驻服务：看[从脚本到服务](script-to-service.md)。
 - 代理总被误判：查[验活、召回与封禁](validate-and-recall.md)与[公平性与健康度](../guides/fairness-and-health.md)。

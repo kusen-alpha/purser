@@ -2,7 +2,7 @@
 
 目标：把“导入成功”变成“可放心分配”，并在批次变坏时能整批处置、在个别资源失败时能自动隔离与恢复。
 
-## 0. 先选导入策略
+## 1. 选择导入策略
 
 | 策略 | 导入何时返回 | 适合 |
 | --- | --- | --- |
@@ -14,20 +14,20 @@
 `auto` 的阈值是 10 条。首次 `acquire()` 会等待 `NEW` / `VALIDATING` 的资源完成验活，直到请求超时；但 `none` 且没有验活任务时，`acquire()` 会立即抛 `PoolExhausted` 并提示如何推进，不会空等。
 
 ```python
-report = await pool.import_resources(records, import_validate="auto")
+report = await pool.import_resources(records=records, import_validate="auto")
 print(report.imported, report.updated, report.skipped, report.batch_id)
 print(report.validation)   # 同步部分的逐条结果
 ```
 
-## 1. 看后台验活任务
+## 2. 查看后台验活任务
 
 超过 10 条（或显式 `batch`）时，`report.batch_id` 就是任务 id：
 
 ```python
-job = pool.validate_job(report.batch_id)
+job = pool.validate_job(job_id=report.batch_id)
 while job is not None and job.status in ("running", "cancelling"):
     await asyncio.sleep(1)
-    job = pool.validate_job(report.batch_id)
+    job = pool.validate_job(job_id=report.batch_id)
 print(job.status, job.done, job.alive, job.failed, job.skipped)
 ```
 
@@ -43,13 +43,13 @@ curl -X POST "http://127.0.0.1:8000/pools/proxies/validate-jobs/<job_id>/cancel"
 
 取消只停止尚未开始的条目，在途探测允许完成。
 
-## 2. 单条验活与命名检查
+## 3. 单条验活与命名检查
 
 ```python
-await pool.admin.validate_now("proxy://1.2.3.4:8080", operator="alice")
+await pool.admin.validate_now(rid="proxy://1.2.3.4:8080", operator="alice")
 
-# 只跑某个命名检查项，不改变状态/健康
-result = await pool.admin.validate_check("proxy://1.2.3.4:8080", "check_expiry")
+# 只执行某个命名检查项，不改变状态/健康
+result = await pool.admin.validate_check(rid="proxy://1.2.3.4:8080", check="check_expiry")
 ```
 
 `validate_now()` 的边界：
@@ -60,13 +60,15 @@ result = await pool.admin.validate_check("proxy://1.2.3.4:8080", "check_expiry")
 
 命名检查项用 `@validator` 声明；`both=True` 的检查会随生命周期验活一起执行，失败进入隔离流程；`both=False` 只能按名手动触发，不改状态。见[自定义资源适配器](../guides/custom-resource-adapter.md)。
 
-## 3. 整批召回
+## 4. 整批召回
 
 当某个导入批次整体变坏（供应商换池、账号批量失效）时：
 
 ```python
 result = await pool.admin.recall_batch(
-    report.batch_id, action="retire", reason="vendor batch bad"
+    batch_id=report.batch_id,
+    action="retire",
+    reason="vendor batch bad",
 )
 print(result)   # {"action", "batch_id", "processed", "errors"}
 ```
@@ -79,7 +81,7 @@ print(result)   # {"action", "batch_id", "processed", "errors"}
 
 召回是逐条执行的，部分失败会记入 `errors`，不会因为一条失败而中止整批。
 
-## 4. 隔离、封禁与恢复
+## 5. 隔离、封禁与恢复
 
 失败不是立刻“删除”，而是按退避升级：
 
@@ -101,25 +103,25 @@ validate 失败 → QUARANTINED（指数退避）→ 连续失败达阈值 → B
 人工处置：
 
 ```python
-await pool.admin.ban(rid, reason="credential leak")
-await pool.admin.unban(rid, reason="rotated", revalidate=True)
+await pool.admin.ban(rid=rid, reason="credential leak")
+await pool.admin.unban(rid=rid, reason="rotated", revalidate=True)
 
-await pool.admin.suspend(rid, reason="vendor maintenance")
-await pool.admin.resume(rid, reason="back", revalidate=False)
+await pool.admin.suspend(rid=rid, reason="vendor maintenance")
+await pool.admin.resume(rid=rid, reason="back", revalidate=False)
 
-await pool.admin.drain(rid, reason="retire")
-await pool.admin.cancel_drain(rid, reason="keep")
+await pool.admin.drain(rid=rid, reason="retire")
+await pool.admin.cancel_drain(rid=rid, reason="keep")
 
-await pool.admin.restore_resource(rid)   # ARCHIVED → VALIDATING → 立即验活
+await pool.admin.restore_resource(rid=rid)   # ARCHIVED → VALIDATING → 立即验活
 ```
 
 - `ban` 会先回收该资源的全部活跃租约（包括其他实例签发的），再置 `BANNED`。
 - `unban` 要求资源处于 `BANNED`，默认进入 `VALIDATING`；`revalidate=True` 立即探测。
 - `drain` 只停止新分配，不会立刻打断在途租约。
 
-## 5. 用事件驱动处置
+## 6. 通过事件驱动处置
 
-订阅事件总线，把“验活任务结束”“资源被封”接进告警或工单：
+订阅事件总线，把“验活任务结束”“资源被封禁”接进告警或工单：
 
 ```python
 from purser import Purser
@@ -142,14 +144,14 @@ unsubscribe()
 
 事件字段全集见[事件目录](../reference/events.md)。监听器是异步回调，单个监听器超时会被暂停而不是拖垮发布方。
 
-## 6. 维护任务
+## 7. 维护任务
 
 `maintenance_enabled=True`（默认）时以下扫描自动周期执行；也可以手动触发：
 
 ```python
-print(await pool.admin.run_maintenance("quarantine_gc"))
-print(await pool.admin.run_maintenance("validating_gc"))
-print(await pool.admin.run_maintenance("periodic_unban"))
+print(await pool.admin.run_maintenance(name="quarantine_gc"))
+print(await pool.admin.run_maintenance(name="validating_gc"))
+print(await pool.admin.run_maintenance(name="periodic_unban"))
 ```
 
 | 任务 | 作用 |
@@ -168,5 +170,5 @@ print(await pool.admin.run_maintenance("periodic_unban"))
 - [ ] 导入后确认 `NEW` 资源已进入 `IDLE`，而不是一直不可分配。
 - [ ] 大批量导入使用 `batch_id` 跟踪任务，而不是轮询 `acquire()`。
 - [ ] 失败上报了正确的 `outcome`，否则隔离与健康度不会生效。
-- [ ] 自动解封策略与供应商的实际恢复时间匹配，避免“刚解封又被封”。
+- [ ] 自动解封策略与供应商的实际恢复时间匹配，避免“解封后再次封禁”。
 - [ ] 召回/封禁动作写入了审计（操作者与原因），见[审计目录](../reference/audit.md)。
