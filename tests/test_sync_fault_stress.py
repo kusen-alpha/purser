@@ -121,7 +121,16 @@ def test_coordination_write_failure_rolls_back_and_recovers(tmp_path):
         assert time.monotonic() - started < 5
 
         # The storage slot acquired before register_lease failed is returned.
+        # The rollback runs on the serving coroutine and can still be in
+        # flight when the caller's exception is already observable, so poll
+        # briefly instead of asserting before it lands.
+        deadline = time.monotonic() + 2.0
         res = pool.get(rid)
+        while (
+            res is None or res.concurrency.used_slots != 0
+        ) and time.monotonic() < deadline:
+            time.sleep(0.01)
+            res = pool.get(rid)
         assert res is not None and res.concurrency.used_slots == 0
         assert pool.leases() == []
 

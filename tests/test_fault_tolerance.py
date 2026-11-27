@@ -57,7 +57,16 @@ async def test_acquire_rolls_back_slot_on_coordination_failure(make_pool):
     pool._coordination.register_lease = boom
     with pytest.raises((NoSuitableResource, PoolExhausted)):
         await pool.acquire(AcquireRequest(timeout=0.1))
+    # The rollback runs on the serving coroutine and can still be in flight
+    # when the caller's exception is already observable, so poll briefly
+    # instead of asserting before it lands.
+    deadline = time.monotonic() + 2.0
     res = await pool.get(rid)
+    while (
+        res is None or res.concurrency.used_slots != 0 or res.state is not ResourceState.IDLE
+    ) and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+        res = await pool.get(rid)
     assert res is not None and res.concurrency.used_slots == 0
     assert res.state is ResourceState.IDLE
     assert await pool._coordination.active(pool.name) == []
